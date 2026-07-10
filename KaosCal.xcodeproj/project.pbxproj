@@ -22,6 +22,7 @@
 		A1000000000000000000000D /* CalendarEventLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* CalendarEventLayout.swift */; };
 		A1000000000000000000000E /* CalendarEventLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* CalendarEventLayoutTests.swift */; };
 		A1000000000000000000000F /* CalendarTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* CalendarTimelineView.swift */; };
+		B10000000000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* GRDB */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -61,6 +62,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B10000000000000000000001 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -187,6 +189,9 @@
 			dependencies = (
 			);
 			name = KaosCal;
+			packageProductDependencies = (
+				B20000000000000000000001 /* GRDB */,
+			);
 			productName = KaosCal;
 			productReference = A20000000000000000000008 /* KaosCal.app */;
 			productType = "com.apple.product-type.application";
@@ -237,6 +242,9 @@
 				Base,
 			);
 			mainGroup = A70000000000000000000001;
+			packageReferences = (
+				B30000000000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+			);
 			productRefGroup = A70000000000000000000009 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -474,6 +482,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		B30000000000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				kind = exactVersion;
+				version = 7.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B20000000000000000000001 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B30000000000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = A40000000000000000000001 /* Project object */;
 }
