@@ -65,6 +65,46 @@
   - Phase 0 shell은 실제 EventKit 데이터가 아닌 disconnected/empty state만 표시한다.
 - 결과: Phase 0 완료. 다음 단계는 Phase 1 EventKit full access와 Exchange calendar/event read-only 조회다.
 
+## 2026-07-10 — Phase 1 EventKit read-only 구현 및 자동 검증 완료
+
+- 관련 ADR: ADR-001, ADR-003, ADR-004, ADR-005, ADR-006
+- 변경 파일:
+  - `KaosCal/CalendarKit`: authorization/source/event 값 모델, provider protocol, long-lived `EventKitProvider`, 날짜 범위 표시
+  - `KaosCal/App/AppState.swift`: 권한 흐름, -30/+90일 조회, store change 재조회, 선택 event state
+  - `KaosCal/Features/CalendarShell/CalendarShellView.swift`: full access 설명·요청·복구, calendar sidebar, read-only/Exchange 표시, Agenda와 inspector
+  - `KaosCalTests`: fake provider 기반 권한·오류·알림·날짜 의미 회귀 테스트
+  - architecture, EventKit 결정, phase, QA, Exchange compatibility 문서
+- 동작:
+  - macOS 14+ `requestFullAccessToEvents`만 사용하고 password/MFA/token을 받지 않는다.
+  - full access 전에는 event fetch를 하지 않는다.
+  - 권한 거부·제한·write-only는 System Settings 복구 화면으로 보낸다.
+  - 앱이 다시 active가 되면 System Settings에서 바뀐 권한을 재확인한다.
+  - 권한 철회 시 calendar, event, 선택 state를 즉시 비운다.
+  - `EKEventStoreChanged` 연속 알림은 250ms 병합한 뒤 현재 범위를 재조회한다.
+  - UI에는 `EKEvent`를 보관하지 않고 값 snapshot만 전달한다.
+  - 종일 일정의 배타 종료 날짜와 자정을 넘는 시간 일정의 날짜 범위를 사람이 읽는 형태로 표시한다.
+  - Xcode Preview는 실제 EventKit에 접근하지 않는다.
+- 자동 검증:
+  - project/Info.plist/entitlement `plutil -lint`: pass
+  - `git diff --check`: pass
+  - unsigned Debug XCTest: **15 tests, 0 failures**
+  - unsigned Release build: pass
+  - ad-hoc signed Debug build: pass
+  - `codesign --verify --deep --strict`: pass
+  - signed entitlement에서 app sandbox, Calendar access, get-task-allow 확인: pass
+  - built Info.plist의 `NSCalendarsFullAccessUsageDescription` 확인: pass
+- 실행 검증:
+  - signed `KaosCal.app` 실행과 프로세스 생성: pass
+  - 데스크톱 접근성 도구 `orca`가 설치되어 있지 않고 `osascript` 접근성 권한도 없어 UI tree 자동 검사는 수행하지 못했다.
+  - 사용자의 macOS full access 승인과 실제 `KAOS-TEST`/Exchange/writable 노출은 **진행 중**이다.
+- 보안:
+  - runtime에 계정 자격 증명이나 `KAOS-TEST` 이름을 하드코딩하지 않았다.
+  - 실제 event 제목·내용·계정 식별자를 테스트 로그와 문서에 기록하지 않는다.
+- 결과: 코드·자동·서명 검증 pass, Phase 1 최종 판정은 실계정 수동 검증 대기.
+- 계획 변경: 3-pane shell은 Phase 0, 실제 Agenda 목록은 Phase 1에 구현되었다. Phase 2는 Day/Week 실제 이벤트 배치·겹침과 세 화면 일관성에 집중하도록 phase plan을 갱신했다.
+- 이월: 공유 read-only Exchange calendar가 없어 실계정 read-only 판정은 `blocked`다. Day/Week 구현은 계속하고 Phase 8 호환성 게이트 전에 해소한다.
+- 남은 위험: Exchange backend 종류 unknown, 실제 TCC/System Settings UI 미검증, KC-E1/KC-E2/KC-E4와 외부 변경 알림 실계정 검증 미완료.
+
 ## 다음 항목 템플릿
 
 ```markdown

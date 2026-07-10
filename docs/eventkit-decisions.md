@@ -50,7 +50,10 @@ macOS 14 이상에서 KaosCal은 `requestFullAccessToEvents`를 사용한다. �
 UI 원칙:
 - 권한이 없으면 왜 필요한지 설명한다.
 - 권한 거부 시 System Settings로 가는 복구 경로를 제공한다.
+- System Settings에서 돌아와 앱이 active가 되면 권한과 EventKit 데이터를 다시 확인한다.
 - unknown status는 crash하지 않고 안전한 안내 상태로 처리한다.
+- full access가 철회되면 메모리에 있던 calendar, event, 선택 상태를 즉시 비워 inspector에 이전 일정 정보가 남지 않게 한다.
+- Xcode Preview는 실제 EventKit provider를 만들지 않는 no-access provider를 사용한다.
 
 ## 결정 4: Read-only 캘린더도 Event Brief는 붙일 수 있다
 
@@ -78,7 +81,7 @@ UI:
 EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 감지한다.
 감지 실패를 데이터 삭제로 해석하지 않는다.
 
-`EKEventStoreChanged`를 받으면 기존 event object를 stale로 취급하고 현재 날짜 범위를 다시 fetch한다. 알림은 어떤 일정이 바뀌었는지 알려 주지 않는다.
+`EKEventStoreChanged`를 받으면 기존 event object를 stale로 취급하고 현재 날짜 범위를 다시 fetch한다. 알림은 어떤 일정이 바뀌었는지 알려 주지 않는다. 연속 알림은 250ms 동안 병합해 같은 범위를 불필요하게 반복 조회하지 않는다.
 
 상태 전환:
 - 한 번 찾지 못하면 `missing`
@@ -114,3 +117,12 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 ## 결정 8: 초대 일정은 원본을 건드리지 않는다
 
 초대받은 일정에는 local Event Brief와 작업을 붙일 수 있다. 그러나 v1은 RSVP, 참석자, organizer, 원본 제목·시간·삭제 변경을 제공하지 않는다. 이 동작은 Calendar.app에서 수행하도록 안내한다.
+
+## 결정 9: Phase 1 조회 모델과 새로고침 의미
+
+- 앱 생명주기 동안 하나의 `EKEventStore`를 유지한다.
+- EventKit 객체를 UI state에 보관하지 않고 `CalendarSource`와 `DisplayEvent` 값 snapshot으로 변환한다.
+- Phase 1 조회 범위는 실행 시점의 오늘을 기준으로 -30일~+90일이다.
+- toolbar의 `Reload events`는 현재 EventKit store를 다시 조회한다. Exchange 서버 동기화 자체는 macOS Calendar가 담당하며 KaosCal이 강제하지 않는다.
+- EventKit 종일 일정의 `endDate`는 배타적이므로 Agenda와 inspector에서는 하루를 빼 사람이 보는 포함 종료 날짜로 표시한다.
+- 날짜가 바뀌는 시간 일정은 시작과 종료 양쪽 날짜를 표시한다.

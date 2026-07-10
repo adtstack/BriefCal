@@ -8,7 +8,11 @@ final class AppStateTests: XCTestCase {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
 
-        let state = AppState(calendar: calendar, now: { baseline })
+        let state = AppState(
+            calendar: calendar,
+            now: { baseline },
+            calendarProvider: FakeCalendarProvider()
+        )
 
         XCTAssertEqual(state.selectedSection, .week)
         XCTAssertEqual(state.focusedDate, calendar.startOfDay(for: baseline))
@@ -19,7 +23,11 @@ final class AppStateTests: XCTestCase {
         let baseline = Date(timeIntervalSince1970: 1_700_000_000)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let state = AppState(calendar: calendar, now: { baseline })
+        let state = AppState(
+            calendar: calendar,
+            now: { baseline },
+            calendarProvider: FakeCalendarProvider()
+        )
 
         state.moveFocusedPeriod(direction: 1)
 
@@ -35,7 +43,11 @@ final class AppStateTests: XCTestCase {
         let baseline = Date(timeIntervalSince1970: 1_700_000_000)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let state = AppState(calendar: calendar, now: { baseline })
+        let state = AppState(
+            calendar: calendar,
+            now: { baseline },
+            calendarProvider: FakeCalendarProvider()
+        )
 
         state.select(.day)
         state.moveFocusedPeriod(direction: -1)
@@ -54,7 +66,11 @@ final class AppStateTests: XCTestCase {
         var current = initial
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let state = AppState(calendar: calendar, now: { current })
+        let state = AppState(
+            calendar: calendar,
+            now: { current },
+            calendarProvider: FakeCalendarProvider()
+        )
 
         current = later
         state.goToToday()
@@ -66,7 +82,11 @@ final class AppStateTests: XCTestCase {
         let baseline = Date(timeIntervalSince1970: 1_700_000_000)
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        let state = AppState(calendar: calendar, now: { baseline })
+        let state = AppState(
+            calendar: calendar,
+            now: { baseline },
+            calendarProvider: FakeCalendarProvider()
+        )
 
         state.select(.agenda)
         state.moveFocusedPeriod(direction: 1)

@@ -13,6 +13,12 @@
 		A10000000000000000000004 /* KaosCalTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* KaosCalTheme.swift */; };
 		A10000000000000000000005 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* Assets.xcassets */; };
 		A10000000000000000000006 /* AppStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* AppStateTests.swift */; };
+		A10000000000000000000007 /* CalendarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* CalendarModels.swift */; };
+		A10000000000000000000008 /* CalendarProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* CalendarProvider.swift */; };
+		A10000000000000000000009 /* EventKitProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* EventKitProvider.swift */; };
+		A1000000000000000000000A /* FakeCalendarProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* FakeCalendarProvider.swift */; };
+		A1000000000000000000000B /* CalendarAccessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* CalendarAccessTests.swift */; };
+		A1000000000000000000000C /* CalendarEventDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* CalendarEventDateFormatting.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -36,6 +42,12 @@
 		A20000000000000000000008 /* KaosCal.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KaosCal.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000000000009 /* AppStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateTests.swift; sourceTree = "<group>"; };
 		A2000000000000000000000A /* KaosCalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KaosCalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000000000000000000000B /* CalendarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarModels.swift; sourceTree = "<group>"; };
+		A2000000000000000000000C /* CalendarProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarProvider.swift; sourceTree = "<group>"; };
+		A2000000000000000000000D /* EventKitProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventKitProvider.swift; sourceTree = "<group>"; };
+		A2000000000000000000000E /* FakeCalendarProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakeCalendarProvider.swift; sourceTree = "<group>"; };
+		A2000000000000000000000F /* CalendarAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAccessTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* CalendarEventDateFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventDateFormatting.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -69,6 +81,7 @@
 			isa = PBXGroup;
 			children = (
 				A70000000000000000000003 /* App */,
+				A7000000000000000000000A /* CalendarKit */,
 				A70000000000000000000004 /* Features */,
 				A70000000000000000000006 /* DesignSystem */,
 				A70000000000000000000007 /* Resources */,
@@ -123,6 +136,8 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000009 /* AppStateTests.swift */,
+				A2000000000000000000000F /* CalendarAccessTests.swift */,
+				A2000000000000000000000E /* FakeCalendarProvider.swift */,
 			);
 			path = KaosCalTests;
 			sourceTree = "<group>";
@@ -134,6 +149,17 @@
 				A2000000000000000000000A /* KaosCalTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A7000000000000000000000A /* CalendarKit */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000010 /* CalendarEventDateFormatting.swift */,
+				A2000000000000000000000B /* CalendarModels.swift */,
+				A2000000000000000000000C /* CalendarProvider.swift */,
+				A2000000000000000000000D /* EventKitProvider.swift */,
+			);
+			path = CalendarKit;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -236,6 +262,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000002 /* AppState.swift in Sources */,
+				A1000000000000000000000C /* CalendarEventDateFormatting.swift in Sources */,
+				A10000000000000000000008 /* CalendarProvider.swift in Sources */,
+				A10000000000000000000007 /* CalendarModels.swift in Sources */,
+				A10000000000000000000009 /* EventKitProvider.swift in Sources */,
 				A10000000000000000000003 /* CalendarShellView.swift in Sources */,
 				A10000000000000000000004 /* KaosCalTheme.swift in Sources */,
 				A10000000000000000000001 /* KaosCalApp.swift in Sources */,
@@ -247,6 +277,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000006 /* AppStateTests.swift in Sources */,
+				A1000000000000000000000B /* CalendarAccessTests.swift in Sources */,
+				A1000000000000000000000A /* FakeCalendarProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

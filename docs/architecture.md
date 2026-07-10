@@ -39,7 +39,9 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 
 원칙: KaosCal 고유 데이터는 `EKEvent.notes`에 쓰지 않는다.
 
-## 모듈 구조
+## 목표 모듈 구조
+
+아래 tree는 v1 목표 구조다. Phase 1 현재 구현은 `App`, `CalendarKit`, `Features/CalendarShell`, `DesignSystem`, hosted unit tests이며, 나머지는 각 phase에서 추가한다.
 
 ```text
 KaosCal.app
@@ -49,9 +51,8 @@ KaosCal.app
 ├─ CalendarKit/
 │  ├─ CalendarProvider.swift
 │  ├─ EventKitProvider.swift
-│  ├─ CalendarSource.swift
-│  ├─ DisplayEvent.swift
-│  └─ EventIdentityResolver.swift
+│  ├─ CalendarModels.swift
+│  └─ CalendarEventDateFormatting.swift
 ├─ ContextStore/
 │  ├─ Database.swift
 │  ├─ Migrations.swift
@@ -83,6 +84,8 @@ KaosCal.app
 
 ## 런타임 흐름
 
+아래는 목표 런타임 흐름이다. Phase 1에서는 1~3과 CalendarShell의 기본 표시만 구현되어 있고 ContextStore 연결은 Phase 3부터 활성화한다.
+
 1. 앱 시작 시 AppState가 권한 상태와 로컬 DB 상태를 로드한다.
 2. CalendarProvider가 EventKit 권한 상태를 확인한다.
 3. 권한이 있으면 지정 기간의 이벤트와 캘린더 목록을 가져온다.
@@ -92,21 +95,25 @@ KaosCal.app
 7. 사용자가 체크리스트, notes, 개인 작업, 상태를 바꾸면 SQLite만 변경한다.
 8. 사용자가 일정 자체를 바꾸면 EventKit을 변경하고 change log를 SQLite에 남긴다.
 
+위 구조에서 `App`, `CalendarKit`, `CalendarShell`, `DesignSystem`은 Phase 1에 구현되어 있다. `ContextStore`와 나머지 feature 폴더는 해당 phase에서 추가한다.
+
 ## CalendarProvider 경계
 
 ```swift
-protocol CalendarProvider {
-    func requestAccess() async throws
-    func listCalendars() async throws -> [CalendarSource]
-    func fetchEvents(from start: Date, to end: Date) async throws -> [DisplayEvent]
-    func createEvent(_ draft: CalendarEventDraft) async throws -> DisplayEvent
-    func updateEvent(_ event: DisplayEvent, with draft: CalendarEventDraft) async throws -> DisplayEvent
-    func deleteEvent(_ event: DisplayEvent) async throws
+@MainActor
+protocol CalendarProviding: AnyObject {
+    var authorizationState: CalendarAuthorizationState { get }
+    var storeChangeHandler: (() -> Void)? { get set }
+
+    func requestFullAccess() async throws -> Bool
+    func listCalendars() throws -> [CalendarSource]
+    func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent]
 }
 ```
 
-v1에서는 EventKitProvider 하나로 시작한다.
-직접 Google/Microsoft/CalDAV adapter는 만들지 않는다.
+Phase 1은 위 read-only 경계와 `EventKitProvider` 하나로 시작한다. Phase 5에서 create/update/delete 명령을 별도 안전 use case로 확장한다. 직접 Google/Microsoft/CalDAV adapter는 만들지 않는다.
+
+Provider는 long-lived `EKEventStore`를 소유하지만 UI에 `EKEvent`를 전달하지 않는다. source, identifier, 시간, 종일, 반복, 초대, 수정 가능 상태를 값 타입 snapshot으로 만든다. 연속 store change 알림은 AppState에서 250ms 병합하고 다시 fetch한다.
 
 ## Event Brief 경계
 

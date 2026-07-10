@@ -22,12 +22,15 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 절차:
 1. 앱을 처음 실행한다.
 2. 캘린더 권한 요청을 허용한다.
-3. Agenda 또는 Week view를 확인한다.
+3. Phase 1에서는 Agenda를 확인한다. Week의 실제 event card 검증은 Phase 2 이후 수행한다.
 
 기대 결과:
 - 실제 Exchange Calendar 일정이 표시된다.
 - 캘린더 목록이 표시된다.
 - 앱이 로컬 저장 정책을 명확히 설명한다.
+- `KAOS-TEST`가 `Exchange`로 표시되고 lock이 없으면 writable로 판정한다.
+- Exchange source 표시는 backend가 Exchange Online이라는 증거로 사용하지 않는다.
+- `Reload events`는 EventKit 재조회이며 원격 동기화 버튼으로 해석하지 않는다.
 
 ### 2. 권한 거부
 
@@ -40,6 +43,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 빈 오류 화면으로 방치되지 않는다.
 - 권한을 다시 허용하는 경로가 안내된다.
 - local DB가 손상되거나 삭제되지 않는다.
+- 이전에 읽었던 calendar, event, inspector 선택 내용이 화면과 메모리 state에서 제거된다.
 
 ### 3. Event Brief 저장
 

@@ -8,7 +8,7 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 ## 현재 진행 상태
 
 - Phase 0: **완료** — 2026-07-10, build/test/ad-hoc signing/window 생성 검증
-- Phase 1: **진행 예정** — EventKit full access와 Exchange read-only Agenda
+- Phase 1: **실계정 검증 중** — 코드·15개 자동 테스트·ad-hoc 서명 검증 완료, full access 사용자 승인 및 `KAOS-TEST` 확인 대기
 - Phase 2~10: 대기
 
 ## Phase 표
@@ -17,7 +17,7 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 | --- | --- | --- | --- |
 | 0 | Repo bootstrap | Xcode project, README, ADR/log, architecture skeleton | 앱이 빌드되고 빈 shell이 뜬다. |
 | 1 | Exchange EventKit read-only | full-access flow, Exchange source, events list | Exchange 일정이 Agenda에 표시되고 권한·read-only 상태가 보인다. |
-| 2 | Calendar UI shell | 3-pane layout, Day/Week/Agenda, event cards | 세 화면에서 일정을 클릭하면 inspector가 열린다. |
+| 2 | Calendar event layout | Day/Week 실제 배치, Agenda 일관성, event cards | 세 화면에서 일정을 클릭하면 inspector가 열린다. |
 | 3 | Local context DB | GRDB migrations, repositories, tests | Event Brief와 Task Center 데이터가 SQLite에 저장/조회된다. |
 | 4 | Event Brief + Task Center | Before/During/After, personal tasks, inline editing | 일정 작업과 개인 작업을 오늘 목록에서 완료할 수 있다. |
 | 5 | Time-safe event editing | create/update/delete, all-day, timezone | Calendar.app에서 원본 변경이 확인되고 시간 의미가 유지된다. |
@@ -59,16 +59,22 @@ Definition of Done:
 - 읽기 전용 캘린더와 writable 캘린더 구분
 - 시간·종일·반복 occurrence fixture를 compatibility matrix에 기록
 
-## Phase 2: Calendar UI Shell
+현재 판정:
+- 자동 검증 통과: fake provider 기반 권한 상태 전이·permissionDenied 정규화, 권한 철회 시 메모리 데이터 제거, -30/+90일 조회 범위, 변경 알림 병합 재조회, 종일 배타 종료일 표시
+- 서명 검증 통과: sandbox, Calendar entitlement, full-access usage description
+- 수동 검증 대기: 실제 TCC full access 승인·복구 UI, `KAOS-TEST`의 Exchange/writable 표시, 실일정·반복 occurrence, Calendar.app 변경 반영
+- blocked/이월: 공유 read-only Exchange calendar가 없어 실계정 read-only 판정은 막혀 있다. 구현 checkpoint 뒤 Phase 2는 진행하되 Phase 8 호환성 게이트 전에 해소한다.
+
+## Phase 2: Calendar Event Layout
 
 작업:
-- 3-pane layout 구현
-- Day view grid 구현
-- Week view grid 구현
-- Agenda list 구현
-- all-day lane 구현
+- Phase 0의 3-pane shell과 Phase 1의 Agenda를 실제 공통 이벤트 표현으로 정리
+- focused period에 맞는 Day/Week/Agenda filtering
+- Day view 시간 일정 배치
+- Week view 시간 일정 배치와 겹침 column 계산
+- all-day lane에 실제 종일·다일 일정 배치
 - event card 디자인 적용
-- 선택 이벤트 state 연결
+- Day/Week 선택 이벤트 state 연결
 
 Definition of Done:
 - 일정 클릭 시 오른쪽 패널에 기본 정보 표시
