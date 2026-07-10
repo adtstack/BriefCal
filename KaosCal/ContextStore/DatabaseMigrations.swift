@@ -226,6 +226,54 @@ enum DatabaseMigrations {
                     ON personal_tasks(completed, due_at, sort_order);
                 """)
         }
+
+        migrator.registerMigration("v2_event_change_log") { db in
+            try db.execute(sql: """
+                CREATE TABLE event_change_log (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    context_id TEXT NOT NULL
+                        REFERENCES event_contexts(id) ON DELETE CASCADE,
+                    change_type TEXT NOT NULL
+                        CHECK (change_type IN (
+                            'created', 'details_updated', 'moved',
+                            'recurrence_changed', 'cancelled', 'completed',
+                            'restored', 'relinked'
+                        )),
+                    scope TEXT NOT NULL
+                        CHECK (scope IN (
+                            'single', 'this_event', 'future_events'
+                        )),
+                    before_payload TEXT NOT NULL
+                        CHECK (length(before_payload) > 0),
+                    after_payload TEXT NOT NULL
+                        CHECK (length(after_payload) > 0),
+                    undo_state TEXT NOT NULL
+                        CHECK (undo_state IN (
+                            'available', 'superseded', 'undone', 'unavailable'
+                        )),
+                    undone_at TEXT,
+                    undo_of_change_id TEXT
+                        REFERENCES event_change_log(id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL,
+                    CHECK (
+                        (undo_state = 'undone' AND undone_at IS NOT NULL)
+                        OR (undo_state != 'undone' AND undone_at IS NULL)
+                    ),
+                    CHECK (
+                        (change_type = 'restored'
+                            AND undo_of_change_id IS NOT NULL
+                            AND undo_state = 'unavailable')
+                        OR (change_type != 'restored'
+                            AND undo_of_change_id IS NULL)
+                    )
+                );
+                CREATE INDEX event_change_log_context_created
+                    ON event_change_log(context_id, created_at DESC);
+                CREATE UNIQUE INDEX event_change_log_unique_undo
+                    ON event_change_log(undo_of_change_id)
+                    WHERE undo_of_change_id IS NOT NULL;
+                """)
+        }
         return migrator
     }
 }

@@ -23,3 +23,4 @@ ADR은 제품·기술·데이터 안전성에 영향을 주는 결정을 변경 
 | [ADR-008](ADR-008-local-context-store-and-event-identity.md) | Accepted | 로컬 Context 저장소와 이벤트 연결 안전성 |
 | [ADR-009](ADR-009-event-brief-and-task-center-interactions.md) | Accepted | Event Brief와 Task Center 상호작용 안전성 |
 | [ADR-010](ADR-010-original-event-write-safety.md) | Accepted | 원본 일정 쓰기와 로컬 Context 안전 경계 |
+| [ADR-011](ADR-011-recurrence-move-change-log-and-session-undo.md) | Accepted | 반복 범위·안전한 이동·변경 기록과 세션 Undo |

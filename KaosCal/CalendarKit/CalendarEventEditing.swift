@@ -26,6 +26,7 @@ struct CalendarEventDraft: Equatable {
     var referenceTimeZoneIdentifier: String
     var location: String
     var originalNotes: String
+    var recurrence: CalendarEventRecurrence
 
     init(
         title: String,
@@ -36,7 +37,8 @@ struct CalendarEventDraft: Equatable {
         timeZoneIdentifier: String?,
         referenceTimeZoneIdentifier: String,
         location: String = "",
-        originalNotes: String = ""
+        originalNotes: String = "",
+        recurrence: CalendarEventRecurrence = .none
     ) {
         self.title = title
         self.calendarIdentifier = calendarIdentifier
@@ -47,6 +49,7 @@ struct CalendarEventDraft: Equatable {
         self.referenceTimeZoneIdentifier = referenceTimeZoneIdentifier
         self.location = location
         self.originalNotes = originalNotes
+        self.recurrence = recurrence
     }
 
     init(event: DisplayEvent, calendar: Calendar) {
@@ -65,9 +68,14 @@ struct CalendarEventDraft: Equatable {
         referenceTimeZoneIdentifier = calendar.timeZone.identifier
         location = event.location ?? ""
         originalNotes = event.originalNotes ?? ""
+        recurrence = event.recurrence
     }
 
-    func validated(calendar: Calendar) throws -> Self {
+    func validated(
+        calendar: Calendar,
+        enforceRecurrenceEndBoundary: Bool = true,
+        rebaseRecurrenceEndDate: Bool = true
+    ) throws -> Self {
         var result = self
         guard var referenceTimeZone = TimeZone(
             identifier: referenceTimeZoneIdentifier
@@ -79,6 +87,16 @@ struct CalendarEventDraft: Equatable {
 
         if result.isAllDay || result.timeZoneIdentifier == nil,
            referenceTimeZone.identifier != calendar.timeZone.identifier {
+            if rebaseRecurrenceEndDate,
+               case var .basic(rule) = result.recurrence,
+               case let .onDate(endDate) = rule.end {
+                rule.end = .onDate(try Self.reinterpreting(
+                    endDate,
+                    from: referenceTimeZone,
+                    to: calendar.timeZone
+                ))
+                result.recurrence = .basic(rule)
+            }
             result.startDate = try Self.reinterpreting(
                 result.startDate,
                 from: referenceTimeZone,
@@ -129,7 +147,40 @@ struct CalendarEventDraft: Equatable {
             }
         }
 
+        result.recurrence = try result.recurrence.validated(
+            eventStart: result.startDate,
+            enforceEndBoundary: enforceRecurrenceEndBoundary
+        )
+
         return result
+    }
+
+    func changedFields(
+        comparedTo current: CalendarEventDraft
+    ) -> Set<CalendarEventChangedField> {
+        var fields = Set<CalendarEventChangedField>()
+        if title != current.title {
+            fields.insert(.title)
+        }
+        if calendarIdentifier != current.calendarIdentifier {
+            fields.insert(.calendar)
+        }
+        if startDate != current.startDate
+            || endDate != current.endDate
+            || isAllDay != current.isAllDay
+            || timeZoneIdentifier != current.timeZoneIdentifier {
+            fields.insert(.time)
+        }
+        if location != current.location {
+            fields.insert(.location)
+        }
+        if originalNotes != current.originalNotes {
+            fields.insert(.originalNotes)
+        }
+        if recurrence != current.recurrence {
+            fields.insert(.recurrence)
+        }
+        return fields
     }
 
     func changingAllDay(
@@ -276,6 +327,42 @@ struct CalendarEventDraft: Equatable {
     }
 }
 
+extension CalendarEventRecurrence {
+    func validated(
+        eventStart: Date,
+        enforceEndBoundary: Bool = true
+    ) throws -> Self {
+        guard case var .basic(rule) = self else { return self }
+
+        guard rule.interval > 0 else {
+            throw CalendarEventWriteError.invalidRecurrenceInterval
+        }
+        if rule.frequency == .weekly {
+            guard !rule.weekdays.isEmpty else {
+                throw CalendarEventWriteError.invalidRecurrenceWeekdays
+            }
+        } else if !rule.weekdays.isEmpty {
+            throw CalendarEventWriteError.invalidRecurrenceWeekdays
+        }
+
+        switch rule.end {
+        case .never:
+            break
+        case let .onDate(endDate):
+            guard !enforceEndBoundary || endDate >= eventStart else {
+                throw CalendarEventWriteError.invalidRecurrenceEnd
+            }
+        case let .afterOccurrences(count):
+            guard count > 0 else {
+                throw CalendarEventWriteError.invalidRecurrenceEnd
+            }
+        }
+
+        rule.weekdays = Set(rule.weekdays)
+        return .basic(rule)
+    }
+}
+
 enum CalendarEventWriteError: Error, Equatable {
     case fullAccessRequired
     case noWritableCalendar
@@ -296,6 +383,22 @@ enum CalendarEventWriteError: Error, Equatable {
     case editorAlreadyOpen
     case linkedCalendarMoveDeferred
     case linkedDeleteDeferred
+    case invalidRecurrenceInterval
+    case invalidRecurrenceWeekdays
+    case invalidRecurrenceEnd
+    case unsupportedRecurrence
+    case recurrenceChangeRequiresFutureScope
+    case futureScopeRequiresRecurringEvent
+    case detachedFutureScopeUnsupported
+}
+
+struct CalendarEventMutationPartialSuccess: LocalizedError {
+    let provisionalEvent: DisplayEvent
+    let underlyingDescription: String
+
+    var errorDescription: String? {
+        "The calendar event was saved, but KaosCal could not identify the post-save occurrence. Do not retry this change. Reload and review it in Calendar.app; any local Event Brief was kept."
+    }
 }
 
 extension CalendarEventWriteError: LocalizedError {
@@ -312,7 +415,7 @@ extension CalendarEventWriteError: LocalizedError {
         case .meetingIsCalendarAppOnly:
             "Meetings with attendees and invitations stay in Calendar.app."
         case .recurringScopeRequired:
-            "Recurring event changes need an occurrence scope. This arrives in Phase 6."
+            "Choose whether this recurring change applies to This Event or This and Future Events."
         case .eventUnavailable:
             "The original event is no longer available. Reload before trying again."
         case .ambiguousEvent:
@@ -336,9 +439,23 @@ extension CalendarEventWriteError: LocalizedError {
         case .editorAlreadyOpen:
             "Finish or cancel the current event edit before opening another one."
         case .linkedCalendarMoveDeferred:
-            "Moving an event with a local Event Brief to another calendar needs the Phase 6 safe-move flow."
+            "Moving an event with a local Event Brief requires the linked-impact review."
         case .linkedDeleteDeferred:
             "Deleting an event with a local Event Brief needs the Phase 7 orphan review flow."
+        case .invalidRecurrenceInterval:
+            "A recurrence interval must be a positive number."
+        case .invalidRecurrenceWeekdays:
+            "Weekly recurrence needs at least one weekday, and weekdays are only valid for weekly recurrence."
+        case .invalidRecurrenceEnd:
+            "Recurrence must end on or after the first event, or after a positive occurrence count."
+        case .unsupportedRecurrence:
+            "This recurrence rule is too complex to change safely in KaosCal. Use Calendar.app for recurrence changes."
+        case .recurrenceChangeRequiresFutureScope:
+            "Changing a recurrence rule requires the This and Future Events scope."
+        case .futureScopeRequiresRecurringEvent:
+            "The This and Future Events scope is only valid for a recurring event."
+        case .detachedFutureScopeUnsupported:
+            "KaosCal cannot safely apply future changes from a detached occurrence. Use Calendar.app."
         }
     }
 }

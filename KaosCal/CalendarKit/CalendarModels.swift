@@ -60,6 +60,84 @@ struct CalendarSource: Equatable, Identifiable {
     let color: CalendarColor?
 }
 
+enum CalendarRecurrenceFrequency: String, CaseIterable, Equatable, Hashable {
+    case daily
+    case weekly
+    case monthly
+    case yearly
+}
+
+enum CalendarRecurrenceWeekday: Int, CaseIterable, Equatable, Hashable {
+    case sunday = 1
+    case monday
+    case tuesday
+    case wednesday
+    case thursday
+    case friday
+    case saturday
+}
+
+enum CalendarRecurrenceEnd: Equatable {
+    case never
+    case onDate(Date)
+    case afterOccurrences(Int)
+}
+
+struct BasicRecurrenceRule: Equatable {
+    var frequency: CalendarRecurrenceFrequency
+    var interval: Int
+    var weekdays: Set<CalendarRecurrenceWeekday>
+    var end: CalendarRecurrenceEnd
+
+    init(
+        frequency: CalendarRecurrenceFrequency,
+        interval: Int = 1,
+        weekdays: Set<CalendarRecurrenceWeekday> = [],
+        end: CalendarRecurrenceEnd = .never
+    ) {
+        self.frequency = frequency
+        self.interval = interval
+        self.weekdays = weekdays
+        self.end = end
+    }
+}
+
+struct UnsupportedRecurrenceSnapshot: Equatable {
+    let summary: String
+    let signature: String
+}
+
+enum CalendarEventRecurrence: Equatable {
+    case none
+    case basic(BasicRecurrenceRule)
+    case unsupported(UnsupportedRecurrenceSnapshot)
+
+    var isRecurring: Bool {
+        if case .none = self { return false }
+        return true
+    }
+
+    var isRepresentable: Bool {
+        if case .unsupported = self { return false }
+        return true
+    }
+}
+
+enum CalendarEventMutationScope: String, CaseIterable, Equatable, Hashable {
+    case thisEvent
+    case futureEvents
+}
+
+enum CalendarEventChangedField: String, CaseIterable, Hashable {
+    case title
+    case calendar
+    case time
+    case location
+    case originalNotes
+    case recurrence
+    case deletion
+}
+
 struct LocalDateTimeComponents: Equatable {
     let calendarIdentifier: Calendar.Identifier
     let year: Int
@@ -187,6 +265,68 @@ struct DisplayEvent: Equatable, Identifiable {
     let isInvitation: Bool
     let hasAttendees: Bool
     let originalNotes: String?
+    let recurrence: CalendarEventRecurrence
+
+    init(
+        id: String,
+        eventIdentifier: String?,
+        calendarItemIdentifier: String?,
+        calendarItemExternalIdentifier: String?,
+        calendarIdentifier: String,
+        calendarTitle: String,
+        sourceTitle: String,
+        accountType: CalendarAccountType,
+        calendarColor: CalendarColor?,
+        title: String,
+        location: String?,
+        startDate: Date,
+        endDate: Date,
+        isAllDay: Bool,
+        timeZoneIdentifier: String?,
+        timeSemantics: EventTimeSemantics,
+        isRecurring: Bool,
+        occurrenceDate: Date?,
+        occurrenceLocalComponents: LocalDateTimeComponents?,
+        isDetached: Bool,
+        isReadOnly: Bool,
+        isInvitation: Bool,
+        hasAttendees: Bool,
+        originalNotes: String?,
+        recurrence: CalendarEventRecurrence = .none
+    ) {
+        self.id = id
+        self.eventIdentifier = eventIdentifier
+        self.calendarItemIdentifier = calendarItemIdentifier
+        self.calendarItemExternalIdentifier = calendarItemExternalIdentifier
+        self.calendarIdentifier = calendarIdentifier
+        self.calendarTitle = calendarTitle
+        self.sourceTitle = sourceTitle
+        self.accountType = accountType
+        self.calendarColor = calendarColor
+        self.title = title
+        self.location = location
+        self.startDate = startDate
+        self.endDate = endDate
+        self.isAllDay = isAllDay
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.timeSemantics = timeSemantics
+        self.isRecurring = isRecurring
+        self.occurrenceDate = occurrenceDate
+        self.occurrenceLocalComponents = occurrenceLocalComponents
+        self.isDetached = isDetached
+        self.isReadOnly = isReadOnly
+        self.isInvitation = isInvitation
+        self.hasAttendees = hasAttendees
+        self.originalNotes = originalNotes
+        self.recurrence = recurrence
+    }
+}
+
+struct CalendarEventMutationReceipt: Equatable {
+    let event: DisplayEvent
+    let didWrite: Bool
+    let scope: CalendarEventMutationScope
+    let changedFields: Set<CalendarEventChangedField>
 }
 
 extension DisplayEvent {

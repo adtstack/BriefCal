@@ -33,6 +33,10 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - Exchange source 표시는 backend가 Exchange Online이라는 증거로 사용하지 않는다.
 - `Reload events`는 EventKit 재조회이며 원격 동기화 버튼으로 해석하지 않는다.
 
+현재 증거 주의:
+- 사용자는 2026-07-11 macOS 전체 캘린더 접근을 허용했다고 보고했다.
+- 이 보고만으로 최신 서명 앱의 `Full calendar access`, EventKit fetch, `KAOS-TEST` source/writable 상태를 pass 처리하지 않는다. 실제 화면·빌드·fixture 결과를 별도로 기록한다.
+
 ### 2. 권한 거부
 
 절차:
@@ -90,18 +94,18 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 원본 notes와 local notes가 서로 덮어쓰지 않는다.
 - Calendar.app에서 편집기를 연 뒤 원본을 먼저 바꾸면 KaosCal 저장은 stale 오류로 중단된다.
 - 제목만 바꿨을 때 structured location 등 editor 밖 metadata를 불필요하게 지우지 않는다.
-- Phase 5에는 change log가 아직 생성되지 않는다.
+- linked 일정의 성공한 원본 변경은 receipt rebind와 함께 change log에 기록되고, 실패·취소·no-op에는 기록되지 않는다.
 
-### 6. linked calendar 이동·삭제 차단
+### 6. linked calendar 이동과 삭제 차단
 
 절차:
 1. Event Brief가 있는 일정을 다른 writable calendar로 옮기려고 한다.
 2. 같은 editor에서 원본 삭제 control을 확인한다.
 
 기대 결과:
-- calendar picker와 delete가 잠기고 Phase 6 safe move·Phase 7 orphan review 이유가 보인다.
-- EventKit update/remove를 호출하지 않고 Event Brief 상태가 바뀌지 않는다.
-- local Brief가 없는 비반복 일정의 calendar 이동·삭제만 Phase 5에서 허용된다.
+- calendar 이동은 impact review를 열고, Cancel 전에는 EventKit update·local rebind·change log가 없다.
+- Confirm하면 기존 context_id·notes·tasks를 유지한 채 target calendar receipt로 rebind하고 change log를 append한다.
+- linked delete만 Phase 7 orphan review 이유와 함께 계속 잠긴다. local Brief가 없는 지원 일정의 이동·삭제는 허용된다.
 
 ### 7. 읽기 전용 일정
 
@@ -186,17 +190,63 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - DST gap/overlap은 자동으로 한 시간 이동하거나 첫 번째 occurrence를 고르지 않고 명시적 오류로 중단한다.
 - 원본 편집 실패 시 Event Brief나 change log가 잘못 갱신되지 않는다.
 
-### 12. 반복 일정 (Phase 6 수동 gate)
+### 12. 반복 일정과 범위 확인 (Phase 6 수동 gate)
 
 절차:
-1. `KC-E4 Recurring` fixture의 여러 occurrence를 연다.
-2. 서로 다른 occurrence에 Brief와 task를 추가한다.
-3. 이번 일정과 이번 이후 범위를 각각 변경한다.
+1. `KAOS-TEST`의 `KC-E4 Recurring` fixture가 attendee 없는 writable 기본 weekly rule인지 확인한다.
+2. 여러 occurrence를 열고 서로 다른 occurrence에 Brief와 task를 추가한다.
+3. 한 occurrence의 시간 변경을 시작하고 아직 scope를 선택하지 않은 상태를 확인한다.
+4. `이번 일정`을 선택해 impact preview의 before/after, detach 가능성, 유지될 local 항목을 확인한 뒤 한 번은 Cancel하고 한 번은 Confirm한다.
+5. 별도 fixture에서 `이번 이후`를 선택하고 series 영향과 affected context 수를 확인한다.
+6. detached occurrence에서 `이번 이후`를 시도한다.
+7. 여러 rule 또는 KaosCal이 표현할 수 없는 복잡한 server recurrence를 연다.
+8. `이번 일정`에서 recurrence rule을 바꾸려 하고, unlinked basic series의 `이번 이후`에서 같은 변경을 시도한다.
 
 기대 결과:
 - occurrence별 Brief와 task가 섞이지 않는다.
+- scope를 선택하고 최종 Confirm하기 전에는 EventKit provider call과 change log가 없다. Cancel 뒤 원본·local DB가 모두 그대로다.
+- `이번 일정`은 선택 occurrence 하나만 바뀌고 receipt가 같은 occurrence context에 강하게 rebind된다.
+- unlinked `이번 이후`는 선택 occurrence 이후만 대상으로 한다. linked `이번 이후`는 초기 Phase 6에서 전부 write 전에 차단된다.
 - detached occurrence는 원래 occurrence anchor의 기존 context에 유지되고 다른 occurrence와 섞이지 않는다.
-- 지원하지 않는 복잡한 서버 rule은 Calendar.app으로 안내하고 원본 rule을 훼손하지 않는다.
+- detached occurrence의 `이번 이후`는 비활성화되고 Calendar.app 안내가 보인다.
+- 지원하지 않는 복잡한 서버 rule은 `이번 이후`와 rule 변경을 Calendar.app으로 안내한다. `이번 일정`의 ordinary-field 변경은 recurrence rule을 훼손하지 않고 저장된다.
+- attendee meeting/invitation에는 recurrence scope 원본 control이 제공되지 않는다.
+- `이번 일정`은 recurrence rule 변경을 허용하지 않고, unlinked basic series의 `이번 이후`만 rule 변경 후보가 된다. linked series rule 변경은 초기 Phase 6에서 차단된다.
+
+### 12-a. linked safe move와 change log (Phase 6 수동 gate)
+
+절차:
+1. 빈 writable `KAOS-TEST-DEST`와 attendee·recurrence가 없는 `KAOS-TEST` fixture를 사용한다.
+2. fixture에 non-sensitive Event Brief notes와 Before/During/After task를 각각 하나 이상 저장한다.
+3. target calendar를 `KAOS-TEST-DEST`로 바꾸고 impact confirmation을 연다.
+4. 기존/새 calendar·시간, 유지할 local notes/task 요약과 최근 change history를 확인한 뒤 Cancel한다.
+5. 다시 열어 Confirm하고 Calendar.app·KaosCal·Task Center를 확인한다.
+6. 같은 fixture에 외부 변경을 만든 뒤 남아 있는 Undo 또는 후속 write를 시도한다.
+
+기대 결과:
+- Cancel에는 EventKit update, local rebind, change log append가 없다.
+- Confirm 뒤 원본만 target calendar로 이동하고 동일한 `context_id`, notes, tasks가 유지된다.
+- `moved` log의 before/after calendar·time과 `single` scope가 남는다. 원본 EventKit notes와 Event Brief notes는 서로 덮어쓰지 않는다.
+- EventKit 성공 뒤 local transaction 실패를 주입하면 원본 성공·local 갱신 실패·local data 보존·false log 없음이 함께 표시된다.
+- 후속 성공 write, 권한 철회, 앱 재실행 뒤에는 이전 session Undo를 제공하지 않는다. 외부 변경 알림 뒤 button이 남더라도 실행 시 provider가 stale/missing/read-only를 감지해 local mutation 전에 차단한다.
+- linked original delete는 여전히 비활성화되고 Phase 7 orphan review 이유가 보인다.
+
+### 12-b. 좁은 session Undo (Phase 6 수동 gate)
+
+절차:
+1. 지원 가능한 비반복 `single` linked move 또는 시간 변경을 Confirm한다.
+2. 같은 event가 선택된 inspector의 `Undo Last Event Change`를 한 번 실행한다.
+3. 성공 뒤 button과 change history를 확인한다.
+4. 새 mutation 뒤 이전 Undo, 앱 재실행 뒤 Undo, 외부 Calendar.app 변경 뒤 Undo, recurrence·detached·delete의 Undo를 확인한다.
+
+기대 결과:
+- button은 같은 strong event와 in-memory candidate가 있을 때만 보이며 중복 실행할 수 없다.
+- Undo action은 현재 원본이 직전 after snapshot과 같을 때만 역방향 EventKit write를 실행한다.
+- 성공하면 기존 change row는 삭제되지 않고 `undone`이 되며 별도 `restored` row가 원본 change를 참조한다.
+- 같은 context의 새 mutation은 이전 `available`을 `superseded`로 바꾼다.
+- session token이 없거나 stale하면 persistent log만 보고 Undo를 다시 만들지 않는다.
+- 일반 store refresh가 token을 즉시 지우지 않아도 external after-snapshot mismatch는 provider에서 역방향 write 전에 중단된다.
+- 반복 `thisEvent`/`futureEvents`, series split, detached occurrence, delete에는 Undo가 없다.
 
 ### 13. Task Center
 
@@ -237,9 +287,12 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 일정 이동 취소는 EventKit과 local DB 모두 변경하지 않는다.
 - orphaned context는 사용자 선택 없이 자동 삭제하지 않는다.
 - EventKit 변경 알림 뒤에는 마지막 loaded interval을 다시 fetch하고 stale event object를 저장하지 않는다.
-- 원본 update/delete는 같은 store에서 다시 찾은 비반복 strong match와 fresh snapshot에만 실행한다.
+- 원본 update/delete는 같은 store에서 다시 찾은 strong match와 fresh snapshot에만 실행한다. 반복 write는 지원 가능한 rule과 명시적 scope·Confirm을 추가로 요구한다.
 - no-op은 EventKit save를 호출하지 않고, 변경 필드만 patch한다.
 - EventKit 성공과 SQLite rebind 실패를 전체 실패로 숨기거나 local data 삭제로 보정하지 않는다.
+- recurrence scope와 impact Confirm 전에는 provider와 change log를 호출하지 않는다.
+- linked future-series는 초기 Phase 6에서 provider 호출 전에 차단한다. 후속 reconciliation이 추가되어도 weak·ambiguous·missing이면 계속 차단한다.
+- persistent `undo_state = available`은 앱 재실행 뒤 Undo 권한이 아니다.
 - recurrence occurrence를 ID 하나나 UTC timestamp 하나로 잘못 연결하지 않는다.
 - Task Center의 personal task는 EventKit/Exchange에 동기화하지 않는다.
 
@@ -304,16 +357,32 @@ Phase 5에서 구현·자동 회귀 통과한 항목:
 - rebind unique 충돌·missing context에서 local notes/tasks/link 보존
 - 전체 **97 tests, 0 failures, 0 unexpected**, production DB mtime/size 불변
 
-Phase 5 수동 gate와 이후 후보:
+Phase 5 이후에도 남은 수동·후속 후보:
 
 - 실제 SwiftUI 창에서 focus loss·delete confirmation·popover·VoiceOver 상호작용
 - app 종료·재실행과 실제 `KAOS-TEST` event-linked navigation 수동 흐름
 - 실제 `KAOS-TEST` create/update/delete, all-day, floating/zoned, Calendar.app round-trip
 - event task fixed/relative due 편집 UI와 notification/reminder 정책
-- ChangeLogRepository append/query
-- linked calendar Move confirmation·반복 영향 범위·change log와 context_id 보존
 - missing/orphaned lifecycle 전환과 relink UI
 - backup/export/import/reset과 손상 DB 복구
+
+Phase 6에서 구현·통과한 자동 gate:
+
+- `v2_event_change_log` additive migration, FK/CHECK/index와 immutable v1 유지
+- versioned before/after payload의 zoned/all-day/floating/recurrence round-trip
+- mutation impact의 task count·recent history와 side-effect-free read
+- rebind+log atomic transaction, unique/foreign-key 실패 rollback, EventKit 부분 성공 안내
+- `single`/`this_event`/`future_events` scope routing과 Confirm 전 provider call 0회
+- detached future, attendee, complex recurrence future/rule 변경, 모든 linked future preflight 차단과 complex this-event rule 보존
+- context ID·notes·tasks를 보존하는 linked move/this-event reconciliation
+- available→superseded, available→undone+restored와 one-shot session token 무효화
+- 반복·detached·delete Undo 금지와 stale after-snapshot 역방향 write 차단
+- EventKit save 뒤 post-save occurrence receipt를 확정하지 못한 부분 성공에서 editor/review 종료, refresh, 동일 write 재시도 차단과 local data·log 불변
+- detached ordinary edit의 과거 recurrence end 허용과 all-day/floating reference-zone drift에서 변경하지 않은 recurrence end 보존
+- 전체 **121 tests, 0 failures, 0 unexpected**, unsigned Release·ad-hoc signed Debug·strict codesign 통과
+- 자동 test 전후 production DB 불변. signed app bootstrap에서는 sandbox DB에 `v2_event_change_log`가 additive 적용되고 integrity/FK 정상·change log 0행임을 별도로 확인
+
+상세 명령·artifact·DB 수치와 실계정 미검증 상태는 구현 로그와 Exchange compatibility 문서에 기록한다.
 
 ## Beta gate
 

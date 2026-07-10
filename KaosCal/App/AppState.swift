@@ -95,6 +95,21 @@ struct CalendarEventEditorSession: Equatable, Identifiable {
     let initialDraft: CalendarEventDraft
     let writableCalendars: [CalendarSource]
     let mutationContext: EventMutationContext
+    let mutationImpact: EventMutationImpact?
+
+    init(
+        target: CalendarEventEditorTarget,
+        initialDraft: CalendarEventDraft,
+        writableCalendars: [CalendarSource],
+        mutationContext: EventMutationContext,
+        mutationImpact: EventMutationImpact? = nil
+    ) {
+        self.target = target
+        self.initialDraft = initialDraft
+        self.writableCalendars = writableCalendars
+        self.mutationContext = mutationContext
+        self.mutationImpact = mutationImpact
+    }
 
     var id: String {
         switch target {
@@ -110,6 +125,47 @@ enum CalendarEventEditorOperationState: Equatable {
     case idle
     case saving
     case deleting
+}
+
+struct CalendarEventMutationPreview: Equatable, Identifiable {
+    let original: DisplayEvent
+    let draft: CalendarEventDraft
+    let scope: CalendarEventMutationScope
+    let mutationContext: EventMutationContext
+    let impact: EventMutationImpact?
+    let changedFields: Set<CalendarEventChangedField>
+
+    var id: String {
+        [
+            original.id,
+            scope.rawValue,
+            changedFields.map(\.rawValue).sorted().joined(separator: ",")
+        ].joined(separator: "#")
+    }
+}
+
+private struct CalendarEventUndoCandidate {
+    let contextID: String
+    let changeID: String
+    let beforeDraft: CalendarEventDraft
+    let afterEvent: DisplayEvent
+}
+
+private enum EventMutationSafetyError: LocalizedError {
+    case linkedFutureSeriesDeferred
+    case confirmationUnavailable
+    case undoUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .linkedFutureSeriesDeferred:
+            "This Event Brief is linked to one occurrence. KaosCal will not change this and future occurrences until every affected Brief can be reconciled safely."
+        case .confirmationUnavailable:
+            "The prepared event change is no longer current. Review the editor and prepare it again."
+        case .undoUnavailable:
+            "The last calendar change is no longer available to undo."
+        }
+    }
 }
 
 private struct FailedNotesDraft {
@@ -136,6 +192,10 @@ final class AppState: ObservableObject {
     @Published private(set) var eventEditorSession: CalendarEventEditorSession?
     @Published private(set) var eventEditorOperationState: CalendarEventEditorOperationState = .idle
     @Published private(set) var eventEditorError: String?
+    @Published private(set) var pendingEventMutation: CalendarEventMutationPreview?
+    @Published private(set) var lastEventMutationUndoAvailable = false
+    @Published private(set) var eventUndoError: String?
+    @Published private(set) var isUndoingEventMutation = false
 
     let calendar: Calendar
     let contextStore: ContextStore?
@@ -148,6 +208,7 @@ final class AppState: ObservableObject {
     private var activeBriefEvent: DisplayEvent?
     private var persistedEventNotes = ""
     private var failedNotesDrafts: [String: FailedNotesDraft] = [:]
+    private var lastEventMutationUndoCandidate: CalendarEventUndoCandidate?
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
@@ -722,6 +783,16 @@ final class AppState: ObservableObject {
             if case .confirmationRequired = mutationContext {
                 throw CalendarEventWriteError.localIdentityConfirmationRequired
             }
+            let mutationImpact: EventMutationImpact?
+            if case let .linked(contextID) = mutationContext,
+               let contextStore {
+                mutationImpact = try contextStore.mutationImpact(
+                    contextID: contextID,
+                    recentHistoryLimit: 5
+                )
+            } else {
+                mutationImpact = nil
+            }
             let writableCalendars = calendarSources.filter(\.isWritable)
             guard writableCalendars.contains(where: {
                 $0.id == event.calendarIdentifier
@@ -735,7 +806,8 @@ final class AppState: ObservableObject {
                     calendar: calendar
                 ),
                 writableCalendars: writableCalendars,
-                mutationContext: mutationContext
+                mutationContext: mutationContext,
+                mutationImpact: mutationImpact
             )
             eventEditorOperationState = .idle
         } catch {
@@ -745,7 +817,14 @@ final class AppState: ObservableObject {
 
     func cancelEventEditor() {
         guard eventEditorOperationState == .idle else { return }
+        pendingEventMutation = nil
         eventEditorSession = nil
+        eventEditorError = nil
+    }
+
+    func cancelPendingEventMutation() {
+        guard eventEditorOperationState == .idle else { return }
+        pendingEventMutation = nil
         eventEditorError = nil
     }
 
@@ -755,51 +834,87 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func saveEventEditor(_ draft: CalendarEventDraft) async -> Bool {
-        guard let session = eventEditorSession else { return false }
+        await saveEventEditor(draft, scope: nil)
+    }
+
+    @discardableResult
+    func saveEventEditor(
+        _ draft: CalendarEventDraft,
+        scope requestedScope: CalendarEventMutationScope?
+    ) async -> Bool {
+        guard let session = eventEditorSession,
+              eventEditorOperationState == .idle else { return false }
         eventEditorError = nil
-        eventEditorOperationState = .saving
-        defer {
-            if eventEditorOperationState == .saving {
-                eventEditorOperationState = .idle
-            }
-        }
 
         do {
-            let normalized = try draft.validated(calendar: calendar)
-            let updated: DisplayEvent
+            let enforceRecurrenceEndBoundary: Bool = switch session.target {
+            case .newEvent:
+                true
+            case .existing:
+                draft.recurrence != session.initialDraft.recurrence
+            }
+            let normalized = try draft.validated(
+                calendar: calendar,
+                enforceRecurrenceEndBoundary:
+                    enforceRecurrenceEndBoundary,
+                rebaseRecurrenceEndDate:
+                    enforceRecurrenceEndBoundary
+            )
             switch session.target {
             case .newEvent:
-                updated = try calendarProvider.createEvent(normalized)
-            case let .existing(original):
-                try validateOriginalWritePolicy(original)
-                if case .linked = session.mutationContext,
-                   normalized.calendarIdentifier
-                    != original.calendarIdentifier {
-                    throw CalendarEventWriteError.linkedCalendarMoveDeferred
-                }
-                updated = try calendarProvider.updateEvent(
-                    original,
-                    with: normalized
-                )
-                if case let .linked(contextID) = session.mutationContext,
-                   let contextStore {
-                    do {
-                        try contextStore.rebindUserApprovedMutation(
-                            contextID: contextID,
-                            to: updated
-                        )
-                    } catch {
-                        await refreshCalendarData()
-                        eventEditorError = "The calendar event was saved, but its local Event Brief could not be refreshed. Your local data was kept. \(Self.message(for: error))"
-                        return false
+                eventEditorOperationState = .saving
+                defer {
+                    if eventEditorOperationState == .saving {
+                        eventEditorOperationState = .idle
                     }
                 }
-            }
+                let created = try calendarProvider.createEvent(normalized)
+                invalidateEventUndoCandidate()
+                pendingEventMutation = nil
+                eventEditorSession = nil
+                eventEditorOperationState = .idle
+                await focusWrittenEvent(created)
+                return true
+            case let .existing(original):
+                try validateOriginalWritePolicy(original)
+                let scope = try mutationScope(
+                    for: original,
+                    requested: requestedScope
+                )
+                let baseline = try session.initialDraft.validated(
+                    calendar: calendar,
+                    enforceRecurrenceEndBoundary: false,
+                    rebaseRecurrenceEndDate: false
+                )
+                let changedFields = normalized.changedFields(
+                    comparedTo: baseline
+                )
+                if changedFields.contains(.recurrence),
+                   original.isRecurring,
+                   scope != .futureEvents {
+                    throw CalendarEventWriteError
+                        .recurrenceChangeRequiresFutureScope
+                }
+                if scope == .futureEvents,
+                   case .linked = session.mutationContext {
+                    throw EventMutationSafetyError
+                        .linkedFutureSeriesDeferred
+                }
 
-            eventEditorSession = nil
-            eventEditorOperationState = .idle
-            await focusWrittenEvent(updated)
-            return true
+                let preview = CalendarEventMutationPreview(
+                    original: original,
+                    draft: normalized,
+                    scope: scope,
+                    mutationContext: session.mutationContext,
+                    impact: session.mutationImpact,
+                    changedFields: changedFields
+                )
+                if requiresImpactConfirmation(preview) {
+                    pendingEventMutation = preview
+                    return false
+                }
+                return await performEventMutation(preview)
+            }
         } catch {
             eventEditorError = Self.message(for: error)
             return false
@@ -807,11 +922,33 @@ final class AppState: ObservableObject {
     }
 
     @discardableResult
+    func confirmPendingEventMutation() async -> Bool {
+        guard let preview = pendingEventMutation,
+              let session = eventEditorSession,
+              case let .existing(original) = session.target,
+              original.id == preview.original.id else {
+            eventEditorError = Self.message(
+                for: EventMutationSafetyError.confirmationUnavailable
+            )
+            return false
+        }
+        return await performEventMutation(preview)
+    }
+
+    @discardableResult
     func deleteEventEditorTarget() async -> Bool {
+        await deleteEventEditorTarget(scope: nil)
+    }
+
+    @discardableResult
+    func deleteEventEditorTarget(
+        scope requestedScope: CalendarEventMutationScope?
+    ) async -> Bool {
         guard let session = eventEditorSession,
               case let .existing(original) = session.target else {
             return false
         }
+        guard eventEditorOperationState == .idle else { return false }
         eventEditorError = nil
         eventEditorOperationState = .deleting
         defer {
@@ -822,6 +959,10 @@ final class AppState: ObservableObject {
 
         do {
             try validateOriginalWritePolicy(original)
+            let scope = try mutationScope(
+                for: original,
+                requested: requestedScope
+            )
             switch session.mutationContext {
             case .linked:
                 throw CalendarEventWriteError.linkedDeleteDeferred
@@ -830,7 +971,14 @@ final class AppState: ObservableObject {
             case .none:
                 break
             }
-            try calendarProvider.deleteEvent(original)
+            let receipt = try calendarProvider.deleteEvent(
+                original,
+                scope: scope
+            )
+            if receipt.didWrite {
+                invalidateEventUndoCandidate()
+            }
+            pendingEventMutation = nil
             eventEditorSession = nil
             eventEditorOperationState = .idle
             selectEvent(nil)
@@ -839,6 +987,226 @@ final class AppState: ObservableObject {
         } catch {
             eventEditorError = Self.message(for: error)
             return false
+        }
+    }
+
+    func canUndoLastEventMutation(for event: DisplayEvent) -> Bool {
+        guard lastEventMutationUndoAvailable,
+              let candidate = lastEventMutationUndoCandidate else {
+            return false
+        }
+        return Self.eventsShareStrongIdentity(
+            event,
+            candidate.afterEvent
+        )
+    }
+
+    func clearEventUndoError() {
+        eventUndoError = nil
+    }
+
+    @discardableResult
+    func undoLastEventMutation() async -> Bool {
+        guard !isUndoingEventMutation,
+              let candidate = lastEventMutationUndoCandidate,
+              let contextStore else {
+            eventUndoError = Self.message(
+                for: EventMutationSafetyError.undoUnavailable
+            )
+            return false
+        }
+
+        eventUndoError = nil
+        isUndoingEventMutation = true
+        defer { isUndoingEventMutation = false }
+
+        let receipt: CalendarEventMutationReceipt
+        do {
+            receipt = try calendarProvider.updateEvent(
+                candidate.afterEvent,
+                with: candidate.beforeDraft,
+                scope: .thisEvent
+            )
+        } catch let partial as CalendarEventMutationPartialSuccess {
+            invalidateEventUndoCandidate()
+            await refreshCalendarData()
+            eventUndoError = partial.localizedDescription
+            return false
+        } catch {
+            eventUndoError = Self.message(for: error)
+            return false
+        }
+
+        do {
+            _ = try contextStore.rebindAfterUndo(
+                contextID: candidate.contextID,
+                originalChangeID: candidate.changeID,
+                from: candidate.afterEvent,
+                to: receipt.event,
+                scope: .single
+            )
+        } catch {
+            invalidateEventUndoCandidate()
+            await refreshCalendarData()
+            eventUndoError = "The calendar change was undone, but the local Event Brief could not be rebound. Your local notes and tasks were kept. \(Self.message(for: error))"
+            return false
+        }
+
+        invalidateEventUndoCandidate()
+        await focusWrittenEvent(receipt.event)
+        return true
+    }
+
+    private func mutationScope(
+        for original: DisplayEvent,
+        requested: CalendarEventMutationScope?
+    ) throws -> CalendarEventMutationScope {
+        if original.isRecurring {
+            guard let requested else {
+                throw CalendarEventWriteError.recurringScopeRequired
+            }
+            if original.isDetached, requested == .futureEvents {
+                throw CalendarEventWriteError.detachedFutureScopeUnsupported
+            }
+            if requested == .futureEvents,
+               case .unsupported = original.recurrence {
+                throw CalendarEventWriteError.unsupportedRecurrence
+            }
+            return requested
+        }
+        if requested == .futureEvents {
+            throw CalendarEventWriteError.futureScopeRequiresRecurringEvent
+        }
+        return .thisEvent
+    }
+
+    private func requiresImpactConfirmation(
+        _ preview: CalendarEventMutationPreview
+    ) -> Bool {
+        preview.original.isRecurring
+            || preview.changedFields.contains(.calendar)
+            || preview.changedFields.contains(.time)
+            || preview.changedFields.contains(.recurrence)
+    }
+
+    @discardableResult
+    private func performEventMutation(
+        _ preview: CalendarEventMutationPreview
+    ) async -> Bool {
+        guard eventEditorOperationState == .idle else { return false }
+        eventEditorOperationState = .saving
+        eventEditorError = nil
+        defer {
+            if eventEditorOperationState == .saving {
+                eventEditorOperationState = .idle
+            }
+        }
+
+        let receipt: CalendarEventMutationReceipt
+        do {
+            receipt = try calendarProvider.updateEvent(
+                preview.original,
+                with: preview.draft,
+                scope: preview.scope
+            )
+        } catch let partial as CalendarEventMutationPartialSuccess {
+            pendingEventMutation = nil
+            invalidateEventUndoCandidate()
+            eventEditorSession = nil
+            eventEditorOperationState = .idle
+            await refreshCalendarData()
+            eventEditorError = partial.localizedDescription
+            return false
+        } catch {
+            eventEditorError = Self.message(for: error)
+            return false
+        }
+
+        if receipt.didWrite {
+            invalidateEventUndoCandidate()
+        }
+
+        if receipt.didWrite,
+           case let .linked(contextID) = preview.mutationContext,
+           let contextStore {
+            let undoState: EventChangeUndoState =
+                !preview.original.isRecurring
+                    && !preview.draft.recurrence.isRecurring
+                    && preview.scope == .thisEvent
+                    && !preview.changedFields.contains(.recurrence)
+                    && !preview.changedFields
+                        .isDisjoint(with: [.calendar, .time])
+                ? .available
+                : .unavailable
+            do {
+                let log = try contextStore.rebindAndRecordMutation(
+                    contextID: contextID,
+                    from: preview.original,
+                    to: receipt.event,
+                    changeType: Self.changeType(
+                        for: preview.changedFields
+                    ),
+                    scope: Self.changeScope(
+                        for: preview.original,
+                        mutationScope: preview.scope
+                    ),
+                    undoState: undoState
+                )
+                if undoState == .available {
+                    let beforeDraft = try CalendarEventDraft(
+                        event: preview.original,
+                        calendar: calendar
+                    ).validated(
+                        calendar: calendar,
+                        enforceRecurrenceEndBoundary: false,
+                        rebaseRecurrenceEndDate: false
+                    )
+                    lastEventMutationUndoCandidate =
+                        CalendarEventUndoCandidate(
+                            contextID: contextID,
+                            changeID: log.id,
+                            beforeDraft: beforeDraft,
+                            afterEvent: receipt.event
+                        )
+                    lastEventMutationUndoAvailable = true
+                }
+            } catch {
+                pendingEventMutation = nil
+                invalidateEventUndoCandidate()
+                await refreshCalendarData()
+                eventEditorError = "The calendar event was saved, but its local Event Brief could not be refreshed. Your local data was kept. \(Self.message(for: error))"
+                return false
+            }
+        }
+
+        pendingEventMutation = nil
+        eventEditorSession = nil
+        eventEditorOperationState = .idle
+        await focusWrittenEvent(receipt.event)
+        return true
+    }
+
+    private func invalidateEventUndoCandidate() {
+        lastEventMutationUndoCandidate = nil
+        lastEventMutationUndoAvailable = false
+    }
+
+    private static func changeType(
+        for fields: Set<CalendarEventChangedField>
+    ) -> EventChangeType {
+        if fields.contains(.calendar) { return .moved }
+        if fields.contains(.recurrence) { return .recurrenceChanged }
+        return .detailsUpdated
+    }
+
+    private static func changeScope(
+        for event: DisplayEvent,
+        mutationScope: CalendarEventMutationScope
+    ) -> EventChangeScope {
+        guard event.isRecurring else { return .single }
+        switch mutationScope {
+        case .thisEvent: return .thisEvent
+        case .futureEvents: return .futureEvents
         }
     }
 
@@ -907,6 +1275,10 @@ final class AppState: ObservableObject {
     }
 
     func refreshCalendarData(in requestedInterval: DateInterval? = nil) async {
+        if pendingEventMutation != nil {
+            pendingEventMutation = nil
+            eventEditorError = "Calendar data was refreshed. Review the current event and prepare the change again."
+        }
         calendarAuthorizationState = calendarProvider.authorizationState
         guard calendarAuthorizationState.canReadEvents else {
             clearCalendarData()
@@ -1204,9 +1576,6 @@ final class AppState: ObservableObject {
         if event.isReadOnly {
             throw CalendarEventWriteError.readOnlyCalendar
         }
-        if event.isRecurring || event.occurrenceDate != nil || event.isDetached {
-            throw CalendarEventWriteError.recurringScopeRequired
-        }
     }
 
     private func focusWrittenEvent(_ event: DisplayEvent) async {
@@ -1254,9 +1623,13 @@ final class AppState: ObservableObject {
 
     private func clearCalendarData() {
         rangeLoadTask?.cancel()
+        pendingEventMutation = nil
         eventEditorSession = nil
         eventEditorOperationState = .idle
         eventEditorError = nil
+        invalidateEventUndoCandidate()
+        eventUndoError = nil
+        isUndoingEventMutation = false
         selectEvent(nil)
         calendarSources = []
         events = []
@@ -1290,5 +1663,29 @@ final class AppState: ObservableObject {
             return description
         }
         return error.localizedDescription
+    }
+
+    private static func eventsShareStrongIdentity(
+        _ lhs: DisplayEvent,
+        _ rhs: DisplayEvent
+    ) -> Bool {
+        if lhs.id == rhs.id { return true }
+        if let identifier = rhs.eventIdentifier,
+           !identifier.isEmpty,
+           lhs.eventIdentifier == identifier {
+            return true
+        }
+        if let identifier = rhs.calendarItemIdentifier,
+           !identifier.isEmpty,
+           lhs.calendarItemIdentifier == identifier {
+            return true
+        }
+        if let identifier = rhs.calendarItemExternalIdentifier,
+           !identifier.isEmpty,
+           lhs.calendarIdentifier == rhs.calendarIdentifier,
+           lhs.calendarItemExternalIdentifier == identifier {
+            return true
+        }
+        return false
     }
 }

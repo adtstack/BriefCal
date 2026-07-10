@@ -1,3 +1,4 @@
+import EventKit
 import XCTest
 @testable import KaosCal
 
@@ -57,6 +58,305 @@ final class CalendarEventEditingTests: XCTestCase {
                 .invalidTimeZone("Mars/Olympus")
             )
         }
+    }
+
+    func testBasicRecurrenceValidationAndDraftRoundTrip() throws {
+        let weekly = BasicRecurrenceRule(
+            frequency: .weekly,
+            interval: 2,
+            weekdays: [.monday, .wednesday],
+            end: .afterOccurrences(8)
+        )
+        var draft = timedDraft(timeZoneIdentifier: "GMT")
+        draft.recurrence = .basic(weekly)
+
+        let validated = try draft.validated(calendar: calendar)
+        XCTAssertEqual(validated.recurrence, .basic(weekly))
+
+        for frequency in [
+            CalendarRecurrenceFrequency.daily,
+            .monthly,
+            .yearly
+        ] {
+            var frequencyDraft = draft
+            frequencyDraft.recurrence = .basic(BasicRecurrenceRule(
+                frequency: frequency,
+                interval: 3,
+                end: .onDate(date(2027, 7, 10))
+            ))
+            XCTAssertNoThrow(
+                try frequencyDraft.validated(calendar: calendar)
+            )
+        }
+
+        let event = makeEvent(
+            id: "recurrence-round-trip",
+            isRecurring: true,
+            recurrence: .basic(weekly)
+        )
+        XCTAssertEqual(
+            CalendarEventDraft(event: event, calendar: calendar).recurrence,
+            .basic(weekly)
+        )
+    }
+
+    func testRecurrenceValidationRejectsInvalidShapes() {
+        let invalidRules: [(
+            BasicRecurrenceRule,
+            CalendarEventWriteError
+        )] = [
+            (
+                BasicRecurrenceRule(frequency: .daily, interval: 0),
+                .invalidRecurrenceInterval
+            ),
+            (
+                BasicRecurrenceRule(frequency: .weekly),
+                .invalidRecurrenceWeekdays
+            ),
+            (
+                BasicRecurrenceRule(
+                    frequency: .daily,
+                    weekdays: [.friday]
+                ),
+                .invalidRecurrenceWeekdays
+            ),
+            (
+                BasicRecurrenceRule(
+                    frequency: .monthly,
+                    end: .afterOccurrences(0)
+                ),
+                .invalidRecurrenceEnd
+            ),
+            (
+                BasicRecurrenceRule(
+                    frequency: .yearly,
+                    end: .onDate(date(2025, 7, 10))
+                ),
+                .invalidRecurrenceEnd
+            )
+        ]
+
+        for (rule, expectedError) in invalidRules {
+            var draft = timedDraft(timeZoneIdentifier: "GMT")
+            draft.recurrence = .basic(rule)
+            XCTAssertThrowsError(
+                try draft.validated(calendar: calendar)
+            ) { error in
+                XCTAssertEqual(
+                    error as? CalendarEventWriteError,
+                    expectedError
+                )
+            }
+        }
+    }
+
+    func testEventKitBasicRecurrenceMappingRoundTripsExactly() throws {
+        let eventStore = EKEventStore()
+        let provider = EventKitProvider(eventStore: eventStore)
+        let expectedRules: [CalendarEventRecurrence] = [
+            .basic(BasicRecurrenceRule(
+                frequency: .daily,
+                interval: 2
+            )),
+            .basic(BasicRecurrenceRule(
+                frequency: .weekly,
+                interval: 3,
+                weekdays: [.monday, .thursday],
+                end: .afterOccurrences(11)
+            )),
+            .basic(BasicRecurrenceRule(
+                frequency: .monthly,
+                end: .onDate(date(2027, 7, 10))
+            )),
+            .basic(BasicRecurrenceRule(
+                frequency: .yearly,
+                interval: 4
+            ))
+        ]
+
+        for expected in expectedRules {
+            let event = EKEvent(eventStore: eventStore)
+            event.startDate = date(2026, 7, 10, 9)
+            event.endDate = date(2026, 7, 10, 10)
+            event.timeZone = TimeZone(secondsFromGMT: 0)
+            event.recurrenceRules = try provider
+                .makeEventKitRecurrenceRules(for: expected)
+
+            XCTAssertEqual(
+                provider.recurrenceRepresentation(for: event),
+                expected
+            )
+        }
+    }
+
+    func testEventKitComplexAndMultipleRecurrencesStayUnsupported() throws {
+        let eventStore = EKEventStore()
+        let provider = EventKitProvider(eventStore: eventStore)
+        let event = EKEvent(eventStore: eventStore)
+        event.startDate = date(2026, 7, 10, 9)
+        event.endDate = date(2026, 7, 10, 10)
+        event.recurrenceRules = [
+            EKRecurrenceRule(
+                recurrenceWith: .daily,
+                interval: 1,
+                end: nil
+            ),
+            EKRecurrenceRule(
+                recurrenceWith: .weekly,
+                interval: 1,
+                end: nil
+            )
+        ]
+
+        guard case let .unsupported(multiple) = provider
+            .recurrenceRepresentation(for: event) else {
+            return XCTFail("Expected multiple rules to stay unsupported")
+        }
+        XCTAssertEqual(multiple.summary, "Multiple recurrence rules")
+        XCTAssertFalse(multiple.signature.isEmpty)
+
+        event.recurrenceRules = [EKRecurrenceRule(
+            recurrenceWith: .monthly,
+            interval: 1,
+            daysOfTheWeek: [EKRecurrenceDayOfWeek(
+                .monday,
+                weekNumber: 1
+            )],
+            daysOfTheMonth: nil,
+            monthsOfTheYear: nil,
+            weeksOfTheYear: nil,
+            daysOfTheYear: nil,
+            setPositions: nil,
+            end: nil
+        )]
+        guard case let .unsupported(advanced) = provider
+            .recurrenceRepresentation(for: event) else {
+            return XCTFail("Expected ordinal rule to stay unsupported")
+        }
+        XCTAssertEqual(advanced.summary, "Advanced recurrence rule")
+        XCTAssertNotEqual(advanced.signature, multiple.signature)
+        XCTAssertThrowsError(
+            try provider.makeEventKitRecurrenceRules(
+                for: .unsupported(advanced)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? CalendarEventWriteError,
+                .unsupportedRecurrence
+            )
+        }
+    }
+
+    func testProviderSemanticOccurrenceMatchingUsesOriginalAnchor() {
+        let provider = EventKitProvider(eventStore: EKEventStore())
+        let originalAnchor = date(2026, 7, 10, 9)
+        let original = makeEvent(
+            id: "occurrence-original",
+            isRecurring: true,
+            startDate: originalAnchor,
+            occurrenceDate: originalAnchor
+        )
+        let detachedMove = makeEvent(
+            id: "occurrence-detached",
+            isRecurring: true,
+            startDate: date(2026, 7, 10, 14),
+            occurrenceDate: originalAnchor,
+            isDetached: true
+        )
+        let sibling = makeEvent(
+            id: "occurrence-sibling",
+            isRecurring: true,
+            startDate: date(2026, 7, 17, 9),
+            occurrenceDate: date(2026, 7, 17, 9)
+        )
+
+        XCTAssertTrue(
+            provider.semanticOccurrenceMatches(detachedMove, original)
+        )
+        XCTAssertFalse(provider.semanticOccurrenceMatches(sibling, original))
+
+        let localStart = LocalDateTimeComponents(
+            date: date(2026, 7, 10, 9),
+            calendar: calendar
+        )
+        let localEnd = LocalDateTimeComponents(
+            date: date(2026, 7, 10, 10),
+            calendar: calendar
+        )
+        let floatingBefore = makeFloatingEvent(
+            id: "floating-anchor-before",
+            rawStart: date(2026, 7, 10, 9),
+            rawEnd: date(2026, 7, 10, 10),
+            civilStart: localStart,
+            civilEnd: localEnd
+        )
+        let floatingAfterDefaultZoneChange = makeFloatingEvent(
+            id: "floating-anchor-after",
+            rawStart: date(2026, 7, 10, 16),
+            rawEnd: date(2026, 7, 10, 17),
+            civilStart: localStart,
+            civilEnd: localEnd
+        )
+        XCTAssertTrue(provider.semanticOccurrenceMatches(
+            floatingAfterDefaultZoneChange,
+            floatingBefore
+        ))
+    }
+
+    func testFakeProviderReturnsScopeAwareMutationReceipts() throws {
+        let provider = makeProvider()
+        var draft = timedDraft(timeZoneIdentifier: "GMT")
+        draft.recurrence = .basic(BasicRecurrenceRule(
+            frequency: .weekly,
+            weekdays: [.friday]
+        ))
+        let created = try provider.createEvent(draft)
+        XCTAssertTrue(created.isRecurring)
+        XCTAssertEqual(created.recurrence, draft.recurrence)
+
+        var update = CalendarEventDraft(event: created, calendar: calendar)
+        update.title = "Updated series"
+        update.recurrence = .basic(BasicRecurrenceRule(
+            frequency: .weekly,
+            interval: 2,
+            weekdays: [.friday]
+        ))
+        let receipt = try provider.updateEvent(
+            created,
+            with: update,
+            scope: .futureEvents
+        )
+
+        XCTAssertTrue(receipt.didWrite)
+        XCTAssertEqual(receipt.scope, .futureEvents)
+        XCTAssertEqual(receipt.changedFields, [.title, .recurrence])
+        XCTAssertEqual(provider.lastUpdateScope, .futureEvents)
+        XCTAssertEqual(receipt.event.title, "Updated series")
+
+        let deletion = try provider.deleteEvent(
+            receipt.event,
+            scope: .futureEvents
+        )
+        XCTAssertEqual(deletion.scope, .futureEvents)
+        XCTAssertEqual(deletion.changedFields, [.deletion])
+        XCTAssertEqual(provider.lastDeleteScope, .futureEvents)
+    }
+
+    func testFakeProviderNoOpReceiptDoesNotClaimAWrite() throws {
+        let original = makeEvent(id: "no-op")
+        let provider = makeProvider(events: [original])
+        let draft = CalendarEventDraft(event: original, calendar: calendar)
+
+        let receipt = try provider.updateEvent(
+            original,
+            with: draft,
+            scope: .thisEvent
+        )
+
+        XCTAssertFalse(receipt.didWrite)
+        XCTAssertTrue(receipt.changedFields.isEmpty)
+        XCTAssertEqual(receipt.event, original)
+        XCTAssertEqual(provider.events, [original])
     }
 
     func testAllDayValidationUsesExclusiveEndAndNoTimeZone() throws {
@@ -384,7 +684,12 @@ final class CalendarEventEditingTests: XCTestCase {
         draft.endDate = draft.endDate.addingTimeInterval(7_200)
         draft.originalNotes = "Calendar event note"
 
-        let didUpdate = await state.saveEventEditor(draft)
+        let didRequestUpdate = await state.saveEventEditor(draft)
+        XCTAssertFalse(didRequestUpdate)
+        XCTAssertNotNil(state.pendingEventMutation)
+        XCTAssertEqual(provider.updateCallCount, 0)
+
+        let didUpdate = await state.confirmPendingEventMutation()
         XCTAssertTrue(didUpdate)
         XCTAssertEqual(provider.updateCallCount, 1)
         let updated = try XCTUnwrap(provider.events.first)
@@ -401,10 +706,12 @@ final class CalendarEventEditingTests: XCTestCase {
         XCTAssertEqual(snapshot.tasks.map(\.title), ["Prepare"])
     }
 
-    func testLinkedCalendarMoveAndDeleteStopBeforeProviderWrite() async throws {
+    func testLinkedCalendarMoveConfirmsAndRebindsWhileDeleteStaysBlocked() async throws {
         let original = makeEvent(id: "linked-block")
         let store = ContextStore(database: try AppDatabase.inMemory())
-        _ = try store.saveNotes(for: original, notes: "Keep this")
+        let context = try XCTUnwrap(
+            store.saveNotes(for: original, notes: "Keep this")
+        )
         let provider = makeProvider(events: [original])
         provider.calendars = [writableExchangeCalendar, writableLocalCalendar]
         let state = makeState(provider: provider, store: store)
@@ -417,12 +724,24 @@ final class CalendarEventEditingTests: XCTestCase {
         let didMove = await state.saveEventEditor(draft)
         XCTAssertFalse(didMove)
         XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertNotNil(state.pendingEventMutation)
         XCTAssertNotNil(state.eventEditorSession)
-        XCTAssertEqual(
-            state.eventEditorError,
-            CalendarEventWriteError.linkedCalendarMoveDeferred
-                .localizedDescription
+
+        let didConfirmMove = await state.confirmPendingEventMutation()
+        XCTAssertTrue(didConfirmMove)
+        XCTAssertEqual(provider.updateCallCount, 1)
+        let moved = try XCTUnwrap(state.selectedEvent)
+        XCTAssertEqual(moved.calendarIdentifier, writableLocalCalendar.id)
+        let rebound = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
         )
+        XCTAssertEqual(rebound.context.notes, "Keep this")
+        XCTAssertEqual(
+            rebound.link.calendarIdentifier,
+            writableLocalCalendar.id
+        )
+
+        state.beginEditingSelectedEvent()
 
         let didDelete = await state.deleteEventEditorTarget()
         XCTAssertFalse(didDelete)
@@ -445,7 +764,12 @@ final class CalendarEventEditingTests: XCTestCase {
         var draft = try XCTUnwrap(state.eventEditorSession?.initialDraft)
         draft.calendarIdentifier = writableLocalCalendar.id
 
-        let didMove = await state.saveEventEditor(draft)
+        let didRequestMove = await state.saveEventEditor(draft)
+        XCTAssertFalse(didRequestMove)
+        XCTAssertNotNil(state.pendingEventMutation)
+        XCTAssertEqual(provider.updateCallCount, 0)
+
+        let didMove = await state.confirmPendingEventMutation()
         XCTAssertTrue(didMove)
         XCTAssertEqual(provider.updateCallCount, 1)
         XCTAssertEqual(state.selectedEvent?.calendarIdentifier, writableLocalCalendar.id)
@@ -535,12 +859,11 @@ final class CalendarEventEditingTests: XCTestCase {
         XCTAssertEqual(conflictAfter.tasks, conflictBefore.tasks)
     }
 
-    func testOriginalWritePolicyBlocksReadOnlyMeetingAndRecurringEvents() async {
+    func testOriginalWritePolicyBlocksReadOnlyAndMeetingEvents() async {
         let blockedEvents = [
             makeEvent(id: "read-only", isReadOnly: true),
             makeEvent(id: "invitation", isInvitation: true),
-            makeEvent(id: "meeting", hasAttendees: true),
-            makeEvent(id: "recurring", isRecurring: true)
+            makeEvent(id: "meeting", hasAttendees: true)
         ]
 
         for event in blockedEvents {
@@ -555,6 +878,124 @@ final class CalendarEventEditingTests: XCTestCase {
             XCTAssertNotNil(state.eventEditorError)
             XCTAssertEqual(provider.updateCallCount, 0)
             XCTAssertEqual(provider.deleteCallCount, 0)
+        }
+    }
+
+    func testRecurringEventRequiresExplicitScopeAndConfirmation() async throws {
+        let recurring = makeEvent(id: "recurring", isRecurring: true)
+        let provider = makeProvider(events: [recurring])
+        let state = makeState(provider: provider)
+        await state.loadCalendarStatus()
+        state.selectEvent(recurring.id)
+        state.beginEditingSelectedEvent()
+        var draft = try XCTUnwrap(state.eventEditorSession?.initialDraft)
+        draft.title = "This occurrence changed"
+
+        let withoutScope = await state.saveEventEditor(draft)
+        XCTAssertFalse(withoutScope)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(
+            state.eventEditorError,
+            CalendarEventWriteError.recurringScopeRequired.localizedDescription
+        )
+
+        state.clearEventEditorError()
+        let requested = await state.saveEventEditor(
+            draft,
+            scope: .thisEvent
+        )
+        XCTAssertFalse(requested)
+        XCTAssertNotNil(state.pendingEventMutation)
+        XCTAssertEqual(provider.updateCallCount, 0)
+
+        let confirmed = await state.confirmPendingEventMutation()
+        XCTAssertTrue(confirmed)
+        XCTAssertEqual(provider.updateCallCount, 1)
+        XCTAssertEqual(provider.lastUpdateScope, .thisEvent)
+        XCTAssertEqual(state.selectedEvent?.title, "This occurrence changed")
+    }
+
+    func testRecurringRuleChangeRequiresFutureScope() async throws {
+        let recurring = makeEvent(id: "rule-scope", isRecurring: true)
+        let provider = makeProvider(events: [recurring])
+        let state = makeState(provider: provider)
+        await state.loadCalendarStatus()
+        state.selectEvent(recurring.id)
+        state.beginEditingSelectedEvent()
+        var draft = try XCTUnwrap(state.eventEditorSession?.initialDraft)
+        draft.recurrence = .basic(BasicRecurrenceRule(
+            frequency: .weekly,
+            interval: 2,
+            weekdays: [.friday]
+        ))
+
+        let thisEvent = await state.saveEventEditor(
+            draft,
+            scope: .thisEvent
+        )
+        XCTAssertFalse(thisEvent)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(
+            state.eventEditorError,
+            CalendarEventWriteError
+                .recurrenceChangeRequiresFutureScope.localizedDescription
+        )
+
+        state.clearEventEditorError()
+        let requestedFuture = await state.saveEventEditor(
+            draft,
+            scope: .futureEvents
+        )
+        XCTAssertFalse(requestedFuture)
+        XCTAssertNotNil(state.pendingEventMutation)
+        XCTAssertEqual(provider.updateCallCount, 0)
+
+        let confirmed = await state.confirmPendingEventMutation()
+        XCTAssertTrue(confirmed)
+        XCTAssertEqual(provider.lastUpdateScope, .futureEvents)
+        XCTAssertEqual(state.selectedEvent?.recurrence, draft.recurrence)
+    }
+
+    func testDetachedAndUnsupportedFutureScopesStopBeforeProviderWrite() async {
+        let unsupported = CalendarEventRecurrence.unsupported(
+            UnsupportedRecurrenceSnapshot(
+                summary: "Complex Exchange rule",
+                signature: "complex:v1"
+            )
+        )
+        let blocked = [
+            makeEvent(
+                id: "detached-future",
+                isRecurring: true,
+                isDetached: true
+            ),
+            makeEvent(
+                id: "unsupported-future",
+                isRecurring: true,
+                recurrence: unsupported
+            )
+        ]
+
+        for event in blocked {
+            let provider = makeProvider(events: [event])
+            let state = makeState(provider: provider)
+            await state.loadCalendarStatus()
+            state.selectEvent(event.id)
+            state.beginEditingSelectedEvent()
+            guard var draft = state.eventEditorSession?.initialDraft else {
+                return XCTFail("Expected safe this-event editing to open")
+            }
+            draft.title = "Future write must stop"
+
+            let didSave = await state.saveEventEditor(
+                draft,
+                scope: .futureEvents
+            )
+
+            XCTAssertFalse(didSave)
+            XCTAssertEqual(provider.updateCallCount, 0)
+            XCTAssertNil(state.pendingEventMutation)
+            XCTAssertNotNil(state.eventEditorError)
         }
     }
 
@@ -666,9 +1107,19 @@ final class CalendarEventEditingTests: XCTestCase {
         isReadOnly: Bool = false,
         isInvitation: Bool = false,
         hasAttendees: Bool = false,
-        isRecurring: Bool = false
+        isRecurring: Bool = false,
+        recurrence: CalendarEventRecurrence? = nil,
+        startDate: Date? = nil,
+        occurrenceDate: Date? = nil,
+        isDetached: Bool = false
     ) -> DisplayEvent {
-        let start = date(2026, 7, 10, 9)
+        let start = startDate ?? date(2026, 7, 10, 9)
+        let recurrence = recurrence ?? (isRecurring
+            ? .basic(BasicRecurrenceRule(
+                frequency: .weekly,
+                weekdays: [.friday]
+            ))
+            : .none)
         return DisplayEvent(
             id: id,
             eventIdentifier: "event-\(id)",
@@ -689,13 +1140,14 @@ final class CalendarEventEditingTests: XCTestCase {
                 timeZoneIdentifier: calendar.timeZone.identifier
             ),
             isRecurring: isRecurring,
-            occurrenceDate: nil,
+            occurrenceDate: occurrenceDate ?? (isRecurring ? start : nil),
             occurrenceLocalComponents: nil,
-            isDetached: false,
+            isDetached: isDetached,
             isReadOnly: isReadOnly,
             isInvitation: isInvitation,
             hasAttendees: hasAttendees,
-            originalNotes: nil
+            originalNotes: nil,
+            recurrence: recurrence
         )
     }
 

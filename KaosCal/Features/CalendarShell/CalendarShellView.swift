@@ -619,6 +619,16 @@ private struct EventInspectorView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                if event.isRecurring {
+                    Label(
+                        event.isDetached
+                            ? "Detached recurring occurrence"
+                            : "Recurring occurrence",
+                        systemImage: "repeat"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
 
                 if let restriction = appState.originalEventWriteRestriction(
                     for: event
@@ -632,6 +642,26 @@ private struct EventInspectorView: View {
                     }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("inspector.editOriginal")
+                }
+
+                if appState.canUndoLastEventMutation(for: event) {
+                    Button {
+                        Task {
+                            await appState.undoLastEventMutation()
+                        }
+                    } label: {
+                        Label("Undo Last Event Change", systemImage: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(appState.isUndoingEventMutation)
+                    .accessibilityIdentifier("inspector.undoEventMutation")
+                }
+
+                if let message = appState.eventUndoError {
+                    LocalOperationErrorView(
+                        message: message,
+                        dismiss: appState.clearEventUndoError
+                    )
                 }
             }
 

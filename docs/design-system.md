@@ -52,7 +52,7 @@ Event Brief Panel:
 - 선택 일정의 title/time/source
 - Before/During/After
 - KaosCal notes
-- change history 요약은 Phase 6에서 추가
+- change history 요약은 Phase 6 impact review에서 우선 표시하고, 상시 전체 history panel은 후속 polish로 둠
 - read-only 설명
 
 Task Center:
@@ -130,16 +130,16 @@ After:
 - event source를 누르면 target range를 불러온 뒤 강한 occurrence match만 Day 화면에서 연다. 못 찾으면 task는 유지하고 오류를 표시한다.
 - loading, empty, query failed를 서로 다른 상태로 표시하며 실패에는 Retry를 제공한다.
 
-## Phase 5 원본 일정 Editor
+## 원본 일정 Editor
 
 - toolbar plus와 `⌘N`은 580×700 sheet를 열고, 선택 일정 inspector의 `Edit Original Event`도 같은 editor를 사용한다.
 - sheet는 title, writable calendar, location, time/all-day, time zone, **Original event notes** 순서로 배치한다. 원본 notes 아래에는 local Event Brief와 저장 위치가 다르다는 문구를 항상 표시한다.
 - 종일 종료는 사람이 보는 포함 날짜로 표시하고, EventKit 배타 종료라는 설명을 붙인다.
 - floating toggle 또는 IANA time zone 입력이 실제 draft에 적용되기 전에는 Save를 비활성화한다. Apply 뒤 `Keep local time`/`Keep instant`의 두 결과를 confirmation dialog에서 비교한다.
 - DST gap·overlap처럼 local time이 존재하지 않거나 두 번 생기면 임의로 고르지 않고 field 가까이에 오류를 표시한다.
-- local Brief가 연결된 일정은 calendar picker와 delete를 잠그고 각각 Phase 6 safe move, Phase 7 orphan review 이유를 설명한다. 같은 calendar의 title/time/all-day/time zone/location/original notes는 Save로 수정할 수 있다.
-- read-only, attendee meeting/invitation, recurrence/detached occurrence는 inspector에서 편집 버튼 대신 잠금 이유를 표시한다. local Brief 편집은 계속 가능하다.
-- 저장 중에는 progress와 interactive-dismiss 차단을 사용한다. 외부 변경, identity 모호성, EventKit 성공·local rebind 실패는 sheet를 닫지 않고 복구 가능한 오류로 보여 준다.
+- local Brief가 연결된 일정도 calendar picker를 열어 두되, 이동·시간 의미·반복 변경은 impact review에서 확인한 뒤에만 write한다. linked delete는 Phase 7 orphan review 전까지 계속 잠그고 이유를 설명한다.
+- read-only, attendee meeting/invitation은 inspector에서 원본 편집 대신 잠금 이유를 표시한다. 지원 가능한 반복 occurrence는 명시적 scope로 편집하고, detached·complex rule의 unsafe future/rule 변경만 Calendar.app으로 안내한다. local Brief 편집은 계속 가능하다.
+- 저장 중에는 progress와 interactive-dismiss 차단을 사용한다. stale·identity 모호성은 write 전 복구 가능한 오류로 보여 준다. EventKit save 후 post-save occurrence를 확정하지 못한 부분 성공은 editor/review를 닫고 refresh한 뒤 “Do not retry·Calendar.app에서 확인”을 표시한다. local data는 보존하며 log·Undo를 만들지 않는다.
 - 한 번에 하나의 editor만 허용하고 sheet가 열려 있으면 toolbar와 `⌘N`을 비활성화한다.
 
 ## Source badge
@@ -159,20 +159,50 @@ read-only 상세 문구:
 KaosCal 체크리스트와 메모는 이 Mac에 저장할 수 있습니다.
 ```
 
-## Move confirmation
+## Phase 6 recurrence와 impact confirmation
 
-Phase 6의 richer Move confirmation은 공포를 주는 경고가 아니라 linked calendar 이동·반복 범위·시간 변경 영향과 change log를 확인하는 화면이다. Phase 5의 같은-calendar 비반복 시간 변경은 editor의 `Save Changes`를 직접 승인으로 사용하지만 기존 context를 유지한다.
+Phase 6 confirmation은 반복 범위·calendar 이동·기존 시간 의미 변경과 linked local context가 받을 영향을 write 전에 읽는 작업 화면으로 구현되었다. 자동 gate는 통과했지만 실제 서명 창·`KAOS-TEST` 상호작용 통과를 의미하지 않는다.
 
-표시할 것:
-- 기존 시간
-- 새 시간
-- 함께 유지될 항목: Before tasks, During tasks, After tasks, notes, change history
-- confirm/cancel
+- recurrence control과 review state를 수용하기 위해 editor 목표 크기는 640×760pt이며, 일반 field와 review를 동시에 편집하지 않고 한 sheet 안에서 단계적으로 전환한다.
+- 새 일정에서는 기본 recurrence rule을 만들 수 있다. 기존 단일 일정을 series로 변환하는 control은 초기 Phase 6에서 제공하지 않으며 Calendar.app으로 안내한다.
+
+반복 범위 control:
+- 기존 반복 occurrence의 수정·이동·삭제에는 `이번 일정`과 `이번 이후`를 나란히 제공하고 기본 선택 없이 시작한다.
+- 각 option 아래에 “한 occurrence만 변경되어 별도 일정이 될 수 있음” 또는 “선택한 occurrence와 이후 series에 영향”을 짧게 설명한다.
+- `이번 일정`에서는 recurrence rule control을 잠그고 occurrence 상세만 바꾼다. rule 편집은 unlinked basic series의 `이번 이후`에서만 활성화한다.
+- detached occurrence와 지원하지 않는 복잡한 규칙은 `이번 이후`와 recurrence rule control을 비활성화하고 Calendar.app 이유를 바로 표시하되 ordinary fields의 `이번 일정`은 열어 둔다. attendee meeting은 모든 원본 편집을 비활성화한다.
+
+impact confirmation에 표시할 것:
+- 작업 종류와 선택한 recurrence scope
+- 기존/새 calendar와 source
+- 기존/새 날짜·시각·all-day/floating/zoned 의미
+- 함께 유지될 Event Brief notes와 Before/During/After task 수
+- 현재 linked Event Brief의 notes 글자 수, section별 task 수·제목과 최근 change history
+- series detach/split 가능성. 여러 linked context가 필요한 future scope는 preview 전에 차단
+- 명확한 Confirm/Cancel
+
+상태 규칙:
+- preview를 만드는 동안 loading, validation 실패, stale refresh 필요를 구분한다.
+- Cancel에는 EventKit 변경, local rebind, change log가 없어야 한다.
+- confirm 뒤 저장 중에는 dismiss와 중복 명령을 막는다.
+- EventKit만 성공하고 local transaction이 실패하면 “원본은 변경됨 / local 연결·기록 갱신 실패 / local notes와 tasks 보존”을 함께 보여 준다. post-save occurrence receipt가 불확실한 경우는 동일 write 재시도를 세션 상태로 차단하고 Calendar.app 확인을 요청한다.
+- 초기 Phase 6의 linked `이번 이후`에는 Confirm을 제공하지 않는다. 후속 reconciliation을 열더라도 weak·ambiguous·missing이면 계속 Confirm을 제공하지 않는다.
 
 금지:
 - 확인 전에 EventKit 변경
-- 취소 후 change log 기록
+- 취소·실패·no-op 뒤 change log 기록
 - context_id 재생성
+- `이번 이후`를 작은 보조 문구로 숨기거나 default로 암묵 선택
+- unsupported recurrence를 단순 규칙으로 덮어쓰거나 `이번 일정` ordinary-field patch에서 recurrenceRules를 다시 쓰기
+
+## Phase 6 change history와 session Undo
+
+- linked impact review에는 최근 변경을 시간 역순의 간결한 history로 표시한다. 현재 preview는 change type과 시각을 우선하며, move before/after와 recurrence scope를 상시 탐색하는 전체 history panel은 후속 polish다.
+- history는 EventKit 원본을 자동 복원하는 control이 아니다. 영속 log의 `available` 표시만으로 Undo button을 재생성하지 않는다.
+- Undo는 같은 실행 session에서 직전에 성공한 linked 비반복 `single` calendar/time 변경 한 건에만 잠시 제공한다.
+- 다른 성공한 KaosCal write, 권한 철회, 앱 재실행 뒤에는 Undo를 숨긴다. 일반 EventKit refresh 뒤에는 자체 save 알림과 외부 변경을 구분할 수 없어 button이 남을 수 있지만, 실행 시 fresh stale check가 실패하면 원본과 local DB를 바꾸지 않고 이유를 설명한다.
+- inspector의 `Undo Last Event Change`는 같은 strong event가 선택됐을 때만 나타나는 명시적 one-shot command다. 실행 중 control을 비활성화해 중복을 막고, provider fresh check를 통과해 성공하면 기존 history를 지우지 않고 `Restored` 항목을 추가한다.
+- 반복 scope, detached occurrence, delete에는 Undo를 표시하지 않는다.
 
 ## 색과 밀도
 

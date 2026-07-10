@@ -16,12 +16,14 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 | 캘린더 연결 | macOS Calendar에 구성된 Exchange Online 계정을 EventKit으로 사용 | 별도 Microsoft OAuth/Graph 없이 Exchange source와 calendar를 읽는다. |
 | 화면 | Day, Week, Agenda, mini month, 3-pane inspector | 같은 이벤트가 세 화면에서 같은 시간·출처·편집 가능 상태로 보인다. |
 | 일정 | 시간 일정, 종일 일정, 시간대가 있는 일정과 floating 일정 | 종일은 날짜 범위로, 시간 일정은 시간대 의미를 잃지 않고 표시·편집한다. |
-| 반복 | 모든 occurrence 표시, 기본 일·주·월·년 규칙 생성/편집, 이번 일정·이번 이후 범위 선택 | 반복 Brief가 다른 occurrence에 섞이지 않고, 서버가 거부한 변경은 원본을 훼손하지 않는다. |
-| Event Brief | Before/During/After 작업, 로컬 메모, 변경 이력 | EventKit notes를 변경하지 않고 앱 재실행 뒤에도 유지된다. |
+| 반복 | 모든 occurrence 표시, 손실 없이 표현 가능한 기본 일·주·월·년 규칙 생성/편집, 이번 일정·이번 이후 범위 선택 | 반복 Brief가 다른 occurrence에 섞이지 않고, scope Confirm 전에는 write하지 않으며, 서버가 거부한 변경은 원본을 훼손하지 않는다. |
+| Event Brief | Before/During/After 작업, 로컬 메모, 원본 이동·시간·반복 변경 이력 | EventKit notes를 변경하지 않고 앱 재실행 뒤에도 유지된다. |
 | Task Center | 이벤트 작업을 모아 보고, 이벤트에 연결되지 않은 가벼운 개인 작업을 추가 | 오늘·예정·완료 목록에서 작업 출처와 연결 일정을 명확히 보여 준다. |
-| 안전성 | read-only 구분, 이동 확인, orphan 보존, 백업/복원 | 원본 일정과 KaosCal 데이터의 삭제·복원이 서로 영향을 주지 않는다. |
+| 안전성 | read-only 구분, recurrence/move impact 확인, 좁은 session Undo, orphan 보존, 백업/복원 | 원본 일정과 KaosCal 데이터의 삭제·복원이 서로 영향을 주지 않고 unsafe future-series write를 사전에 차단한다. |
 
-현재 구현 단계는 범위 자체와 구분한다. Phase 5에서 Day/Week/Agenda, 로컬 Event Brief·Task Center에 더해 attendee가 없는 비반복 writable 원본 일정 생성·same-calendar 수정, local Brief가 없는 일정의 calendar 이동·삭제, 종일·floating/zoned 시간대와 원본 notes 편집을 구현했고 전체 97-test 자동 회귀를 통과했다. 실제 서명 앱 창과 `KAOS-TEST` EventKit/Calendar.app round-trip은 대기 중이므로 Exchange 지원 완료로 선언하지 않는다. 반복 변경 범위·linked calendar 이동·change log는 Phase 6, linked 삭제·orphan review는 Phase 7에서 구현·검증한다.
+현재 구현 단계는 범위 자체와 구분한다. Phase 5의 비반복 원본 편집 97-test checkpoint 위에 Phase 6의 기본 반복 규칙, 명시적 scope, impact Confirm, linked safe move, additive change log, session-only Undo를 구현했고 전체 **121 tests, 0 failures, 0 unexpected** 자동 회귀를 통과했다. 사용자는 2026-07-11 macOS 전체 캘린더 접근을 허용했다고 보고했지만 최신 서명 앱 창, `KAOS-TEST` EventKit source/writable, Calendar.app round-trip은 독립 확인 대기이므로 Exchange 지원 완료로 선언하지 않는다. linked 삭제·orphan review는 Phase 7에서 구현·검증한다.
+
+복잡한 recurrence는 rule을 보존한다. 선택 occurrence의 일반 필드는 `이번 일정`에서 recurrence rule을 쓰지 않는 조건으로 편집할 수 있지만, `이번 이후`와 rule 자체 변경은 Calendar.app 전용이다.
 
 ## Exchange 지원 경계
 
@@ -29,6 +31,7 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 - 수정 가능 여부는 계정 종류가 아니라 EventKit이 보고하는 캘린더별 권한을 따른다.
 - 온프레미스 Exchange는 별도 호환성 검증 전까지 지원을 약속하지 않는다.
 - KaosCal은 Microsoft Graph, EWS, 자체 동기화 엔진, 계정 자격 증명을 사용하지 않는다.
+- macOS permission 허용 사용자 보고와 실제 EventKit source/writable/round-trip pass는 별도 증거로 관리한다.
 
 ## 초대 일정 정책
 
@@ -49,6 +52,8 @@ Task Center는 프로젝트 관리 도구가 아니다.
 - 직접 Google/Microsoft/CalDAV 동기화
 - 초대 일정 RSVP·참석자 관리
 - 복잡한 반복 규칙을 KaosCal이 안전하게 표현할 수 없을 때의 강제 수정
+- detached occurrence의 `이번 이후`, 강한 context reconciliation 계획이 없는 linked future-series write
+- 반복 series·detached occurrence·delete의 일반 Undo와 앱 재실행 뒤 Undo
 
 ## 범위 변경 규칙
 

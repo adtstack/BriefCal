@@ -28,18 +28,22 @@ KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 ## 표시 모델과 영속 모델
 
-Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고, 필요한 연결·맥락만 SQLite에 영속화하며 local 편집 화면과 원본 일정 editor를 AppState에서 조정한다.
+Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연결·맥락만 SQLite에 영속화했다. Phase 6은 이 경계에 impact preview, recurrence scope, additive change log와 process-session Undo token을 구현했다.
 
 | 값 | 역할 | 영속 모델과의 차이 |
 | --- | --- | --- |
-| `DisplayEvent` | title, source, calendar color, raw date, read-only, meeting/invitation, recurrence, 원본 notes를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음. `originalNotes`는 Event Brief notes가 아님 |
+| `DisplayEvent` | title, source, calendar color, raw date, read-only, meeting/invitation, representable/unsupported recurrence snapshot, 원본 notes를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음. `originalNotes`는 Event Brief notes가 아님 |
 | `EventTimeSemantics` | `allDay`, `floating`, `zoned` 구분 | `event_links.time_semantics`와 local component snapshot으로 변환 |
 | `LocalDateTimeComponents` | 원 calendar identifier와 civil components 보존 | all-day/floating 표시·due·반복 occurrence 재구성에 사용 |
 | `DisplayEventIdentity` | SwiftUI selection과 occurrence별 card identity | `external → calendar item → event` 우선순위, local occurrence anchor 사용; 영속 resolver와 목적이 다름 |
 | `CalendarEventLayout` | visible period의 timed/all-day placement | 파생값이므로 저장하지 않음 |
-| `CalendarEventDraft` | 원본 일정 create/update 입력과 고정 reference time zone | editor session 동안만 존재하며 DB record가 아님. 저장 시 all-day/floating civil components를 현재 기본 zone에 rebase할 수 있음 |
+| `CalendarEventDraft` | 원본 일정 create/update 입력, recurrence draft와 고정 reference time zone | editor session 동안만 존재하며 DB record가 아님. 저장 시 all-day/floating civil components를 현재 기본 zone에 rebase할 수 있음 |
+| `CalendarEventMutationReceipt` | scoped write 결과 event, 실제 write 여부, scope와 changed fields | provider 결과 값이며 EventKit object나 persisted log 자체가 아님 |
 | `CalendarEventEditorSession` | new/existing target, writable calendar, local mutation context | AppState의 일시 상태이며 앱 재실행 뒤 복구하지 않음 |
 | `EventMutationContext` | local Brief 없음/strong linked/확인 필요 구분 | 기존 context를 안전하게 rebind할지 정하는 일시 preflight 결과 |
+| `CalendarEventMutationPreview` | original, validated draft, scope, changed fields, mutation context와 local impact를 확인 UI에 전달 | immutable preview 값이며 확인 전에는 EventKit·DB를 바꾸지 않음 |
+| `EventMutationImpact` | local notes 유무·글자 수, section별 task count/title, 최근 change history | `ContextStore`의 side-effect-free read projection이며 scope나 EventKit write 권한이 아님 |
+| session Undo token | 직전 비반복 `single` write의 change ID와 after snapshot | process 메모리에만 존재. persistent `undo_state`만으로 재실행 뒤 Undo하지 않음 |
 
 영속 Event Brief 연결은 아래 `Identity resolution 순서`로 구현되어 있다. UI ID가 같거나 달라졌다는 사실만으로 local context를 자동 연결·삭제하지 않는다.
 
@@ -130,7 +134,7 @@ create table app_settings (
 
 첫 GRDB migration `v1_context_store`는 아래 네 테이블만 만든다.
 
-Phase 5 원본 일정 편집은 schema를 바꾸지 않는다. `event_change_log`와 새 migration은 Phase 6까지 추가하지 않는다.
+Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immutable v1을 유지하고 아래 `v2_event_change_log` additive migration을 적용했으며 migration·constraint·transaction 회귀 테스트를 통과했다.
 
 | 테이블 | 현재 책임 |
 | --- | --- |
@@ -189,6 +193,28 @@ event source projection에는 section, event title, calendar/source, effective e
 
 Personal task due는 생성 뒤 수정하거나 제거할 수 있다. due 없음과 내일 시작 전은 Today, 내일 이후는 Upcoming이다. 완료 task는 due와 무관하게 Completed에 남는다.
 
+### 구현된 V2 event change log
+
+`v2_event_change_log`는 v1 table을 변경하지 않고 아래 record를 추가한다.
+
+| 필드 | 계약 |
+| --- | --- |
+| `id` | text primary key |
+| `context_id` | `event_contexts(id)` foreign key, local context 삭제 시 cascade |
+| `change_type` | `created`, `details_updated`, `moved`, `recurrence_changed`, `cancelled`, `completed`, `restored`, `relinked` 중 하나 |
+| `scope` | `single`, `this_event`, `future_events` 중 하나 |
+| `before_payload`, `after_payload` | non-empty versioned mutation snapshot JSON |
+| `undo_state` | `available`, `superseded`, `undone`, `unavailable` 중 하나 |
+| `undone_at` | original row가 `undone`일 때만 존재하는 UTC millisecond TEXT Date |
+| `undo_of_change_id` | 같은 table의 원본 변경 self foreign key, nullable |
+| `created_at` | UTC millisecond TEXT Date 계약 |
+
+`context_id + created_at DESC` 조회 index와 non-null `undo_of_change_id` partial unique index를 둔다. `undo_state = undone`이면 `undone_at`이 필수이고 다른 state에는 없어야 한다. `restored` row만 non-null `undo_of_change_id`와 `unavailable` state를 가지며 self foreign key 삭제는 cascade한다. versioned before/after payload에는 EventKit identifiers, calendar/source/title/location/original event notes, raw start/end, all-day/floating civil components 또는 zoned identifier, recurrence occurrence identity를 포함한다. 계정 credential, attendee 목록, Event Brief notes/task 본문은 포함하지 않는다.
+
+linked mutation은 receipt rebind와 log append를 하나의 SQLite transaction으로 수행한다. 취소·validation 실패·provider 실패·no-op에는 row를 만들지 않는다. EventKit 성공 뒤 local transaction이 실패하면 false log를 만들거나 다른 context로 자동 연결하지 않는다.
+
+`undo_state = available`은 local repository의 후보 상태일 뿐 UI Undo 권한이 아니다. Undo는 linked calendar/time mutation이 만든 같은 process session의 in-memory token, nonrecurring `single` scope, current event와 logged after snapshot의 exact supported-field match가 모두 있을 때만 시도한다. 같은 context에 새 mutation이 기록되면 이전 available row는 superseded가 되고, 성공한 Undo는 원본을 undone으로 바꾸면서 `restored` row를 atomic append한다.
+
 ## Status values
 
 `event_contexts.lifecycle_status`:
@@ -207,13 +233,26 @@ Personal task due는 생성 뒤 수정하거나 제거할 수 있다. due 없음
 - `during`
 - `after`
 
-계획된 `event_change_log.change_type`(Phase 6):
+`event_change_log.change_type`(Phase 6):
 - `created`
+- `details_updated`
 - `moved`
+- `recurrence_changed`
 - `cancelled`
 - `completed`
 - `restored`
 - `relinked`
+
+`event_change_log.scope`:
+- `single`
+- `this_event`
+- `future_events`
+
+`event_change_log.undo_state`:
+- `available`
+- `superseded`
+- `undone`
+- `unavailable`
 
 `event_tasks.due_kind`:
 - `none`
@@ -256,7 +295,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 ## Repository 책임
 
 `AppDatabase`:
-- `DatabaseQueue` open과 `v1_context_store` migration
+- `DatabaseQueue` open과 `v1_context_store`, `v2_event_change_log` additive migration
 - foreign key 활성화
 - production Application Support, test in-memory/temporary-file 경계
 
@@ -273,6 +312,9 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - typed Task Center completion routing과 missing/context mismatch 방어
 - 원본 mutation 전 read-only `EventMutationContext` preflight
 - 사용자 승인 뒤 기존 `contextID`의 identifier/snapshot을 갱신하는 transaction rebind. notes/tasks는 유지하고 unique 충돌은 전체 rollback
+- `mutationImpact`와 `changeHistory`의 side-effect-free read
+- `rebindAndRecordMutation`으로 receipt rebind, 이전 available supersede, 새 log append를 atomic 처리
+- `rebindAfterUndo`로 원본 undone, restored append, context rebind를 atomic 처리
 
 `EventTaskRepository`:
 - task 생성, 수정, 삭제
@@ -291,10 +333,12 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - `Upcoming`: 미완료이며 내일 시작 이후 due
 - `Completed`: event/personal 완료 항목을 완료 시각 역순으로 결합
 
-계획된 `ChangeLogRepository`(Phase 6):
-- change log append
-- context별 최신 변경 조회
-- move before/after payload 저장
+구현된 Phase 6 change-log 책임(`ContextStore`):
+- `mutationImpact(contextID:recentHistoryLimit:)`용 연결 task 수와 최근 history 조회
+- `changeHistory(contextID:limit:)` 정렬 조회
+- `rebindAndRecordMutation`으로 receipt rebind, 이전 available supersede, 새 log append를 atomic 처리
+- `rebindAfterUndo`로 after snapshot 검증 뒤 원본 undone, restored append와 context rebind를 atomic 처리
+- 초기 Phase 6에서는 linked future scope를 repository mutation까지 보내지 않음. 후속으로 열 때도 영향 context 전체의 strong reconciliation plan이 provider/use-case preflight에서 성립해야 호출
 
 계획된 `CalendarRoleRepository`(Phase 8):
 - calendar identifier별 role 저장
@@ -305,6 +349,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - `v1_context_store`는 Phase 3에서 적용·검증된 immutable baseline이다.
 - migration은 한 번 적용되면 수정하지 않는다.
 - schema 변경은 새 migration으로 추가한다.
+- Phase 6 change log는 `v2_event_change_log`라는 additive migration으로만 추가하며 v1 SQL을 고쳐 쓰지 않는다.
 - destructive migration은 v1에서 금지한다.
 - migration 전 자동 backup 또는 복구 안내를 검토한다.
 

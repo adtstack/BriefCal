@@ -106,7 +106,7 @@ final class EventKitProvider: CalendarProviding {
             identifier: normalized.calendarIdentifier
         )
         let event = EKEvent(eventStore: eventStore)
-        applyAll(normalized, calendar: calendar, to: event)
+        try applyAll(normalized, calendar: calendar, to: event)
         try eventStore.save(event, span: .thisEvent, commit: true)
         return makeDisplayEvent(event)
     }
@@ -115,53 +115,135 @@ final class EventKitProvider: CalendarProviding {
         _ original: DisplayEvent,
         with draft: CalendarEventDraft
     ) throws -> DisplayEvent {
+        if original.isRecurring
+            || original.occurrenceDate != nil
+            || original.isDetached {
+            throw CalendarEventWriteError.recurringScopeRequired
+        }
+        return try updateEvent(
+            original,
+            with: draft,
+            scope: .thisEvent
+        ).event
+    }
+
+    func updateEvent(
+        _ original: DisplayEvent,
+        with draft: CalendarEventDraft,
+        scope: CalendarEventMutationScope
+    ) throws -> CalendarEventMutationReceipt {
         try requireFullAccess()
-        try validateWritePolicy(original)
-        let normalized = try draft.validated(calendar: validationCalendar())
+        try validateWritePolicy(original, scope: scope)
         let event = try resolveEvent(for: original)
-        try validateCurrentWritePolicy(event)
+        try validateCurrentWritePolicy(event, scope: scope)
+        let current = makeDisplayEvent(event)
         guard editableFieldsMatch(
-            makeDisplayEvent(event),
+            current,
             original
         ) else {
             throw CalendarEventWriteError.eventChangedExternally
         }
+        let recurrenceWasEdited = draft.recurrence != current.recurrence
+        let normalized = try draft.validated(
+            calendar: validationCalendar(),
+            enforceRecurrenceEndBoundary:
+                recurrenceWasEdited,
+            rebaseRecurrenceEndDate: recurrenceWasEdited
+        )
+        try validateRecurrenceMutation(
+            from: current.recurrence,
+            to: normalized.recurrence,
+            originalIsRecurring: current.isRecurring,
+            scope: scope
+        )
         let calendar = try writableCalendar(
             identifier: normalized.calendarIdentifier
         )
-        let current = makeDisplayEvent(event)
         let comparisonCalendar = normalized.wallTimeCalendar(
             fallback: validationCalendar()
         )
         let currentDraft = try CalendarEventDraft(
             event: current,
             calendar: comparisonCalendar
-        ).validated(calendar: comparisonCalendar)
-        guard currentDraft != normalized else {
-            return current
+        ).validated(
+            calendar: comparisonCalendar,
+            enforceRecurrenceEndBoundary: false,
+            rebaseRecurrenceEndDate: false
+        )
+        let changedFields = normalized.changedFields(comparedTo: currentDraft)
+        guard !changedFields.isEmpty else {
+            return CalendarEventMutationReceipt(
+                event: current,
+                didWrite: false,
+                scope: scope,
+                changedFields: []
+            )
         }
-        applyChanges(
+        try applyChanges(
             from: currentDraft,
             to: normalized,
             calendar: calendar,
-            event: event
+            event: event,
+            scope: scope
         )
-        try eventStore.save(event, span: .thisEvent, commit: true)
-        return makeDisplayEvent(event)
+        try eventStore.save(
+            event,
+            span: eventKitSpan(for: scope),
+            commit: true
+        )
+        let provisional = makeDisplayEvent(event)
+        let refreshed: EKEvent
+        do {
+            refreshed = try resolveEvent(for: provisional)
+        } catch {
+            throw CalendarEventMutationPartialSuccess(
+                provisionalEvent: provisional,
+                underlyingDescription: error.localizedDescription
+            )
+        }
+        return CalendarEventMutationReceipt(
+            event: makeDisplayEvent(refreshed),
+            didWrite: true,
+            scope: scope,
+            changedFields: changedFields
+        )
     }
 
     func deleteEvent(_ original: DisplayEvent) throws {
+        if original.isRecurring
+            || original.occurrenceDate != nil
+            || original.isDetached {
+            throw CalendarEventWriteError.recurringScopeRequired
+        }
+        _ = try deleteEvent(original, scope: .thisEvent)
+    }
+
+    func deleteEvent(
+        _ original: DisplayEvent,
+        scope: CalendarEventMutationScope
+    ) throws -> CalendarEventMutationReceipt {
         try requireFullAccess()
-        try validateWritePolicy(original)
+        try validateWritePolicy(original, scope: scope)
         let event = try resolveEvent(for: original)
-        try validateCurrentWritePolicy(event)
+        try validateCurrentWritePolicy(event, scope: scope)
+        let current = makeDisplayEvent(event)
         guard editableFieldsMatch(
-            makeDisplayEvent(event),
+            current,
             original
         ) else {
             throw CalendarEventWriteError.eventChangedExternally
         }
-        try eventStore.remove(event, span: .thisEvent, commit: true)
+        try eventStore.remove(
+            event,
+            span: eventKitSpan(for: scope),
+            commit: true
+        )
+        return CalendarEventMutationReceipt(
+            event: current,
+            didWrite: true,
+            scope: scope,
+            changedFields: [.deletion]
+        )
     }
 
     private func makeDisplayEvent(_ event: EKEvent) -> DisplayEvent {
@@ -169,6 +251,10 @@ final class EventKitProvider: CalendarProviding {
         let isRecurring = event.hasRecurrenceRules
             || event.occurrenceDate != nil
             || event.isDetached
+        let recurrence = makeRecurrenceRepresentation(
+            event,
+            isRecurring: isRecurring
+        )
         let timeSemantics = makeTimeSemantics(event)
         let occurrenceLocalComponents = makeOccurrenceLocalComponents(
             event,
@@ -212,7 +298,8 @@ final class EventKitProvider: CalendarProviding {
             isReadOnly: !event.calendar.allowsContentModifications,
             isInvitation: event.organizer.map { !$0.isCurrentUser } ?? false,
             hasAttendees: event.hasAttendees,
-            originalNotes: event.notes
+            originalNotes: event.notes,
+            recurrence: recurrence
         )
     }
 
@@ -222,29 +309,73 @@ final class EventKitProvider: CalendarProviding {
         }
     }
 
-    private func validateWritePolicy(_ event: DisplayEvent) throws {
+    private func validateWritePolicy(
+        _ event: DisplayEvent,
+        scope: CalendarEventMutationScope
+    ) throws {
         if event.isInvitation || event.hasAttendees {
             throw CalendarEventWriteError.meetingIsCalendarAppOnly
         }
         if event.isReadOnly {
             throw CalendarEventWriteError.readOnlyCalendar
         }
-        if event.isRecurring || event.occurrenceDate != nil || event.isDetached {
-            throw CalendarEventWriteError.recurringScopeRequired
+        if scope == .futureEvents {
+            guard event.isRecurring || event.occurrenceDate != nil else {
+                throw CalendarEventWriteError.futureScopeRequiresRecurringEvent
+            }
+            if event.isDetached {
+                throw CalendarEventWriteError.detachedFutureScopeUnsupported
+            }
+            guard event.recurrence.isRepresentable else {
+                throw CalendarEventWriteError.unsupportedRecurrence
+            }
         }
     }
 
-    private func validateCurrentWritePolicy(_ event: EKEvent) throws {
+    private func validateCurrentWritePolicy(
+        _ event: EKEvent,
+        scope: CalendarEventMutationScope
+    ) throws {
         guard event.calendar.allowsContentModifications else {
             throw CalendarEventWriteError.readOnlyCalendar
         }
         if requiresCalendarAppMeetingManagement(event) {
             throw CalendarEventWriteError.meetingIsCalendarAppOnly
         }
-        if event.hasRecurrenceRules
-            || event.occurrenceDate != nil
-            || event.isDetached {
-            throw CalendarEventWriteError.recurringScopeRequired
+        if scope == .futureEvents {
+            let current = makeDisplayEvent(event)
+            guard current.isRecurring || current.occurrenceDate != nil else {
+                throw CalendarEventWriteError.futureScopeRequiresRecurringEvent
+            }
+            if current.isDetached {
+                throw CalendarEventWriteError.detachedFutureScopeUnsupported
+            }
+            guard current.recurrence.isRepresentable else {
+                throw CalendarEventWriteError.unsupportedRecurrence
+            }
+        }
+    }
+
+    private func validateRecurrenceMutation(
+        from current: CalendarEventRecurrence,
+        to requested: CalendarEventRecurrence,
+        originalIsRecurring: Bool,
+        scope: CalendarEventMutationScope
+    ) throws {
+        if scope == .thisEvent, originalIsRecurring,
+           current != requested {
+            throw CalendarEventWriteError.recurrenceChangeRequiresFutureScope
+        }
+        if scope == .futureEvents {
+            guard originalIsRecurring else {
+                throw CalendarEventWriteError.futureScopeRequiresRecurringEvent
+            }
+            guard current.isRepresentable, requested.isRepresentable else {
+                throw CalendarEventWriteError.unsupportedRecurrence
+            }
+        } else if !originalIsRecurring,
+                  !requested.isRepresentable {
+            throw CalendarEventWriteError.unsupportedRecurrence
         }
     }
 
@@ -259,10 +390,16 @@ final class EventKitProvider: CalendarProviding {
     }
 
     private func resolveEvent(for original: DisplayEvent) throws -> EKEvent {
+        if original.isRecurring
+            || original.occurrenceDate != nil
+            || original.isDetached {
+            return try resolveRecurringEvent(for: original)
+        }
+
         if let identifier = original.eventIdentifier,
            !identifier.isEmpty,
            let event = eventStore.event(withIdentifier: identifier),
-           candidate(event, matchesCalendarOf: original) {
+           singleEventCandidate(event, matchesCalendarOf: original) {
             return event
         }
 
@@ -271,7 +408,7 @@ final class EventKitProvider: CalendarProviding {
            let event = eventStore.calendarItem(
                withIdentifier: identifier
            ) as? EKEvent,
-           candidate(event, matchesCalendarOf: original) {
+           singleEventCandidate(event, matchesCalendarOf: original) {
             return event
         }
 
@@ -281,7 +418,7 @@ final class EventKitProvider: CalendarProviding {
                 withExternalIdentifier: identifier
             )
                 .compactMap { $0 as? EKEvent }
-                .filter { candidate($0, matchesCalendarOf: original) }
+                .filter { singleEventCandidate($0, matchesCalendarOf: original) }
             if matches.count == 1, let event = matches.first {
                 return event
             }
@@ -293,7 +430,95 @@ final class EventKitProvider: CalendarProviding {
         throw CalendarEventWriteError.eventUnavailable
     }
 
-    private func candidate(
+    private func resolveRecurringEvent(
+        for original: DisplayEvent
+    ) throws -> EKEvent {
+        guard hasStrongIdentifier(original),
+              let calendar = eventStore.calendar(
+                withIdentifier: original.calendarIdentifier
+              ) else {
+            throw CalendarEventWriteError.eventUnavailable
+        }
+
+        var candidates: [EKEvent] = []
+        if let identifier = nonEmpty(original.eventIdentifier),
+           let event = eventStore.event(withIdentifier: identifier) {
+            candidates.append(event)
+        }
+        if let identifier = nonEmpty(original.calendarItemIdentifier),
+           let event = eventStore.calendarItem(
+            withIdentifier: identifier
+           ) as? EKEvent {
+            candidates.append(event)
+        }
+        if let identifier = nonEmpty(
+            original.calendarItemExternalIdentifier
+        ) {
+            candidates.append(contentsOf: eventStore.calendarItems(
+                withExternalIdentifier: identifier
+            ).compactMap { $0 as? EKEvent })
+        }
+        for interval in recurrenceSearchIntervals(for: original) {
+            let predicate = eventStore.predicateForEvents(
+                withStart: interval.start,
+                end: interval.end,
+                calendars: [calendar]
+            )
+            candidates.append(contentsOf: eventStore.events(matching: predicate))
+        }
+
+        var uniqueMatches: [String: EKEvent] = [:]
+        for event in candidates where recurringEventCandidate(
+            event,
+            matches: original
+        ) {
+            let displayEvent = makeDisplayEvent(event)
+            uniqueMatches[recurringCandidateKey(displayEvent)] = event
+        }
+        if uniqueMatches.count == 1,
+           let event = uniqueMatches.values.first {
+            return event
+        }
+        if uniqueMatches.count > 1 {
+            throw CalendarEventWriteError.ambiguousEvent
+        }
+        throw CalendarEventWriteError.eventUnavailable
+    }
+
+    private func recurringCandidateKey(_ event: DisplayEvent) -> String {
+        let identity = [
+            nonEmpty(event.eventIdentifier) ?? "",
+            nonEmpty(event.calendarItemIdentifier) ?? "",
+            nonEmpty(event.calendarItemExternalIdentifier) ?? ""
+        ].joined(separator: "|")
+        let occurrence: String
+        switch event.timeSemantics {
+        case .zoned:
+            let anchor = event.occurrenceDate ?? event.startDate
+            let milliseconds = Int64(
+                (anchor.timeIntervalSince1970 * 1_000).rounded()
+            )
+            occurrence = "instant:\(milliseconds)"
+        case .allDay, .floating:
+            if let anchor = localOccurrenceAnchor(event) {
+                occurrence = [
+                    "local",
+                    String(describing: anchor.calendarIdentifier),
+                    String(anchor.year),
+                    String(anchor.month),
+                    String(anchor.day),
+                    String(anchor.hour),
+                    String(anchor.minute),
+                    String(anchor.second)
+                ].joined(separator: ":")
+            } else {
+                occurrence = "local:missing"
+            }
+        }
+        return "\(event.calendarIdentifier)|\(identity)|\(occurrence)"
+    }
+
+    private func singleEventCandidate(
         _ event: EKEvent,
         matchesCalendarOf original: DisplayEvent
     ) -> Bool {
@@ -301,6 +526,115 @@ final class EventKitProvider: CalendarProviding {
             && !event.hasRecurrenceRules
             && event.occurrenceDate == nil
             && !event.isDetached
+    }
+
+    private func recurringEventCandidate(
+        _ event: EKEvent,
+        matches original: DisplayEvent
+    ) -> Bool {
+        guard event.calendar.calendarIdentifier == original.calendarIdentifier,
+              strongIdentifierMatches(event, original: original) else {
+            return false
+        }
+        let candidate = makeDisplayEvent(event)
+        guard candidate.isRecurring
+                || candidate.occurrenceDate != nil
+                || candidate.isDetached else {
+            return false
+        }
+        return semanticOccurrenceMatches(candidate, original)
+    }
+
+    func semanticOccurrenceMatches(
+        _ candidate: DisplayEvent,
+        _ original: DisplayEvent
+    ) -> Bool {
+        switch original.timeSemantics {
+        case .zoned:
+            guard case .zoned = candidate.timeSemantics else { return false }
+            let candidateAnchor = candidate.occurrenceDate
+                ?? candidate.startDate
+            let originalAnchor = original.occurrenceDate
+                ?? original.startDate
+            return abs(candidateAnchor.timeIntervalSince(originalAnchor)) < 0.001
+        case .allDay:
+            guard case .allDay = candidate.timeSemantics else { return false }
+            return localOccurrenceAnchor(candidate)
+                == localOccurrenceAnchor(original)
+        case .floating:
+            guard case .floating = candidate.timeSemantics else { return false }
+            return localOccurrenceAnchor(candidate)
+                == localOccurrenceAnchor(original)
+        }
+    }
+
+    private func localOccurrenceAnchor(
+        _ event: DisplayEvent
+    ) -> LocalDateTimeComponents? {
+        if let occurrenceLocalComponents = event.occurrenceLocalComponents {
+            return occurrenceLocalComponents
+        }
+        switch event.timeSemantics {
+        case let .allDay(start, _), let .floating(start, _):
+            return start
+        case .zoned:
+            return nil
+        }
+    }
+
+    private func recurrenceSearchIntervals(
+        for event: DisplayEvent
+    ) -> [DateInterval] {
+        let padding: TimeInterval = 172_800
+        let duration = max(
+            event.endDate.timeIntervalSince(event.startDate),
+            3_600
+        )
+        var seen = Set<Int64>()
+        return [event.occurrenceDate, event.startDate]
+            .compactMap { $0 }
+            .filter {
+                seen.insert(Int64(
+                    ($0.timeIntervalSinceReferenceDate * 1_000).rounded()
+                )).inserted
+            }
+            .map { anchor in
+                DateInterval(
+                    start: anchor.addingTimeInterval(-padding),
+                    end: anchor.addingTimeInterval(duration + padding)
+                )
+            }
+    }
+
+    private func hasStrongIdentifier(_ event: DisplayEvent) -> Bool {
+        nonEmpty(event.eventIdentifier) != nil
+            || nonEmpty(event.calendarItemIdentifier) != nil
+            || nonEmpty(event.calendarItemExternalIdentifier) != nil
+    }
+
+    private func strongIdentifierMatches(
+        _ event: EKEvent,
+        original: DisplayEvent
+    ) -> Bool {
+        if let identifier = nonEmpty(original.eventIdentifier),
+           event.eventIdentifier == identifier {
+            return true
+        }
+        if let identifier = nonEmpty(original.calendarItemIdentifier),
+           event.calendarItemIdentifier == identifier {
+            return true
+        }
+        if let identifier = nonEmpty(
+            original.calendarItemExternalIdentifier
+        ), event.calendarItemExternalIdentifier == identifier {
+            return true
+        }
+        return false
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
     }
 
     private func editableFieldsMatch(
@@ -312,13 +646,14 @@ final class EventKitProvider: CalendarProviding {
             && current.location == original.location
             && current.hasSameEditableTime(as: original)
             && current.originalNotes == original.originalNotes
+            && current.recurrence == original.recurrence
     }
 
     private func applyAll(
         _ draft: CalendarEventDraft,
         calendar: EKCalendar,
         to event: EKEvent
-    ) {
+    ) throws {
         event.calendar = calendar
         event.title = draft.title
         event.location = draft.location.isEmpty ? nil : draft.location
@@ -331,14 +666,18 @@ final class EventKitProvider: CalendarProviding {
         event.timeZone = draft.isAllDay
             ? nil
             : draft.timeZoneIdentifier.flatMap(TimeZone.init(identifier:))
+        event.recurrenceRules = try makeEventKitRecurrenceRules(
+            for: draft.recurrence
+        )
     }
 
     private func applyChanges(
         from current: CalendarEventDraft,
         to draft: CalendarEventDraft,
         calendar: EKCalendar,
-        event: EKEvent
-    ) {
+        event: EKEvent,
+        scope: CalendarEventMutationScope
+    ) throws {
         if draft.calendarIdentifier != current.calendarIdentifier {
             event.calendar = calendar
         }
@@ -364,6 +703,93 @@ final class EventKitProvider: CalendarProviding {
                 ? nil
                 : draft.timeZoneIdentifier.flatMap(TimeZone.init(identifier:))
         }
+        if draft.recurrence != current.recurrence {
+            if current.recurrence.isRecurring,
+               scope == .thisEvent {
+                throw CalendarEventWriteError
+                    .recurrenceChangeRequiresFutureScope
+            }
+            event.recurrenceRules = try makeEventKitRecurrenceRules(
+                for: draft.recurrence
+            )
+        }
+    }
+
+    private func eventKitSpan(
+        for scope: CalendarEventMutationScope
+    ) -> EKSpan {
+        switch scope {
+        case .thisEvent:
+            .thisEvent
+        case .futureEvents:
+            .futureEvents
+        }
+    }
+
+    func makeEventKitRecurrenceRules(
+        for recurrence: CalendarEventRecurrence
+    ) throws -> [EKRecurrenceRule]? {
+        switch recurrence {
+        case .none:
+            return nil
+        case .unsupported:
+            throw CalendarEventWriteError.unsupportedRecurrence
+        case let .basic(rule):
+            let recurrenceEnd: EKRecurrenceEnd? = switch rule.end {
+            case .never:
+                nil
+            case let .onDate(date):
+                EKRecurrenceEnd(end: date)
+            case let .afterOccurrences(count):
+                EKRecurrenceEnd(occurrenceCount: count)
+            }
+            let frequency: EKRecurrenceFrequency = switch rule.frequency {
+            case .daily: .daily
+            case .weekly: .weekly
+            case .monthly: .monthly
+            case .yearly: .yearly
+            }
+            if rule.frequency == .weekly {
+                let days = rule.weekdays
+                    .sorted { $0.rawValue < $1.rawValue }
+                    .map {
+                        EKRecurrenceDayOfWeek(
+                            eventKitWeekday($0),
+                            weekNumber: 0
+                        )
+                    }
+                return [EKRecurrenceRule(
+                    recurrenceWith: frequency,
+                    interval: rule.interval,
+                    daysOfTheWeek: days,
+                    daysOfTheMonth: nil,
+                    monthsOfTheYear: nil,
+                    weeksOfTheYear: nil,
+                    daysOfTheYear: nil,
+                    setPositions: nil,
+                    end: recurrenceEnd
+                )]
+            }
+            return [EKRecurrenceRule(
+                recurrenceWith: frequency,
+                interval: rule.interval,
+                end: recurrenceEnd
+            )]
+        }
+    }
+
+    private func eventKitWeekday(
+        _ weekday: CalendarRecurrenceWeekday
+    ) -> EKWeekday {
+        switch weekday {
+        case .sunday: .sunday
+        case .monday: .monday
+        case .tuesday: .tuesday
+        case .wednesday: .wednesday
+        case .thursday: .thursday
+        case .friday: .friday
+        case .saturday: .saturday
+        }
     }
 
     private func requiresCalendarAppMeetingManagement(
@@ -377,6 +803,221 @@ final class EventKitProvider: CalendarProviding {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .autoupdatingCurrent
         return calendar
+    }
+
+    func recurrenceRepresentation(
+        for event: EKEvent
+    ) -> CalendarEventRecurrence {
+        makeRecurrenceRepresentation(
+            event,
+            isRecurring: event.hasRecurrenceRules
+                || event.occurrenceDate != nil
+                || event.isDetached
+        )
+    }
+
+    private func makeRecurrenceRepresentation(
+        _ event: EKEvent,
+        isRecurring: Bool
+    ) -> CalendarEventRecurrence {
+        let rules = event.recurrenceRules ?? []
+        guard !rules.isEmpty else {
+            guard isRecurring else { return .none }
+            return .unsupported(UnsupportedRecurrenceSnapshot(
+                summary: "Recurring rule unavailable for this occurrence",
+                signature: "missing:v1:\(event.hasRecurrenceRules):\(event.isDetached)"
+            ))
+        }
+
+        let signature = recurrenceSignature(rules)
+        guard rules.count == 1, let rule = rules.first else {
+            return .unsupported(UnsupportedRecurrenceSnapshot(
+                summary: "Multiple recurrence rules",
+                signature: signature
+            ))
+        }
+        guard rule.interval > 0,
+              let frequency = calendarRecurrenceFrequency(rule.frequency),
+              basicSelectorsAreSupported(
+                rule,
+                frequency: frequency,
+                event: event
+              ) else {
+            return .unsupported(UnsupportedRecurrenceSnapshot(
+                summary: "Advanced recurrence rule",
+                signature: signature
+            ))
+        }
+
+        let end: CalendarRecurrenceEnd
+        if let endDate = rule.recurrenceEnd?.endDate {
+            end = .onDate(endDate)
+        } else if let count = rule.recurrenceEnd?.occurrenceCount,
+                  count > 0 {
+            end = .afterOccurrences(count)
+        } else {
+            end = .never
+        }
+
+        let weekdays: Set<CalendarRecurrenceWeekday>
+        if frequency == .weekly {
+            if let days = rule.daysOfTheWeek, !days.isEmpty {
+                let mapped = days.compactMap {
+                    CalendarRecurrenceWeekday(
+                        rawValue: $0.dayOfTheWeek.rawValue
+                    )
+                }
+                guard mapped.count == days.count else {
+                    return .unsupported(UnsupportedRecurrenceSnapshot(
+                        summary: "Advanced weekly recurrence rule",
+                        signature: signature
+                    ))
+                }
+                weekdays = Set(mapped)
+            } else {
+                let semanticCalendar = semanticCalendar(for: event)
+                let rawWeekday = semanticCalendar.component(
+                    .weekday,
+                    from: event.startDate
+                )
+                guard let weekday = CalendarRecurrenceWeekday(
+                    rawValue: rawWeekday
+                ) else {
+                    return .unsupported(UnsupportedRecurrenceSnapshot(
+                        summary: "Weekly recurrence weekday unavailable",
+                        signature: signature
+                    ))
+                }
+                weekdays = [weekday]
+            }
+        } else {
+            weekdays = []
+        }
+
+        return .basic(BasicRecurrenceRule(
+            frequency: frequency,
+            interval: rule.interval,
+            weekdays: weekdays,
+            end: end
+        ))
+    }
+
+    private func basicSelectorsAreSupported(
+        _ rule: EKRecurrenceRule,
+        frequency: CalendarRecurrenceFrequency,
+        event: EKEvent
+    ) -> Bool {
+        let noWeekNumbers = (rule.daysOfTheWeek ?? []).allSatisfy {
+            $0.weekNumber == 0
+        }
+        let noSetPositions = rule.setPositions?.isEmpty ?? true
+        let noWeeksOfYear = rule.weeksOfTheYear?.isEmpty ?? true
+        let noDaysOfYear = rule.daysOfTheYear?.isEmpty ?? true
+        let noDaysOfMonth = rule.daysOfTheMonth?.isEmpty ?? true
+        let noMonthsOfYear = rule.monthsOfTheYear?.isEmpty ?? true
+        let noDaysOfWeek = rule.daysOfTheWeek?.isEmpty ?? true
+        let firstWeekdayIsStandard = rule.firstDayOfTheWeek == 0
+            || rule.firstDayOfTheWeek == CalendarRecurrenceWeekday.monday.rawValue
+        guard noWeekNumbers, noSetPositions else { return false }
+
+        switch frequency {
+        case .daily:
+            return noDaysOfWeek
+                && noDaysOfMonth
+                && noMonthsOfYear
+                && noWeeksOfYear
+                && noDaysOfYear
+                && firstWeekdayIsStandard
+        case .weekly:
+            return noDaysOfMonth
+                && noMonthsOfYear
+                && noWeeksOfYear
+                && noDaysOfYear
+                && firstWeekdayIsStandard
+        case .monthly:
+            let startDay = semanticCalendar(for: event).component(
+                .day,
+                from: event.startDate
+            )
+            let monthDays = (rule.daysOfTheMonth ?? [])
+                .map(\.intValue)
+            let anchoredMonthDay = monthDays.isEmpty
+                || monthDays == [startDay]
+            return noDaysOfWeek
+                && anchoredMonthDay
+                && noMonthsOfYear
+                && noWeeksOfYear
+                && noDaysOfYear
+                && firstWeekdayIsStandard
+        case .yearly:
+            let startMonth = semanticCalendar(for: event).component(
+                .month,
+                from: event.startDate
+            )
+            let months = (rule.monthsOfTheYear ?? [])
+                .map(\.intValue)
+            let anchoredMonth = months.isEmpty || months == [startMonth]
+            return noDaysOfWeek
+                && noDaysOfMonth
+                && anchoredMonth
+                && noWeeksOfYear
+                && noDaysOfYear
+                && firstWeekdayIsStandard
+        }
+    }
+
+    private func calendarRecurrenceFrequency(
+        _ frequency: EKRecurrenceFrequency
+    ) -> CalendarRecurrenceFrequency? {
+        switch frequency {
+        case .daily: .daily
+        case .weekly: .weekly
+        case .monthly: .monthly
+        case .yearly: .yearly
+        @unknown default: nil
+        }
+    }
+
+    private func recurrenceSignature(
+        _ rules: [EKRecurrenceRule]
+    ) -> String {
+        rules.map { rule in
+            let end: String
+            if let date = rule.recurrenceEnd?.endDate {
+                end = "date:\(Int64((date.timeIntervalSince1970 * 1_000).rounded()))"
+            } else if let count = rule.recurrenceEnd?.occurrenceCount,
+                      count > 0 {
+                end = "count:\(count)"
+            } else {
+                end = "never"
+            }
+            let weekdays = (rule.daysOfTheWeek ?? [])
+                .map { "\($0.dayOfTheWeek.rawValue):\($0.weekNumber)" }
+                .sorted()
+                .joined(separator: ",")
+            return [
+                "frequency:\(rule.frequency.rawValue)",
+                "interval:\(rule.interval)",
+                "firstWeekday:\(rule.firstDayOfTheWeek)",
+                "end:\(end)",
+                "weekdays:\(weekdays)",
+                "monthDays:\(numberSignature(rule.daysOfTheMonth))",
+                "months:\(numberSignature(rule.monthsOfTheYear))",
+                "weeks:\(numberSignature(rule.weeksOfTheYear))",
+                "yearDays:\(numberSignature(rule.daysOfTheYear))",
+                "positions:\(numberSignature(rule.setPositions))"
+            ].joined(separator: "|")
+        }
+        .sorted()
+        .joined(separator: "||")
+    }
+
+    private func numberSignature(_ values: [NSNumber]?) -> String {
+        (values ?? [])
+            .map(\.intValue)
+            .sorted()
+            .map(String.init)
+            .joined(separator: ",")
     }
 
     private func makeTimeSemantics(_ event: EKEvent) -> EventTimeSemantics {

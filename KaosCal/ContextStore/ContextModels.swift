@@ -381,6 +381,197 @@ enum TaskCenterList: Equatable {
     case completed
 }
 
+enum EventChangeType: String, Codable, CaseIterable, DatabaseValueConvertible {
+    case created
+    case detailsUpdated = "details_updated"
+    case moved
+    case recurrenceChanged = "recurrence_changed"
+    case cancelled
+    case completed
+    case restored
+    case relinked
+}
+
+enum EventChangeScope: String, Codable, CaseIterable, DatabaseValueConvertible {
+    case single
+    case thisEvent = "this_event"
+    case futureEvents = "future_events"
+}
+
+enum EventChangeUndoState: String, Codable, CaseIterable, DatabaseValueConvertible {
+    case available
+    case superseded
+    case undone
+    case unavailable
+}
+
+struct EventChangeSnapshot: Codable, Equatable {
+    let schemaVersion: Int
+    let eventIdentifier: String?
+    let calendarItemIdentifier: String?
+    let calendarItemExternalIdentifier: String?
+    let calendarIdentifier: String
+    let calendarTitle: String
+    let sourceTitle: String
+    let title: String
+    let location: String?
+    let originalNotes: String?
+    let startDate: Date
+    let endDate: Date
+    let isAllDay: Bool
+    let timeSemantics: StoredEventTimeSemantics
+    let timeZoneIdentifier: String?
+    let startLocalComponents: StoredLocalDateTimeComponents?
+    let endLocalComponents: StoredLocalDateTimeComponents?
+    let isRecurring: Bool
+    let occurrenceDate: Date?
+    let occurrenceLocalComponents: StoredLocalDateTimeComponents?
+    let occurrenceIdentityKey: String
+    let isDetached: Bool
+
+    init(event: DisplayEvent) throws {
+        let linkSnapshot = try EventLinkSnapshot(event: event)
+        let localComponents: (
+            StoredLocalDateTimeComponents?,
+            StoredLocalDateTimeComponents?
+        )
+        switch event.timeSemantics {
+        case let .allDay(start, endExclusive):
+            localComponents = (
+                StoredLocalDateTimeComponents(components: start),
+                StoredLocalDateTimeComponents(components: endExclusive)
+            )
+        case let .floating(start, end):
+            localComponents = (
+                StoredLocalDateTimeComponents(components: start),
+                StoredLocalDateTimeComponents(components: end)
+            )
+        case .zoned:
+            localComponents = (nil, nil)
+        }
+
+        schemaVersion = 1
+        eventIdentifier = event.eventIdentifier
+        calendarItemIdentifier = event.calendarItemIdentifier
+        calendarItemExternalIdentifier = event.calendarItemExternalIdentifier
+        calendarIdentifier = event.calendarIdentifier
+        calendarTitle = event.calendarTitle
+        sourceTitle = event.sourceTitle
+        title = event.title
+        location = event.location
+        originalNotes = event.originalNotes
+        startDate = event.startDate
+        endDate = event.endDate
+        isAllDay = event.isAllDay
+        timeSemantics = linkSnapshot.timeSemantics
+        timeZoneIdentifier = linkSnapshot.timeZoneIdentifier
+        startLocalComponents = localComponents.0
+        endLocalComponents = localComponents.1
+        isRecurring = event.isRecurring
+        occurrenceDate = event.occurrenceDate
+        occurrenceLocalComponents = event.occurrenceLocalComponents.map(
+            StoredLocalDateTimeComponents.init(components:)
+        )
+        occurrenceIdentityKey = linkSnapshot.occurrenceIdentityKey
+        isDetached = event.isDetached
+    }
+
+    var supportsSingleEventUndo: Bool {
+        !isRecurring && occurrenceDate == nil && !isDetached
+    }
+
+    func hasSameUndoableState(as other: Self) -> Bool {
+        guard calendarIdentifier == other.calendarIdentifier,
+              title == other.title,
+              location == other.location,
+              originalNotes == other.originalNotes,
+              isAllDay == other.isAllDay,
+              timeSemantics == other.timeSemantics,
+              timeZoneIdentifier == other.timeZoneIdentifier,
+              isRecurring == other.isRecurring,
+              occurrenceIdentityKey == other.occurrenceIdentityKey,
+              isDetached == other.isDetached else {
+            return false
+        }
+
+        switch timeSemantics {
+        case .zoned:
+            return startDate == other.startDate && endDate == other.endDate
+        case .allDay, .floating:
+            return startLocalComponents == other.startLocalComponents
+                && endLocalComponents == other.endLocalComponents
+        }
+    }
+}
+
+struct EventChangeLog: Equatable, Identifiable {
+    let id: String
+    let contextID: String
+    let changeType: EventChangeType
+    let scope: EventChangeScope
+    let before: EventChangeSnapshot
+    let after: EventChangeSnapshot
+    let undoState: EventChangeUndoState
+    let undoneAt: Date?
+    let undoOfChangeID: String?
+    let createdAt: Date
+}
+
+struct EventMutationTaskSummary: Equatable {
+    let section: EventTaskSection
+    let count: Int
+    let titles: [String]
+}
+
+struct EventMutationImpact: Equatable {
+    let contextID: String
+    let hasNotes: Bool
+    let notesCharacterCount: Int
+    let taskCount: Int
+    let taskSections: [EventMutationTaskSummary]
+    let recentHistory: [EventChangeLog]
+}
+
+struct EventChangeLogRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "event_change_log"
+
+    let id: String
+    let contextID: String
+    let changeType: EventChangeType
+    let scope: EventChangeScope
+    let beforePayload: String
+    let afterPayload: String
+    var undoState: EventChangeUndoState
+    var undoneAt: Date?
+    let undoOfChangeID: String?
+    let createdAt: Date
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy {
+        .deferredToDate
+    }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy {
+        .deferredToDate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case contextID = "context_id"
+        case changeType = "change_type"
+        case scope
+        case beforePayload = "before_payload"
+        case afterPayload = "after_payload"
+        case undoState = "undo_state"
+        case undoneAt = "undone_at"
+        case undoOfChangeID = "undo_of_change_id"
+        case createdAt = "created_at"
+    }
+}
+
 struct EventLinkSnapshot: Equatable {
     let eventIdentifier: String?
     let calendarItemIdentifier: String?
@@ -509,7 +700,7 @@ private enum EventLinkSnapshotError: Error {
     case missingLocalOccurrence
 }
 
-struct StoredLocalDateTimeComponents: Codable {
+struct StoredLocalDateTimeComponents: Codable, Equatable {
     let calendarIdentifier: String
     let year: Int
     let month: Int

@@ -8,12 +8,13 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 ## 현재 진행 상태
 
 - Phase 0: **완료** — 2026-07-10, build/test/ad-hoc signing/window 생성 검증
-- Phase 1: **실계정 검증 중** — 코드·15개 자동 테스트·ad-hoc 서명 검증 완료, full access 사용자 승인 및 `KAOS-TEST` 확인 대기
+- Phase 1: **실계정 검증 중** — 코드·15개 자동 테스트·ad-hoc 서명 검증 완료. 사용자는 2026-07-11 full access 허용을 보고했지만 최신 서명 앱 화면과 `KAOS-TEST` 확인은 대기
 - Phase 2: **구현·자동 검증 완료 / 실계정 UI 검증 중** — Day/Week/Agenda 공통 범위, 실제 시간·종일 배치, 33개 전체 테스트, Release·서명 build, offscreen 렌더 검증 완료
 - Phase 3: **완료** — GRDB v1 migration, 앱 bootstrap, Event Brief/task repository, identity resolver, 파일 재열기·동시 저장, 54-test 전체 회귀, Release·서명 Debug 검증 완료
 - Phase 4: **구현·자동·빌드·서명·fixture 시각 검증 완료 / 수동 gate 대기** — notes autosave, event/personal task CRUD·완료·due, typed Task Center, strong-only 원본 탐색 구현; 전체 75 tests와 Release·서명 Debug·strict codesign 통과
 - Phase 5: **구현·자동·Release·ad-hoc 서명 checkpoint / 실제 EventKit·Exchange 수동 gate 대기** — attendee가 없는 비반복 writable 일정 create/update, local Brief 없는 일정 move/delete, all-day·floating/zoned·원본 notes 편집, stale/identity/rebind 보호 구현; 전체 97 tests와 strict codesign 통과
-- Phase 6~10: 대기
+- Phase 6: **구현·자동·Release·ad-hoc 서명 checkpoint / 실계정 검증 대기** — 명시적 반복 범위, 확인 뒤 write, linked safe move, additive change log, 좁은 session Undo와 안전 차단 경계를 구현했고 전체 121 tests와 strict codesign을 통과. `KAOS-TEST` EventKit/Calendar.app round-trip은 대기
+- Phase 7~10: 대기
 
 ## Phase 표
 
@@ -66,7 +67,8 @@ Definition of Done:
 현재 판정:
 - 자동 검증 통과: fake provider 기반 권한 상태 전이·permissionDenied 정규화, 권한 철회 시 메모리 데이터 제거, -30/+90일 조회 범위, 변경 알림 병합 재조회, 종일 배타 종료일 표시
 - 서명 검증 통과: sandbox, Calendar entitlement, full-access usage description
-- 수동 검증 대기: 실제 TCC full access 승인·복구 UI, `KAOS-TEST`의 Exchange/writable 표시, 실일정·반복 occurrence, Calendar.app 변경 반영
+- 사용자 보고: 2026-07-11 macOS 전체 캘린더 접근 허용. 이는 최신 서명 앱 UI의 `Full calendar access` 표시나 EventKit fetch 성공을 독립 검증한 결과가 아니다.
+- 수동 검증 대기: 실제 TCC full access 상태·복구 UI, `KAOS-TEST`의 Exchange/writable 표시, 실일정·반복 occurrence, Calendar.app 변경 반영
 - blocked/이월: 공유 read-only Exchange calendar가 없어 실계정 read-only 판정은 막혀 있다. 구현 checkpoint 뒤 Phase 2는 진행하되 Phase 8 호환성 게이트 전에 해소한다.
 
 ## Phase 2: Calendar Event Layout
@@ -172,7 +174,7 @@ Definition of Done:
 - local 연결 보호 구현: pending notes 저장 실패와 weak/ambiguous identity는 editor를 열지 않는다. linked same-calendar 수정은 receipt로 기존 context를 rebind하고 notes/tasks를 보존하며, rebind 실패는 EventKit 부분 성공으로 알린다.
 - 명시적 이월: linked calendar 이동은 Phase 6, linked 삭제·orphan review는 Phase 7, 반복 create/update/delete와 `EKSpan` 선택은 Phase 6이다. attendee가 있는 회의와 초대 원본은 v1에서 Calendar.app 전용이다.
 - 자동·빌드·서명 검증 통과: 전체 **97 tests, 0 failures, 0 unexpected**. create/update/delete AppState 흐름, 제한 정책, stale 오류, linked rebind·사전 차단·부분 성공, transaction rollback, all-day/time-zone/DST 경계를 포함한다. unsigned Release, ad-hoc signed Debug, strict codesign·sandbox·Calendar entitlement·usage description을 확인했고 production DB mtime/size는 테스트 전후 불변이다.
-- 수동 gate 대기: 실제 full access 승인, `KAOS-TEST`의 Exchange/writable 노출, Calendar.app 생성·수정·삭제·종일·시간대 반영, 실제 identifier churn과 서버 정규화. 이 항목 전에는 Exchange 지원 통과로 선언하지 않는다.
+- 사용자 보고/수동 gate 분리: 사용자는 2026-07-11 full access 허용을 보고했다. 최신 Phase 5 서명 앱 화면의 실제 권한 상태, `KAOS-TEST`의 Exchange/writable 노출, Calendar.app 생성·수정·삭제·종일·시간대 반영, identifier churn과 서버 정규화는 여전히 대기다. 이 항목 전에는 Exchange 지원 통과로 선언하지 않는다.
 
 ## Phase 6: Recurrence And Change-Safe Move
 
@@ -180,16 +182,27 @@ Definition of Done:
 - 반복 occurrence 표시와 기본 recurrence editor
 - `이번 일정` / `이번 이후` 영향 범위 선택
 - linked calendar 이동과 반복 범위 감지
-- linked 이동·같은-calendar 시간 변경 영향의 richer confirmation UI
+- calendar 이동·기존 시간 의미 변경과 linked local 영향의 richer confirmation UI
 - 연결 항목 리스트 표시
-- change log 기록
-- undo 최소 구현
+- immutable v1을 보존하는 additive `event_change_log` migration과 변경 기록
+- 마지막 linked 비반복 single calendar/time 변경만 되돌리는 session-only undo
 
 Definition of Done:
 - 이동 전/후 시간이 로그에 남음
 - context_id 유지
 - 취소 시 EventKit과 local DB 모두 변경되지 않음
 - 반복 occurrence별 Brief가 섞이지 않음
+- detached `이번 이후`, 복잡한 rule의 `이번 이후`·rule 변경, attendee meeting은 provider 호출 전에 차단되고 complex `이번 일정` ordinary-field patch는 rule을 보존함
+- 초기 Phase 6은 linked future-series write를 전부 차단함. 후속으로 열려면 영향받는 모든 local context를 강하게 reconciliation할 수 있어야 함
+- Undo는 앱 재실행·후속 성공 write 뒤 제공되지 않고, 외부 변경 뒤 남은 control도 fresh stale check에서 차단되며, 반복 series나 delete를 되돌리지 않음
+
+현재 구현 판정:
+- [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md)로 범위와 실패 경계를 확정했다.
+- 반복 write와 linked move는 scope·before/after·유지될 local context를 보여 준 뒤 Confirm해야 하며, Cancel은 provider call·local rebind·log append를 수행하지 않도록 구현했다.
+- `v2_event_change_log`를 v1 baseline을 수정하지 않는 additive migration으로 구현했고, linked rebind·log와 Undo rebind·restored append를 각각 하나의 SQLite transaction으로 묶었다.
+- detached occurrence의 `이번 이후`, 모든 linked `이번 이후`, attendee meeting, complex recurrence의 future/rule 변경은 Calendar.app 또는 안전 안내로 보낸다. complex recurrence의 `이번 일정` ordinary-field patch는 rule을 보존하며 linked delete는 Phase 7까지 차단한다.
+- 전체 **121 tests, 0 failures, 0 unexpected**로 구현 자동 gate를 통과했다. 실제 `KAOS-TEST`의 Exchange source/writable·recurrence span·Calendar.app round-trip은 별도 수동 gate로 남아 있으며 현재 pass로 표시하지 않는다.
+- unsigned Release와 ad-hoc signed Debug build, strict codesign, app sandbox·Calendar·Debug get-task-allow entitlement, full-access usage description을 확인했다. signed app 실행은 sandbox DB에 `v2_event_change_log` additive migration을 정상 적용했지만 최신 창·실계정 EventKit 화면은 확인하지 못했다.
 
 ## Phase 7: Lifecycle / After Review
 

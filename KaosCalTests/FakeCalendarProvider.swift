@@ -19,7 +19,16 @@ final class FakeCalendarProvider: CalendarProviding {
     var defaultNewEventCalendarIdentifier: String?
     var createEventHandler: ((CalendarEventDraft) throws -> DisplayEvent)?
     var updateEventHandler: ((DisplayEvent, CalendarEventDraft) throws -> DisplayEvent)?
+    var updateMutationHandler: ((
+        DisplayEvent,
+        CalendarEventDraft,
+        CalendarEventMutationScope
+    ) throws -> CalendarEventMutationReceipt)?
     var deleteEventHandler: ((DisplayEvent) throws -> Void)?
+    var deleteMutationHandler: ((
+        DisplayEvent,
+        CalendarEventMutationScope
+    ) throws -> CalendarEventMutationReceipt)?
     private(set) var requestCallCount = 0
     private(set) var listCallCount = 0
     private(set) var fetchCallCount = 0
@@ -31,6 +40,8 @@ final class FakeCalendarProvider: CalendarProviding {
     private(set) var lastUpdatedEvent: DisplayEvent?
     private(set) var lastUpdatedDraft: CalendarEventDraft?
     private(set) var lastDeletedEvent: DisplayEvent?
+    private(set) var lastUpdateScope: CalendarEventMutationScope?
+    private(set) var lastDeleteScope: CalendarEventMutationScope?
 
     init(authorizationState: CalendarAuthorizationState = .notDetermined) {
         self.authorizationState = authorizationState
@@ -64,6 +75,9 @@ final class FakeCalendarProvider: CalendarProviding {
         createCallCount += 1
         lastCreatedDraft = draft
         if let error { throw error }
+        if case .unsupported = draft.recurrence {
+            throw CalendarEventWriteError.unsupportedRecurrence
+        }
         let event = try createEventHandler?(draft)
             ?? makeEvent(draft: draft, idSeed: "created-\(createCallCount)")
         events.append(event)
@@ -74,10 +88,44 @@ final class FakeCalendarProvider: CalendarProviding {
         _ original: DisplayEvent,
         with draft: CalendarEventDraft
     ) throws -> DisplayEvent {
+        if original.isRecurring
+            || original.occurrenceDate != nil
+            || original.isDetached {
+            throw CalendarEventWriteError.recurringScopeRequired
+        }
+        return try updateEvent(
+            original,
+            with: draft,
+            scope: .thisEvent
+        ).event
+    }
+
+    func updateEvent(
+        _ original: DisplayEvent,
+        with draft: CalendarEventDraft,
+        scope: CalendarEventMutationScope
+    ) throws -> CalendarEventMutationReceipt {
         updateCallCount += 1
         lastUpdatedEvent = original
         lastUpdatedDraft = draft
+        lastUpdateScope = scope
         if let error { throw error }
+        if let updateMutationHandler {
+            return try updateMutationHandler(original, draft, scope)
+        }
+        let currentDraft = CalendarEventDraft(
+            event: original,
+            calendar: draft.wallTimeCalendar(fallback: .autoupdatingCurrent)
+        )
+        let changedFields = draft.changedFields(comparedTo: currentDraft)
+        guard !changedFields.isEmpty else {
+            return CalendarEventMutationReceipt(
+                event: original,
+                didWrite: false,
+                scope: scope,
+                changedFields: []
+            )
+        }
         let event = try updateEventHandler?(original, draft)
             ?? makeEvent(
                 draft: draft,
@@ -90,15 +138,42 @@ final class FakeCalendarProvider: CalendarProviding {
         } else {
             events.append(event)
         }
-        return event
+        return CalendarEventMutationReceipt(
+            event: event,
+            didWrite: true,
+            scope: scope,
+            changedFields: changedFields
+        )
     }
 
     func deleteEvent(_ original: DisplayEvent) throws {
+        if original.isRecurring
+            || original.occurrenceDate != nil
+            || original.isDetached {
+            throw CalendarEventWriteError.recurringScopeRequired
+        }
+        _ = try deleteEvent(original, scope: .thisEvent)
+    }
+
+    func deleteEvent(
+        _ original: DisplayEvent,
+        scope: CalendarEventMutationScope
+    ) throws -> CalendarEventMutationReceipt {
         deleteCallCount += 1
         lastDeletedEvent = original
+        lastDeleteScope = scope
         if let error { throw error }
+        if let deleteMutationHandler {
+            return try deleteMutationHandler(original, scope)
+        }
         try deleteEventHandler?(original)
         events.removeAll { $0.id == original.id }
+        return CalendarEventMutationReceipt(
+            event: original,
+            didWrite: true,
+            scope: scope,
+            changedFields: [.deletion]
+        )
     }
 
     func sendStoreChanged() {
@@ -159,16 +234,36 @@ final class FakeCalendarProvider: CalendarProviding {
             isAllDay: draft.isAllDay,
             timeZoneIdentifier: draft.timeZoneIdentifier,
             timeSemantics: timeSemantics,
-            isRecurring: false,
-            occurrenceDate: nil,
-            occurrenceLocalComponents: nil,
+            isRecurring: draft.recurrence.isRecurring,
+            occurrenceDate: draft.recurrence.isRecurring
+                ? draft.startDate
+                : nil,
+            occurrenceLocalComponents: draft.recurrence.isRecurring
+                ? recurrenceLocalComponents(
+                    for: draft,
+                    timeSemantics: timeSemantics
+                )
+                : nil,
             isDetached: false,
             isReadOnly: false,
             isInvitation: false,
             hasAttendees: false,
             originalNotes: draft.originalNotes.isEmpty
                 ? nil
-                : draft.originalNotes
+                : draft.originalNotes,
+            recurrence: draft.recurrence
         )
+    }
+
+    private func recurrenceLocalComponents(
+        for draft: CalendarEventDraft,
+        timeSemantics: EventTimeSemantics
+    ) -> LocalDateTimeComponents? {
+        switch timeSemantics {
+        case .zoned:
+            return nil
+        case let .allDay(start, _), let .floating(start, _):
+            return start
+        }
     }
 }

@@ -299,6 +299,85 @@
   - shared read-only Viewer는 미준비로 Phase 8 gate 전까지 `blocked`
 - 결과: Phase 5 코드·자동·Release·ad-hoc 서명 checkpoint를 통과했다. fake provider 자동 검증을 실제 Exchange save/remove 지원으로 해석하지 않으며, 위 실계정 수동 gate는 계속 열린 상태다.
 
+## 2026-07-11 — Phase 6 안전 계약과 Exchange 수동 gate 준비
+
+- 관련 ADR: ADR-003, ADR-004, ADR-008, ADR-009, ADR-010, ADR-011
+- 상태: **문서·설계 checkpoint / Phase 6 구현·자동·실계정 검증 결과 미선언**
+- 사용자 보고와 독립 검증 구분:
+  - 사용자는 2026-07-11 macOS 전체 캘린더 접근을 허용했다고 보고했다.
+  - 이 보고만으로 최신 서명 앱의 `Full calendar access`, EventKit fetch, `KAOS-TEST`의 Exchange source·writable·color, Calendar.app round-trip을 pass 처리하지 않는다.
+  - Exchange backend 종류는 계속 unknown이고 shared read-only Viewer는 미준비다.
+- Phase 6 결정:
+  - 반복 update/move/delete는 `이번 일정`(`thisEvent`) 또는 `이번 이후`(`futureEvents`)의 명시적 scope와 최종 impact Confirm 전에는 provider를 호출하지 않는다.
+  - detached occurrence의 future scope, complex recurrence의 future/rule 변경, attendee meeting/invitation은 Calendar.app 전용 또는 사전 차단이다. complex recurrence의 `thisEvent` ordinary-field patch는 recurrence rule을 보존하는 조건으로 허용한다.
+  - Phase 6의 첫 안전 범위는 linked future-series write를 전부 EventKit 호출 전에 차단한다. 후속으로 열려면 영향받는 모든 local context의 strong reconciliation plan이 필요하고 weak·ambiguous·missing이면 계속 중단한다.
+  - linked safe move는 receipt로 기존 context ID를 rebind하고 notes/tasks를 보존한다. linked delete는 Phase 7 orphan review까지 계속 차단한다.
+  - immutable v1 뒤에 `v2_event_change_log` additive migration을 두고 change type, scope, versioned before/after, undo state와 원본 change self-reference를 기록한다.
+  - Undo는 persistent history rollback이 아니라 같은 process session의 직전 linked nonrecurring `single` calendar/time write 한 건에만 허용한다. unlinked·details-only·반복 scope·detached occurrence·delete·재실행 뒤 history-only Undo는 금지한다.
+  - EventKit과 SQLite는 원자적이지 않다. linked rebind와 log append끼리만 하나의 SQLite transaction이며 EventKit-only 성공은 부분 성공으로 표시한다.
+- 계획된 자동 gate:
+  - additive migration FK/CHECK/index와 v1 불변성
+  - versioned payload time/recurrence round-trip
+  - impact preview와 Confirm 전 provider/log 0회
+  - linked move/context 보존, unsafe future 사전 차단, rebind+log rollback
+  - available→superseded, undone+restored와 session token 무효화
+- Phase 5 기준 수동 gate build evidence — Phase 6 build나 화면 pass가 아님:
+  - source commit: `4d19ffa`
+  - 환경: macOS 26.4.1, Xcode 26.6 / Build 17F113
+  - command: `xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalPhase5ManualGate -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES build`
+  - result: `BUILD SUCCEEDED`
+  - artifact: `/private/tmp/KaosCalPhase5ManualGate/Build/Products/Debug/KaosCal.app`
+  - bundle/version/minimum: `com.adtstack.kaoscal` / `0.1.0` / macOS `14.0`
+  - CDHash: `61826f59004e96593e76e38bfe571d74f90a1d79`
+  - `codesign --verify --deep --strict`, sandbox·calendars·Debug get-task-allow entitlement, full-access usage description: pass
+  - app launch, screen, TCC state, `KAOS-TEST` read/write, Calendar.app/Exchange round-trip: **not run in this entry**
+  - build 뒤 direct/sandbox production DB mtime·size는 Phase 5 기록과 동일해 불변
+- 문서 변경: README, ADR-011/index, phase plan, architecture, data model, design system, EventKit decisions, QA, Exchange compatibility, v1 scope, developer setup, implementation log
+- 결과: Phase 6의 구현 전 안전 경계와 검증 기준을 기록했다. 코드·test count·signed Phase 6 build·실계정 pass는 실제 결과가 생긴 뒤 별도 항목으로 추가한다.
+
+## 2026-07-11 — Phase 6 recurrence·safe move·change log·session Undo checkpoint
+
+- 관련 ADR: ADR-003, ADR-004, ADR-008, ADR-009, ADR-010, ADR-011
+- 상태: **코드·자동·Release·ad-hoc 서명 checkpoint 통과 / 최신 창·실계정 Exchange 수동 gate 대기**
+- 구현:
+  - 기본 일·주·월·년 recurrence, interval·주간 요일·종료 조건과 손실 없는 EventKit mapping을 추가했다. 복잡·다중 rule은 unsupported snapshot으로 보존한다.
+  - 반복 update/delete에는 기본값 없는 `thisEvent`/`futureEvents` scope를 요구하고 위험한 변경은 immutable impact preview의 Confirm 뒤에만 실행한다. `thisEvent` detach 가능성을 명시하고 detached future, complex future/rule 변경, attendee meeting을 사전 차단한다.
+  - series/occurrence strong identifiers와 zoned instant 또는 all-day/floating civil anchor로 최신 occurrence를 다시 찾고 stale 지원 필드가 같을 때 변경 필드만 patch한다. 저장 뒤 occurrence receipt를 재탐색한다.
+  - post-save occurrence receipt를 확정하지 못하면 이미 저장된 부분 성공으로 처리해 editor/review를 닫고 refresh하며 동일 명령을 재시도하지 않게 한다. local Brief·log·Undo는 만들거나 지우지 않는다.
+  - linked move·시간 의미 변경은 기존 context ID·notes·tasks를 유지하고 receipt rebind와 change-log append를 한 SQLite transaction으로 수행한다. 모든 linked future와 linked delete는 각각 multi-context reconciliation·Phase 7 review 전까지 차단한다.
+  - immutable `v1_context_store` 뒤에 `v2_event_change_log` additive migration, versioned before/after payload, scope·undo state·self-reference 제약과 index를 추가했다.
+  - 같은 process session의 직전 linked 비반복 `single` calendar/time mutation 한 건만 fresh after-snapshot 검증 뒤 one-shot Undo할 수 있다. 성공 시 original을 `undone`으로 바꾸고 `restored` row와 context rebind를 atomic 처리한다.
+  - recurrence editor, scope picker, impact review, Event Brief notes/task/history 요약과 inspector Undo control을 구현했다.
+- 최종 자동 검증:
+  - `CalendarEventEditingTests`: **28 tests, 0 failures**
+  - `ContextStoreTests`: **34 tests, 0 failures**
+  - `Phase6AppStateTests`: **9 tests, 0 failures**
+  - 전체 회귀: **121 tests, 0 failures, 0 unexpected**, `TEST SUCCEEDED`
+  - result bundle: `/tmp/KaosCalPhase6Root/Logs/Test/Test-KaosCal-2026.07.11_01-17-51-+0900.xcresult`
+  - 마지막 보완은 기존 all-day/floating recurrence가 reference-zone drift만으로 rule 변경으로 오인되지 않게 새 rule의 civil end rebase와 기존 rule 보존을 분리했으며 집중 37-test와 전체 회귀를 다시 통과했다.
+- 독립 검토:
+  - recurrence boundary/rebase, EventKit scope·재탐색·stale/no-op, confirm/cancel/double-submit, linked rebind/log transaction, session Undo, v2 migration을 별도 감사했다.
+  - 최종 코드 diff에서 남은 P0/P1 없음, `git diff --check` 통과 판정을 받았다.
+- 빌드·서명 gate:
+  - pinned GRDB 7.10.0 기반 unsigned Release: `BUILD SUCCEEDED`
+  - Release artifact: `/private/tmp/KaosCalPhase6Release/Build/Products/Release/KaosCal.app`
+  - ad-hoc signed Debug: `BUILD SUCCEEDED`
+  - signed artifact: `/private/tmp/KaosCalPhase6Signed/Build/Products/Debug/KaosCal.app`
+  - CDHash: `e7d886091b26eab3b00e465c587c5ddbef9f83c2`
+  - `codesign --verify --deep --strict`: pass
+  - entitlements: app sandbox, calendars, Debug `get-task-allow` 모두 `true`
+  - built Info.plist: bundle `com.adtstack.kaoscal`, version `0.1.0`, minimum macOS `14.0`, `NSCalendarsFullAccessUsageDescription` 확인
+- production DB 경계:
+  - 자동 test 직후 direct DB `/Users/tylor/Library/Application Support/KaosCal/kaoscal.sqlite`는 `1783678704|110592`, sandbox DB `/Users/tylor/Library/Containers/com.adtstack.kaoscal/Data/Library/Application Support/KaosCal/kaoscal.sqlite`는 `1783678843|110592`로 test 전과 동일했다.
+  - 이후 signed Phase 6 app을 직접 실행하자 direct DB는 그대로였고 sandbox DB만 `1783678843|110592`에서 `1783700481|126976`으로 변경됐다. 이는 첫 production bootstrap이 additive migration을 적용한 결과다.
+  - sandbox DB를 read-only로 확인한 결과 `integrity_check = ok`, foreign-key violation 0건, migration은 `v1_context_store`, `v2_event_change_log`, `event_change_log` row는 0건이었다. 기존 local content 본문은 읽거나 수정하지 않았다.
+- 최신 창·Exchange gate:
+  - 사용자는 macOS 전체 캘린더 접근을 허용했다고 보고했다.
+  - Orca computer-use runtime과 accessibility·screenshots 권한은 ready/granted였지만, 기존 KaosCal 창은 `visible windows but no accessibility window`로 읽지 못했다. 정확한 Phase 6 process는 bootstrap됐으나 별도 window가 잡히지 않았고 window screenshot도 생성되지 않았다.
+  - 이번 gate에서 `KAOS-TEST` 또는 다른 calendar에 fixture create/update/delete를 수행하지 않았다. 최신 서명 창의 `Full calendar access`, Exchange source·writable, recurrence span, identifier churn과 Calendar.app round-trip은 계속 **not verified**다.
+- 문서 변경: README, ADR-011/index, phase plan, architecture, data model, design system, EventKit decisions, QA, Exchange compatibility, v1 scope, developer setup, implementation log
+- 결과: Phase 6 코드·자동·Release·ad-hoc 서명·production additive migration checkpoint를 통과했다. fake provider와 local DB 검증을 실제 Exchange 지원으로 해석하지 않으며, 다음 수동 gate는 정확한 최신 창에서 `KAOS-TEST`를 확인한 뒤에만 전용 fixture로 실행한다.
+
 ## 다음 항목 템플릿
 
 ```markdown

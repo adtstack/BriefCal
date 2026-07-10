@@ -7,6 +7,37 @@ enum EventMutationContext: Equatable {
     case confirmationRequired(contextIDs: [String])
 }
 
+enum EventChangeLogError: Error, Equatable {
+    case missingChange(String)
+    case changeContextMismatch(
+        changeID: String,
+        expectedContextID: String
+    )
+    case invalidInitialUndoState(EventChangeUndoState)
+    case undoUnavailable(String)
+    case unsupportedUndo(String)
+    case undoSourceMismatch(String)
+}
+
+extension EventChangeLogError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case let .missingChange(changeID):
+            "The local event change is missing: \(changeID)."
+        case let .changeContextMismatch(changeID, expectedContextID):
+            "Change \(changeID) does not belong to context \(expectedContextID)."
+        case .invalidInitialUndoState:
+            "A new event change must start as available or unavailable for undo."
+        case let .undoUnavailable(changeID):
+            "Change \(changeID) is no longer available for undo."
+        case let .unsupportedUndo(changeID):
+            "Change \(changeID) cannot be safely undone by KaosCal."
+        case let .undoSourceMismatch(changeID):
+            "The event changed after \(changeID), so KaosCal did not apply its undo."
+        }
+    }
+}
+
 final class ContextStore {
     let eventContexts: EventContextRepository
     let eventTasks: EventTaskRepository
@@ -14,6 +45,8 @@ final class ContextStore {
     let taskCenter: TaskCenterRepository
 
     private let database: AppDatabase
+    private let now: () -> Date
+    private let makeID: () -> String
 
     init(
         database: AppDatabase,
@@ -21,6 +54,8 @@ final class ContextStore {
         makeID: @escaping () -> String = { UUID().uuidString }
     ) {
         self.database = database
+        self.now = now
+        self.makeID = makeID
         eventContexts = EventContextRepository(
             database: database,
             now: now,
@@ -134,6 +169,179 @@ final class ContextStore {
                 throw ContextStoreError.missingContext(contextID)
             }
             return snapshot
+        }
+    }
+
+    func mutationImpact(
+        contextID: String,
+        recentHistoryLimit: Int = 5
+    ) throws -> EventMutationImpact {
+        try database.read { db in
+            guard let brief = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            let trimmedNotes = brief.context.notes.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            let taskSections = EventTaskSection.allCases.map { section in
+                let tasks = brief.tasks.filter { $0.section == section }
+                return EventMutationTaskSummary(
+                    section: section,
+                    count: tasks.count,
+                    titles: tasks.map(\.title)
+                )
+            }
+            return EventMutationImpact(
+                contextID: contextID,
+                hasNotes: !trimmedNotes.isEmpty,
+                notesCharacterCount: trimmedNotes.count,
+                taskCount: brief.tasks.count,
+                taskSections: taskSections,
+                recentHistory: try Self.fetchChangeHistory(
+                    contextID: contextID,
+                    limit: recentHistoryLimit,
+                    in: db
+                )
+            )
+        }
+    }
+
+    func changeHistory(
+        contextID: String,
+        limit: Int = 20
+    ) throws -> [EventChangeLog] {
+        try database.read { db in
+            try Self.fetchChangeHistory(
+                contextID: contextID,
+                limit: limit,
+                in: db
+            )
+        }
+    }
+
+    @discardableResult
+    func rebindAndRecordMutation(
+        contextID: String,
+        from beforeEvent: DisplayEvent,
+        to afterEvent: DisplayEvent,
+        changeType: EventChangeType,
+        scope: EventChangeScope,
+        undoState: EventChangeUndoState
+    ) throws -> EventChangeLog {
+        guard undoState == .available || undoState == .unavailable else {
+            throw EventChangeLogError.invalidInitialUndoState(undoState)
+        }
+        let before = try EventChangeSnapshot(event: beforeEvent)
+        let after = try EventChangeSnapshot(event: afterEvent)
+        if undoState == .available,
+           (scope != .single
+               || !before.supportsSingleEventUndo
+               || !after.supportsSingleEventUndo) {
+            throw EventChangeLogError.unsupportedUndo(contextID)
+        }
+
+        return try database.write { db in
+            guard try eventContexts.updateSnapshot(
+                contextID: contextID,
+                event: afterEvent,
+                notes: nil,
+                in: db
+            ) != nil else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            try db.execute(
+                sql: """
+                    UPDATE event_change_log
+                    SET undo_state = 'superseded'
+                    WHERE context_id = ? AND undo_state = 'available'
+                    """,
+                arguments: [contextID]
+            )
+            let record = try makeChangeRecord(
+                contextID: contextID,
+                changeType: changeType,
+                scope: scope,
+                before: before,
+                after: after,
+                undoState: undoState,
+                undoneAt: nil,
+                undoOfChangeID: nil,
+                createdAt: now()
+            )
+            try record.insert(db)
+            return try Self.makeChangeLog(record)
+        }
+    }
+
+    @discardableResult
+    func rebindAfterUndo(
+        contextID: String,
+        originalChangeID: String,
+        from currentEvent: DisplayEvent,
+        to restoredEvent: DisplayEvent,
+        scope: EventChangeScope
+    ) throws -> EventChangeLog {
+        let current = try EventChangeSnapshot(event: currentEvent)
+        let restored = try EventChangeSnapshot(event: restoredEvent)
+
+        return try database.write { db in
+            guard var original = try EventChangeLogRecord.fetchOne(
+                db,
+                key: originalChangeID
+            ) else {
+                throw EventChangeLogError.missingChange(originalChangeID)
+            }
+            guard original.contextID == contextID else {
+                throw EventChangeLogError.changeContextMismatch(
+                    changeID: originalChangeID,
+                    expectedContextID: contextID
+                )
+            }
+            guard original.undoState == .available else {
+                throw EventChangeLogError.undoUnavailable(originalChangeID)
+            }
+            let originalLog = try Self.makeChangeLog(original)
+            guard original.scope == .single,
+                  scope == .single,
+                  originalLog.before.supportsSingleEventUndo,
+                  originalLog.after.supportsSingleEventUndo,
+                  current.supportsSingleEventUndo,
+                  restored.supportsSingleEventUndo else {
+                throw EventChangeLogError.unsupportedUndo(originalChangeID)
+            }
+            guard current.hasSameUndoableState(as: originalLog.after) else {
+                throw EventChangeLogError.undoSourceMismatch(originalChangeID)
+            }
+            guard try eventContexts.updateSnapshot(
+                contextID: contextID,
+                event: restoredEvent,
+                notes: nil,
+                in: db
+            ) != nil else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+
+            let timestamp = now()
+            original.undoState = .undone
+            original.undoneAt = timestamp
+            try original.update(db)
+
+            let restoredRecord = try makeChangeRecord(
+                contextID: contextID,
+                changeType: .restored,
+                scope: scope,
+                before: current,
+                after: restored,
+                undoState: .unavailable,
+                undoneAt: nil,
+                undoOfChangeID: originalChangeID,
+                createdAt: timestamp
+            )
+            try restoredRecord.insert(db)
+            return try Self.makeChangeLog(restoredRecord)
         }
     }
 
@@ -423,5 +631,90 @@ final class ContextStore {
             }
         }
         return resolution
+    }
+
+    private func makeChangeRecord(
+        contextID: String,
+        changeType: EventChangeType,
+        scope: EventChangeScope,
+        before: EventChangeSnapshot,
+        after: EventChangeSnapshot,
+        undoState: EventChangeUndoState,
+        undoneAt: Date?,
+        undoOfChangeID: String?,
+        createdAt: Date
+    ) throws -> EventChangeLogRecord {
+        EventChangeLogRecord(
+            id: makeID(),
+            contextID: contextID,
+            changeType: changeType,
+            scope: scope,
+            beforePayload: try Self.encodeChangeSnapshot(before),
+            afterPayload: try Self.encodeChangeSnapshot(after),
+            undoState: undoState,
+            undoneAt: undoneAt,
+            undoOfChangeID: undoOfChangeID,
+            createdAt: createdAt
+        )
+    }
+
+    private static func fetchChangeHistory(
+        contextID: String,
+        limit: Int,
+        in db: Database
+    ) throws -> [EventChangeLog] {
+        guard limit > 0 else { return [] }
+        let records = try EventChangeLogRecord.fetchAll(
+            db,
+            sql: """
+                SELECT *
+                FROM event_change_log
+                WHERE context_id = ?
+                ORDER BY created_at DESC, rowid DESC
+                LIMIT ?
+                """,
+            arguments: [contextID, limit]
+        )
+        return try records.map(makeChangeLog)
+    }
+
+    private static func makeChangeLog(
+        _ record: EventChangeLogRecord
+    ) throws -> EventChangeLog {
+        EventChangeLog(
+            id: record.id,
+            contextID: record.contextID,
+            changeType: record.changeType,
+            scope: record.scope,
+            before: try decodeChangeSnapshot(record.beforePayload),
+            after: try decodeChangeSnapshot(record.afterPayload),
+            undoState: record.undoState,
+            undoneAt: record.undoneAt,
+            undoOfChangeID: record.undoOfChangeID,
+            createdAt: record.createdAt
+        )
+    }
+
+    private static func encodeChangeSnapshot(
+        _ snapshot: EventChangeSnapshot
+    ) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        encoder.outputFormatting = [.sortedKeys]
+        return String(
+            decoding: try encoder.encode(snapshot),
+            as: UTF8.self
+        )
+    }
+
+    private static func decodeChangeSnapshot(
+        _ payload: String
+    ) throws -> EventChangeSnapshot {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        return try decoder.decode(
+            EventChangeSnapshot.self,
+            from: Data(payload.utf8)
+        )
     }
 }

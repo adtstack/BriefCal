@@ -71,9 +71,9 @@ UI:
 - `timeZone == nil`은 floating time으로 구분한다.
 - 시간대 변경 전에는 `현지 시각 유지`와 `동일 시점 유지` 결과를 미리 보여 준다.
 - 모든 반복 occurrence를 표시한다.
-- 기본 일·주·월·년 반복, interval, 종료, 주간 요일을 생성·편집한다.
-- 반복 변경 범위는 EventKit의 의미에 맞춰 `이번 일정` 또는 `이번 이후`로 표시한다.
-- KaosCal이 안전하게 표현할 수 없는 복잡한 서버 규칙은 읽고 보존하며, 수정은 Calendar.app으로 안내한다.
+- 기본 일·주·월·년 반복, interval, 종료, 주간 요일을 손실 없이 표현할 수 있을 때만 생성·편집한다.
+- 반복 변경 범위는 EventKit의 의미에 맞춰 `이번 일정` 또는 `이번 이후`로 표시하고 명시적 선택 전에는 write하지 않는다.
+- KaosCal이 안전하게 표현할 수 없는 복잡한 서버 규칙은 읽고 보존한다. 해당 occurrence의 일반 필드는 `이번 일정`으로 rule을 건드리지 않고 수정할 수 있지만, rule 자체와 `이번 이후` 변경은 Calendar.app으로 안내한다.
 - Event Brief는 기본적으로 occurrence별이다.
 
 ## 결정 6: 변경 감지는 보수적으로 한다
@@ -135,14 +135,35 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 
 ## 결정 10: 원본 write는 최신 강한 identity와 변경 필드만 사용한다
 
-- Phase 5는 full access, writable calendar, attendee 없음, 비반복 일정에만 create/update/delete를 제공한다.
-- 기존 일정은 편집 시작 객체를 저장하지 않고 같은 `EKEventStore`에서 event ID, calendar item ID, external ID 순으로 다시 찾는다. 원 calendar의 유일한 비반복 후보만 허용한다.
+- Phase 5는 full access, writable calendar, attendee 없음, 비반복 일정으로 원본 write를 시작했다. Phase 6은 새 basic recurrence 생성과 기존 반복 occurrence의 scope-aware update/delete를 추가했다.
+- 기존 일정은 편집 시작 객체를 저장하지 않고 같은 `EKEventStore`에서 strong identifier와 series/occurrence anchor로 다시 찾는다. 반복은 civil/instant 의미에 맞는 선택 occurrence 후보가 유일할 때만 쓴다.
 - 다시 읽은 지원 필드가 편집 시작 snapshot과 다르면 외부 변경으로 중단한다. zoned 시간은 absolute instant+zone, all-day/floating은 civil components로 비교한다.
 - no-op은 save하지 않고 변경 필드만 patch한다. 변경하지 않은 structured location, alarm, URL 같은 editor 밖 metadata를 불필요하게 다시 쓰지 않는다.
 - 원본 notes는 명시적 editor field로만 `EKEvent.notes`에 쓰고 local Event Brief notes/tasks와 분리한다.
 - 종일 종료는 배타 자정이다. draft가 포착한 reference time zone을 사용하고, 저장 시 기본 zone이 달라졌으면 all-day/floating wall components를 현재 zone에 rebase해 civil 값을 유지한다.
 - time zone 변경은 preserve-local/preserve-instant를 구분하고 DST gap/overlap의 모호한 local time은 자동 보정하지 않는다.
-- linked same-calendar update 뒤 EventKit receipt로 기존 context snapshot을 rebind한다. linked calendar 이동은 Phase 6, linked 삭제는 Phase 7, 반복 write는 Phase 6까지 차단한다.
+- linked same-calendar update·calendar 이동·안전한 `thisEvent`는 EventKit receipt로 기존 context snapshot을 rebind한다. linked `futureEvents`와 linked 삭제는 각각 multi-context reconciliation과 Phase 7 orphan review 전까지 차단한다.
 - EventKit 성공 뒤 SQLite rebind 실패는 부분 성공으로 알리고 local 데이터를 삭제하지 않는다.
 
 전체 계약은 [ADR-010](adr/ADR-010-original-event-write-safety.md)을 따른다. 실제 Exchange save/remove 통과 여부는 [Exchange Compatibility](exchange-compatibility.md)에서만 판정한다.
+
+## 결정 11: 반복·linked move는 impact 확인과 reconciliation 계획이 먼저다
+
+아래 Phase 6 계약은 코드와 121-test 자동 gate로 구현·검증했다. 실계정 Exchange 통과 상태는 여전히 별도다.
+
+- 기존 반복 occurrence update/move/delete는 `thisEvent` 또는 `futureEvents` scope가 필수다. UI에는 각각 `이번 일정`, `이번 이후`로 표시한다.
+- `thisEvent`는 선택 occurrence가 detached될 수 있음을 preview한다. 이미 detached인 occurrence의 `futureEvents`는 차단한다.
+- 기존 recurrence rule 변경은 `futureEvents`에서만 허용한다. `thisEvent`는 occurrence 상세 변경만 가능하고, linked series는 초기 Phase 6에서 future scope 자체가 차단되므로 rule 변경도 Calendar.app으로 보낸다.
+- 여러 recurrence rule이나 KaosCal이 손실 없이 왕복할 수 없는 복잡한 rule은 읽고 보존한다. `thisEvent`의 ordinary-field patch는 recurrenceRules를 쓰지 않는 조건으로 허용하지만, `futureEvents`와 rule 변경은 Calendar.app으로 안내한다.
+- 새 일정에는 지원 가능한 basic rule을 만들 수 있지만 기존 single event를 series로 변환하는 control은 초기 Phase 6에서 제공하지 않는다.
+- attendee가 있는 meeting과 invitation은 scope와 무관하게 Calendar.app 전용이다.
+- 반복 write, calendar move, 기존 일정의 시간 의미 변경은 immutable impact preview를 보여 주고 사용자가 Confirm한 뒤에만 provider를 호출한다. linked context가 있으면 유지할 local 항목을 함께 보여 준다. Cancel·validation 실패·no-op에는 EventKit write와 local log가 없다.
+- confirm 뒤에도 현재 full access, source/target writable, strong identity, fresh supported-field snapshot을 다시 검사한다.
+- linked `thisEvent` move는 선택 context 하나를 receipt에 rebind한다. Phase 6의 첫 안전 범위는 series split 뒤 여러 context를 재연결하는 기능을 제공하지 않으므로 linked `futureEvents`를 전부 write 전에 차단한다. 나중에 열더라도 영향받는 local context 전부를 열거하고 각 context를 강하게 재연결할 수 있어야 하며 weak·ambiguous·missing이 하나라도 있으면 계속 차단한다.
+- linked delete는 Phase 7 orphan review까지 계속 차단한다. local Brief가 없는 반복 원본만 Phase 6 scoped delete 후보가 될 수 있다.
+- linked write 성공 뒤 context rebind와 `event_change_log` append는 하나의 SQLite transaction이다. EventKit과 이 local transaction은 원자적이지 않으므로 EventKit만 성공한 부분 성공을 숨기거나 자동 rollback하지 않는다.
+- EventKit save 후 identifier churn으로 post-save occurrence를 강하게 재탐색하지 못하면 `CalendarEventMutationPartialSuccess`로 전파한다. UI는 editor/review를 닫고 refresh하며 동일 명령을 재시도하지 말고 Calendar.app에서 확인하도록 안내한다. local rebind·log·Undo는 수행하지 않고 Event Brief를 보존한다.
+- change log scope는 `single`, `this_event`, `future_events`를 구분한다. 실패·취소·단순 관찰은 기록하지 않는다.
+- persistent log는 audit/history이며 Undo 권한 자체가 아니다. Undo는 같은 process session의 직전 linked nonrecurring `single` calendar/time mutation 한 건만, 현재 원본이 logged after snapshot과 같을 때 역방향 write로 실행한다. unlinked·details-only·반복·detached·delete는 Undo하지 않는다.
+
+세부 schema, 확인 기준과 무효화 조건은 [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md)을 따른다. Exchange `EKSpan`·series split·identifier churn은 `KC-E4` 수동 결과 전까지 지원 통과로 선언하지 않는다.

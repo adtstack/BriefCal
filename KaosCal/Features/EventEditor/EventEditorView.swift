@@ -1,5 +1,119 @@
 import SwiftUI
 
+private enum RecurrenceEndMode: String, CaseIterable, Identifiable {
+    case never
+    case onDate
+    case afterOccurrences
+
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .never: "Never"
+        case .onDate: "On date"
+        case .afterOccurrences: "After count"
+        }
+    }
+}
+
+private extension CalendarRecurrenceFrequency {
+    var editorTitle: String {
+        switch self {
+        case .daily: "Daily"
+        case .weekly: "Weekly"
+        case .monthly: "Monthly"
+        case .yearly: "Yearly"
+        }
+    }
+
+    func intervalUnit(count: Int) -> String {
+        let singular: String = switch self {
+        case .daily: "day"
+        case .weekly: "week"
+        case .monthly: "month"
+        case .yearly: "year"
+        }
+        return count == 1 ? singular : "\(singular)s"
+    }
+}
+
+private extension CalendarRecurrenceWeekday {
+    var shortTitle: String {
+        switch self {
+        case .sunday: "S"
+        case .monday: "M"
+        case .tuesday: "T"
+        case .wednesday: "W"
+        case .thursday: "T"
+        case .friday: "F"
+        case .saturday: "S"
+        }
+    }
+}
+
+private extension CalendarEventMutationScope {
+    var editorTitle: String {
+        switch self {
+        case .thisEvent: "This event"
+        case .futureEvents: "This and future"
+        }
+    }
+}
+
+private extension CalendarEventRecurrence {
+    var editorSummary: String {
+        switch self {
+        case .none:
+            return "Does not repeat"
+        case let .unsupported(snapshot):
+            return snapshot.summary
+        case let .basic(rule):
+            var summary = "Every \(rule.interval) \(rule.frequency.intervalUnit(count: rule.interval))"
+            if rule.frequency == .weekly, !rule.weekdays.isEmpty {
+                let days = rule.weekdays
+                    .sorted { $0.rawValue < $1.rawValue }
+                    .map(\.shortTitle)
+                    .joined(separator: ", ")
+                summary += " on \(days)"
+            }
+            switch rule.end {
+            case .never:
+                break
+            case let .onDate(date):
+                summary += " until \(date.formatted(date: .abbreviated, time: .omitted))"
+            case let .afterOccurrences(count):
+                summary += " for \(count) occurrences"
+            }
+            return summary
+        }
+    }
+}
+
+private extension EventTaskSection {
+    var editorTitle: String {
+        switch self {
+        case .before: "Before"
+        case .during: "During"
+        case .after: "After"
+        }
+    }
+}
+
+private extension EventChangeType {
+    var editorTitle: String {
+        switch self {
+        case .created: "Created"
+        case .detailsUpdated: "Details updated"
+        case .moved: "Moved"
+        case .recurrenceChanged: "Repeat changed"
+        case .cancelled: "Cancelled"
+        case .completed: "Completed"
+        case .restored: "Restored"
+        case .relinked: "Relinked"
+        }
+    }
+}
+
 struct EventEditorView: View {
     @ObservedObject var appState: AppState
     let session: CalendarEventEditorSession
@@ -11,6 +125,7 @@ struct EventEditorView: View {
     @State private var showsTimeZoneChoice = false
     @State private var showsDeleteConfirmation = false
     @State private var validationMessage: String?
+    @State private var mutationScope: CalendarEventMutationScope?
     @FocusState private var titleIsFocused: Bool
 
     init(appState: AppState, session: CalendarEventEditorSession) {
@@ -24,6 +139,12 @@ struct EventEditorView: View {
         _wantsFloatingTime = State(
             initialValue: session.initialDraft.timeZoneIdentifier == nil
         )
+        if case let .existing(event) = session.target,
+           event.isRecurring {
+            _mutationScope = State(initialValue: nil)
+        } else {
+            _mutationScope = State(initialValue: .thisEvent)
+        }
     }
 
     var body: some View {
@@ -45,15 +166,21 @@ struct EventEditorView: View {
                         )
                     }
 
-                    basicFields
-                    Divider()
-                    timeFields
-                    Divider()
-                    originalNotesField
-
-                    if case .existing = session.target {
+                    if let preview = appState.pendingEventMutation {
+                        mutationImpactReview(preview)
+                    } else {
+                        basicFields
                         Divider()
-                        deleteSection
+                        timeFields
+                        Divider()
+                        recurrenceFields
+                        Divider()
+                        originalNotesField
+
+                        if case .existing = session.target {
+                            Divider()
+                            deleteSection
+                        }
                     }
                 }
                 .padding(20)
@@ -62,7 +189,7 @@ struct EventEditorView: View {
             Divider()
             footer
         }
-        .frame(width: 580, height: 700)
+        .frame(width: 640, height: 760)
         .background(Color(nsColor: .windowBackgroundColor))
         .interactiveDismissDisabled(isBusy)
         .onAppear {
@@ -91,13 +218,15 @@ struct EventEditorView: View {
         ) {
             Button("Delete Original Event", role: .destructive) {
                 Task {
-                    await appState.deleteEventEditorTarget()
+                    await appState.deleteEventEditorTarget(
+                        scope: mutationScope
+                    )
                 }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This removes the event through EventKit. KaosCal only enables this Phase 5 action when no local Event Brief is linked."
+                deleteConfirmationMessage
             )
         }
     }
@@ -139,12 +268,12 @@ struct EventEditorView: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: 320)
-                .disabled(calendarMoveLocked || isBusy)
+                .disabled(isBusy)
             }
 
-            if calendarMoveLocked {
+            if case .linked = session.mutationContext {
                 Label(
-                    "This event has a local Event Brief. Moving it to another calendar waits for the Phase 6 safe-move flow.",
+                    "A calendar move will show the linked Event Brief impact before EventKit is called. Its local notes and tasks keep the same context.",
                     systemImage: "link"
                 )
                 .font(.caption)
@@ -239,6 +368,151 @@ struct EventEditorView: View {
         }
     }
 
+    private var recurrenceFields: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Repeat", systemImage: "repeat")
+                .font(.headline)
+
+            if isExistingRecurring {
+                LabeledContent("Apply changes") {
+                    Picker("Apply changes", selection: $mutationScope) {
+                        Text("Choose scope")
+                            .tag(nil as CalendarEventMutationScope?)
+                        Text("This event")
+                            .tag(
+                                CalendarEventMutationScope.thisEvent
+                                    as CalendarEventMutationScope?
+                            )
+                        Text("This and future")
+                            .tag(
+                                CalendarEventMutationScope.futureEvents
+                                    as CalendarEventMutationScope?
+                            )
+                            .disabled(futureScopeDisabled)
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: 260)
+                    .disabled(isBusy)
+                }
+
+                Text(scopeHelpText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            switch draft.recurrence {
+            case let .unsupported(snapshot):
+                Label(snapshot.summary, systemImage: "lock")
+                    .font(.callout)
+                Text(
+                    "KaosCal preserves this complex rule without rewriting it. This occurrence may change ordinary fields; future-series and rule changes stay in Calendar.app."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            case .none, .basic:
+                if recurrenceControlsVisible {
+                    LabeledContent("Frequency") {
+                        Picker(
+                            "Frequency",
+                            selection: recurrenceFrequencyBinding
+                        ) {
+                            Text("Does not repeat")
+                                .tag(nil as CalendarRecurrenceFrequency?)
+                            ForEach(CalendarRecurrenceFrequency.allCases, id: \.self) {
+                                frequency in
+                                Text(frequency.editorTitle)
+                                    .tag(frequency as CalendarRecurrenceFrequency?)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 220)
+                        .disabled(!recurrenceRuleEditable || isBusy)
+                    }
+
+                    if case let .basic(rule) = draft.recurrence {
+                        Stepper(
+                            "Every \(rule.interval) \(rule.frequency.intervalUnit(count: rule.interval))",
+                            value: recurrenceIntervalBinding,
+                            in: 1...999
+                        )
+                        .disabled(!recurrenceRuleEditable || isBusy)
+
+                        if rule.frequency == .weekly {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Weekdays")
+                                    .font(.caption.weight(.medium))
+                                HStack(spacing: 6) {
+                                    ForEach(
+                                        CalendarRecurrenceWeekday.allCases,
+                                        id: \.self
+                                    ) { weekday in
+                                        Button(weekday.shortTitle) {
+                                            toggleWeekday(weekday)
+                                        }
+                                        .buttonStyle(
+                                            .borderedProminent
+                                        )
+                                        .tint(
+                                            rule.weekdays.contains(weekday)
+                                                ? KaosCalTheme.accent
+                                                : Color.secondary.opacity(0.35)
+                                        )
+                                        .disabled(
+                                            !recurrenceRuleEditable || isBusy
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        LabeledContent("Ends") {
+                            Picker("Ends", selection: recurrenceEndModeBinding) {
+                                ForEach(RecurrenceEndMode.allCases) { mode in
+                                    Text(mode.title).tag(mode)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(maxWidth: 180)
+                            .disabled(!recurrenceRuleEditable || isBusy)
+                        }
+
+                        switch rule.end {
+                        case .never:
+                            EmptyView()
+                        case .onDate:
+                            LabeledContent("Last start") {
+                                DatePicker(
+                                    "Last start",
+                                    selection: recurrenceEndDateBinding,
+                                    in: draft.startDate...,
+                                    displayedComponents: .date
+                                )
+                                .labelsHidden()
+                                .environment(\.timeZone, draftCalendar.timeZone)
+                                .disabled(!recurrenceRuleEditable || isBusy)
+                            }
+                        case .afterOccurrences:
+                            Stepper(
+                                "After \(recurrenceOccurrenceCount) occurrences",
+                                value: recurrenceOccurrenceCountBinding,
+                                in: 1...999
+                            )
+                            .disabled(!recurrenceRuleEditable || isBusy)
+                        }
+                    }
+                } else {
+                    Text(recurrenceSummary)
+                        .font(.callout)
+                    Text(
+                        "An existing non-repeating event keeps its recurrence state in this editor. Create a repeating event here, or use Calendar.app to convert an existing single event into a series."
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
     private var originalNotesField: some View {
         VStack(alignment: .leading, spacing: 8) {
             Label("Original event notes", systemImage: "calendar.badge.clock")
@@ -264,6 +538,143 @@ struct EventEditorView: View {
         }
     }
 
+    private func mutationImpactReview(
+        _ change: CalendarEventMutationPreview
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Label("Review before writing", systemImage: "checkmark.shield")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(KaosCalTheme.accent)
+            Text(
+                "Nothing has been written to EventKit or the local database yet. Confirm applies this exact preview; Back returns to the editor."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 12) {
+                impactRow(
+                    title: "Scope",
+                    before: change.original.isRecurring
+                        ? "Recurring occurrence"
+                        : "Single event",
+                    after: change.scope.editorTitle
+                )
+
+                if change.changedFields.contains(.calendar) {
+                    impactRow(
+                        title: "Calendar",
+                        before: "\(change.original.calendarTitle) · \(change.original.sourceTitle)",
+                        after: calendarLabel(
+                            identifier: change.draft.calendarIdentifier
+                        )
+                    )
+                }
+
+                if change.changedFields.contains(.time) {
+                    impactRow(
+                        title: "Time",
+                        before: CalendarEventDateFormatting.inspectorText(
+                            for: change.original,
+                            calendar: appState.calendar
+                        ),
+                        after: preview(change.draft)
+                    )
+                }
+
+                if change.changedFields.contains(.recurrence) {
+                    impactRow(
+                        title: "Repeat",
+                        before: change.original.recurrence.editorSummary,
+                        after: change.draft.recurrence.editorSummary
+                    )
+                }
+            }
+            .padding(14)
+            .background(
+                KaosCalTheme.accentSoft,
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+
+            if change.scope == .futureEvents {
+                Label(
+                    "EventKit may split the series and change identifiers for this and later occurrences.",
+                    systemImage: "point.forward.to.point.capsulepath"
+                )
+                .font(.callout)
+                .foregroundStyle(Color.orange)
+            } else if change.original.isRecurring {
+                Label(
+                    "EventKit may detach this occurrence from its series and store it as an exception.",
+                    systemImage: "arrow.triangle.branch"
+                )
+                .font(.callout)
+                .foregroundStyle(Color.orange)
+            }
+
+            if let impact = change.impact {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Linked Event Brief", systemImage: "link")
+                        .font(.headline)
+                    Text(
+                        impact.hasNotes
+                            ? "Local notes: \(impact.notesCharacterCount) characters"
+                            : "Local notes: none"
+                    )
+                    .font(.callout)
+                    Text("Tasks: \(impact.taskCount)")
+                        .font(.callout)
+
+                    ForEach(impact.taskSections, id: \.section) { section in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(section.section.editorTitle) · \(section.count)")
+                                .font(.caption.weight(.semibold))
+                            if !section.titles.isEmpty {
+                                Text(section.titles.joined(separator: " · "))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(2)
+                            }
+                        }
+                    }
+
+                    if !impact.recentHistory.isEmpty {
+                        Divider()
+                        Text("Recent changes")
+                            .font(.caption.weight(.semibold))
+                        ForEach(impact.recentHistory.prefix(3)) { entry in
+                            Text(
+                                "\(entry.changeType.editorTitle) · \(entry.createdAt.formatted(date: .abbreviated, time: .shortened))"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .padding(14)
+                .background(
+                    Color(nsColor: .controlBackgroundColor),
+                    in: RoundedRectangle(cornerRadius: 12)
+                )
+            }
+        }
+    }
+
+    private func impactRow(
+        title: String,
+        before: String,
+        after: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(before)
+                .font(.callout)
+            Label(after, systemImage: "arrow.down")
+                .font(.callout.weight(.medium))
+        }
+    }
+
     private var deleteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button("Delete Original Event", role: .destructive) {
@@ -272,9 +683,7 @@ struct EventEditorView: View {
             .disabled(deleteLocked || isBusy)
 
             if deleteLocked {
-                Text(
-                    "This event has a local Event Brief. Original deletion waits for the Phase 7 orphan review flow so local notes and tasks do not become hidden."
-                )
+                Text(deleteLockMessage)
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
@@ -283,30 +692,49 @@ struct EventEditorView: View {
 
     private var footer: some View {
         HStack {
-            Text("Recurring events and meetings with attendees stay in Calendar.app for now.")
+            if appState.pendingEventMutation != nil {
+                Text("Confirm is the only action that writes this preview.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Back") {
+                    appState.cancelPendingEventMutation()
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isBusy)
+                Button("Confirm Change") {
+                    Task {
+                        await appState.confirmPendingEventMutation()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(isBusy)
+            } else {
+                Text(
+                    "Attendee meetings and unsupported series rules stay in Calendar.app."
+                )
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Spacer()
-            Button("Cancel") {
-                appState.cancelEventEditor()
-            }
-            .keyboardShortcut(.cancelAction)
-            .disabled(isBusy)
-            Button(isNewEvent ? "Create Event" : "Save Changes") {
-                validationMessage = nil
-                Task {
-                    await appState.saveEventEditor(draft)
+                Spacer()
+                Button("Cancel") {
+                    appState.cancelEventEditor()
                 }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isBusy)
+                Button(isNewEvent ? "Create Event" : "Save Changes") {
+                    validationMessage = nil
+                    Task {
+                        await appState.saveEventEditor(
+                            draft,
+                            scope: mutationScope
+                        )
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(saveDisabled)
             }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.defaultAction)
-            .disabled(
-                isBusy
-                    || hasUnappliedTimeZoneChoice
-                    || draft.title.trimmingCharacters(
-                        in: .whitespacesAndNewlines
-                    ).isEmpty
-            )
         }
         .padding(20)
     }
@@ -320,15 +748,238 @@ struct EventEditorView: View {
         appState.eventEditorOperationState != .idle
     }
 
-    private var calendarMoveLocked: Bool {
-        guard !isNewEvent else { return false }
+    private var deleteLocked: Bool {
+        if case .linked = session.mutationContext { return true }
+        return isExistingRecurring && mutationScope == nil
+    }
+
+    private var saveDisabled: Bool {
+        isBusy
+            || hasUnappliedTimeZoneChoice
+            || draft.title.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty
+            || (isExistingRecurring && mutationScope == nil)
+    }
+
+    private var existingEvent: DisplayEvent? {
+        if case let .existing(event) = session.target { return event }
+        return nil
+    }
+
+    private var isExistingRecurring: Bool {
+        existingEvent?.isRecurring == true
+    }
+
+    private var recurrenceControlsVisible: Bool {
+        isNewEvent || isExistingRecurring
+    }
+
+    private var recurrenceRuleEditable: Bool {
+        isNewEvent
+            || (isExistingRecurring && mutationScope == .futureEvents)
+    }
+
+    private var futureScopeDisabled: Bool {
+        guard let event = existingEvent else { return false }
+        if event.isDetached { return true }
+        if case .unsupported = event.recurrence { return true }
         if case .linked = session.mutationContext { return true }
         return false
     }
 
-    private var deleteLocked: Bool {
-        if case .linked = session.mutationContext { return true }
-        return false
+    private var scopeHelpText: String {
+        if futureScopeDisabled {
+            if case .linked = session.mutationContext {
+                return "This and future is disabled because future series writes can split identifiers for multiple occurrence Briefs. This event remains available."
+            }
+            return "This and future is unavailable for detached occurrences or complex rules. Use Calendar.app for that series change."
+        }
+        switch mutationScope {
+        case .none:
+            return "Choose a scope before Save. KaosCal does not select a series-wide default."
+        case .thisEvent:
+            return "Only this occurrence changes. Its recurrence rule is preserved."
+        case .futureEvents:
+            return "This occurrence and later occurrences may become a new series. A final impact review appears before writing."
+        }
+    }
+
+    private var recurrenceSummary: String {
+        draft.recurrence.editorSummary
+    }
+
+    private var deleteLockMessage: String {
+        if case .linked = session.mutationContext {
+            return "This event has a local Event Brief. Original deletion waits for the Phase 7 orphan review flow so local notes and tasks do not become hidden."
+        }
+        return "Choose whether to delete this occurrence or this and future occurrences."
+    }
+
+    private var deleteConfirmationMessage: String {
+        if isExistingRecurring {
+            switch mutationScope {
+            case .thisEvent:
+                return "This removes only this occurrence through EventKit. The series continues, and Exchange may store a deletion exception."
+            case .futureEvents:
+                return "This removes this and future occurrences through EventKit. Earlier occurrences remain."
+            case .none:
+                return "Choose the recurring deletion scope before continuing."
+            }
+        }
+        return "This removes the event through EventKit. A linked Event Brief must use the Phase 7 orphan review flow instead."
+    }
+
+    private var recurrenceFrequencyBinding:
+        Binding<CalendarRecurrenceFrequency?> {
+        Binding(
+            get: {
+                if case let .basic(rule) = draft.recurrence {
+                    return rule.frequency
+                }
+                return nil
+            },
+            set: { frequency in
+                guard recurrenceRuleEditable else { return }
+                guard let frequency else {
+                    draft.recurrence = .none
+                    return
+                }
+                var rule: BasicRecurrenceRule
+                if case let .basic(existing) = draft.recurrence {
+                    rule = existing
+                    rule.frequency = frequency
+                } else {
+                    rule = BasicRecurrenceRule(frequency: frequency)
+                }
+                if frequency == .weekly, rule.weekdays.isEmpty {
+                    let rawWeekday = draftCalendar.component(
+                        .weekday,
+                        from: draft.startDate
+                    )
+                    if let weekday = CalendarRecurrenceWeekday(
+                        rawValue: rawWeekday
+                    ) {
+                        rule.weekdays = [weekday]
+                    }
+                }
+                if frequency != .weekly {
+                    rule.weekdays = []
+                }
+                draft.recurrence = .basic(rule)
+            }
+        )
+    }
+
+    private var recurrenceIntervalBinding: Binding<Int> {
+        Binding(
+            get: {
+                if case let .basic(rule) = draft.recurrence {
+                    return rule.interval
+                }
+                return 1
+            },
+            set: { value in
+                updateBasicRecurrence { $0.interval = value }
+            }
+        )
+    }
+
+    private var recurrenceEndModeBinding: Binding<RecurrenceEndMode> {
+        Binding(
+            get: {
+                guard case let .basic(rule) = draft.recurrence else {
+                    return .never
+                }
+                switch rule.end {
+                case .never: return .never
+                case .onDate: return .onDate
+                case .afterOccurrences: return .afterOccurrences
+                }
+            },
+            set: { mode in
+                updateBasicRecurrence { rule in
+                    switch mode {
+                    case .never:
+                        rule.end = .never
+                    case .onDate:
+                        let end = draftCalendar.date(
+                            byAdding: .month,
+                            value: 1,
+                            to: draft.startDate
+                        ) ?? draft.startDate
+                        rule.end = .onDate(end)
+                    case .afterOccurrences:
+                        rule.end = .afterOccurrences(10)
+                    }
+                }
+            }
+        )
+    }
+
+    private var recurrenceEndDateBinding: Binding<Date> {
+        Binding(
+            get: {
+                guard case let .basic(rule) = draft.recurrence,
+                      case let .onDate(date) = rule.end else {
+                    return draft.startDate
+                }
+                return date
+            },
+            set: { value in
+                updateBasicRecurrence { $0.end = .onDate(value) }
+            }
+        )
+    }
+
+    private var recurrenceOccurrenceCount: Int {
+        guard case let .basic(rule) = draft.recurrence,
+              case let .afterOccurrences(count) = rule.end else {
+            return 10
+        }
+        return count
+    }
+
+    private var recurrenceOccurrenceCountBinding: Binding<Int> {
+        Binding(
+            get: { recurrenceOccurrenceCount },
+            set: { value in
+                updateBasicRecurrence {
+                    $0.end = .afterOccurrences(value)
+                }
+            }
+        )
+    }
+
+    private func updateBasicRecurrence(
+        _ update: (inout BasicRecurrenceRule) -> Void
+    ) {
+        guard recurrenceRuleEditable,
+              case var .basic(rule) = draft.recurrence else {
+            return
+        }
+        update(&rule)
+        draft.recurrence = .basic(rule)
+    }
+
+    private func toggleWeekday(_ weekday: CalendarRecurrenceWeekday) {
+        updateBasicRecurrence { rule in
+            if rule.weekdays.contains(weekday) {
+                guard rule.weekdays.count > 1 else { return }
+                rule.weekdays.remove(weekday)
+            } else {
+                rule.weekdays.insert(weekday)
+            }
+        }
+    }
+
+    private func calendarLabel(identifier: String) -> String {
+        guard let calendar = session.writableCalendars.first(where: {
+            $0.id == identifier
+        }) else {
+            return "Selected calendar"
+        }
+        return "\(calendar.title) · \(calendar.sourceTitle)"
     }
 
     private var editorTimeZone: TimeZone {

@@ -9,9 +9,155 @@ final class ContextStoreTests: XCTestCase {
 
         XCTAssertEqual(
             try database.appliedMigrations(),
-            ["v1_context_store"]
+            ["v1_context_store", "v2_event_change_log"]
         )
         XCTAssertTrue(try database.foreignKeysEnabled())
+    }
+
+    func testChangeLogMigrationEnforcesChecksForeignKeysAndUndoUniqueness() throws {
+        let database = try AppDatabase.inMemory()
+        let timestamp = "2026-07-10 08:00:00.000"
+
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO event_change_log (
+                            id, context_id, change_type, scope,
+                            before_payload, after_payload, undo_state,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        "dangling", "missing", "moved", "single",
+                        "{}", "{}", "unavailable", timestamp
+                    ]
+                )
+            }
+        )
+
+        try database.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO event_contexts (
+                        id, title_snapshot, lifecycle_status, notes,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'scheduled', '', ?, ?)
+                    """,
+                arguments: ["change-context", "Fixture", timestamp, timestamp]
+            )
+        }
+
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO event_change_log (
+                            id, context_id, change_type, scope,
+                            before_payload, after_payload, undo_state,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        "bad-type", "change-context", "unknown", "single",
+                        "{}", "{}", "unavailable", timestamp
+                    ]
+                )
+            }
+        )
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO event_change_log (
+                            id, context_id, change_type, scope,
+                            before_payload, after_payload, undo_state,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        "bad-undone", "change-context", "moved", "single",
+                        "{}", "{}", "undone", timestamp
+                    ]
+                )
+            }
+        )
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO event_change_log (
+                            id, context_id, change_type, scope,
+                            before_payload, after_payload, undo_state,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        "bad-restore", "change-context", "restored", "single",
+                        "{}", "{}", "unavailable", timestamp
+                    ]
+                )
+            }
+        )
+
+        try database.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO event_change_log (
+                        id, context_id, change_type, scope,
+                        before_payload, after_payload, undo_state,
+                        created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    "original-change", "change-context", "moved", "single",
+                    "{}", "{}", "available", timestamp
+                ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO event_change_log (
+                        id, context_id, change_type, scope,
+                        before_payload, after_payload, undo_state,
+                        undo_of_change_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                arguments: [
+                    "restore", "change-context", "restored", "single",
+                    "{}", "{}", "unavailable", "original-change", timestamp
+                ]
+            )
+        }
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO event_change_log (
+                            id, context_id, change_type, scope,
+                            before_payload, after_payload, undo_state,
+                            undo_of_change_id, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        "duplicate-restore", "change-context", "restored",
+                        "single", "{}", "{}", "unavailable",
+                        "original-change", timestamp
+                    ]
+                )
+            }
+        )
+
+        let indexNames = try database.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                    SELECT name FROM sqlite_master
+                    WHERE type = 'index' AND tbl_name = 'event_change_log'
+                    """
+            )
+        }
+        XCTAssertTrue(indexNames.contains("event_change_log_context_created"))
+        XCTAssertTrue(indexNames.contains("event_change_log_unique_undo"))
     }
 
     func testMigrationRejectsInvalidIdentityDueAndCompletionRows() throws {
@@ -1164,6 +1310,284 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertEqual(linkedID, context.id)
     }
 
+    func testMutationImpactSummarizesLocalDataAndRecentHistory() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(id: "impact-original")
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: original,
+                notes: "  Local note  "
+            )
+        )
+        _ = try harness.store.appendEventTask(
+            for: original,
+            section: .before,
+            title: "Prepare"
+        )
+        _ = try harness.store.appendEventTask(
+            for: original,
+            section: .during,
+            title: "Join"
+        )
+        let moved = makeEvent(
+            id: "impact-moved",
+            start: date(2026, 7, 10, 13),
+            end: date(2026, 7, 10, 14),
+            calendarIdentifier: "destination-calendar"
+        )
+        let firstChange = try harness.store.rebindAndRecordMutation(
+            contextID: context.id,
+            from: original,
+            to: moved,
+            changeType: .moved,
+            scope: .single,
+            undoState: .available
+        )
+        let renamed = makeEvent(
+            id: "impact-renamed",
+            title: "Renamed event",
+            start: moved.startDate,
+            end: moved.endDate,
+            calendarIdentifier: moved.calendarIdentifier
+        )
+        let secondChange = try harness.store.rebindAndRecordMutation(
+            contextID: context.id,
+            from: moved,
+            to: renamed,
+            changeType: .detailsUpdated,
+            scope: .single,
+            undoState: .unavailable
+        )
+
+        let impact = try harness.store.mutationImpact(
+            contextID: context.id,
+            recentHistoryLimit: 1
+        )
+
+        XCTAssertTrue(impact.hasNotes)
+        XCTAssertEqual(impact.notesCharacterCount, 10)
+        XCTAssertEqual(impact.taskCount, 2)
+        XCTAssertEqual(
+            impact.taskSections,
+            [
+                EventMutationTaskSummary(
+                    section: .before,
+                    count: 1,
+                    titles: ["Prepare"]
+                ),
+                EventMutationTaskSummary(
+                    section: .during,
+                    count: 1,
+                    titles: ["Join"]
+                ),
+                EventMutationTaskSummary(
+                    section: .after,
+                    count: 0,
+                    titles: []
+                )
+            ]
+        )
+        XCTAssertEqual(impact.recentHistory.map(\.id), [secondChange.id])
+        XCTAssertEqual(impact.recentHistory.first?.before.startDate, moved.startDate)
+        XCTAssertEqual(
+            impact.recentHistory.first?.after.calendarIdentifier,
+            "destination-calendar"
+        )
+
+        let history = try harness.store.changeHistory(contextID: context.id)
+        XCTAssertEqual(history.map(\.id), [secondChange.id, firstChange.id])
+        XCTAssertEqual(history[0].undoState, .unavailable)
+        XCTAssertEqual(history[1].undoState, .superseded)
+        XCTAssertEqual(history[1].before.calendarIdentifier, "calendar")
+        XCTAssertEqual(
+            history[1].after.calendarIdentifier,
+            "destination-calendar"
+        )
+    }
+
+    func testRebindAndChangeLogAppendRollBackTogether() throws {
+        let IDs = IDSequence([
+            "rollback-context", "rollback-link",
+            "duplicate-log", "duplicate-log"
+        ])
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { self.date(2026, 7, 10, 12) },
+            makeID: IDs.next
+        )
+        let original = makeEvent(id: "rollback-original")
+        let context = try XCTUnwrap(
+            store.saveNotes(for: original, notes: "Keep local data")
+        )
+        let firstMove = makeEvent(
+            id: "rollback-first",
+            start: date(2026, 7, 10, 11),
+            end: date(2026, 7, 10, 12)
+        )
+        let firstChange = try store.rebindAndRecordMutation(
+            contextID: context.id,
+            from: original,
+            to: firstMove,
+            changeType: .moved,
+            scope: .single,
+            undoState: .available
+        )
+        let beforeFailure = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        let secondMove = makeEvent(
+            id: "rollback-second",
+            start: date(2026, 7, 10, 15),
+            end: date(2026, 7, 10, 16)
+        )
+
+        XCTAssertThrowsError(
+            try store.rebindAndRecordMutation(
+                contextID: context.id,
+                from: firstMove,
+                to: secondMove,
+                changeType: .moved,
+                scope: .single,
+                undoState: .available
+            )
+        )
+
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id),
+            beforeFailure
+        )
+        let history = try store.changeHistory(contextID: context.id)
+        XCTAssertEqual(history.map(\.id), [firstChange.id])
+        XCTAssertEqual(history.first?.undoState, .available)
+    }
+
+    func testUndoRebindMarksOriginalAndAppendsRestoredAtomically() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(id: "undo-original")
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: original, notes: "Keep note")
+        )
+        let task = try harness.store.appendEventTask(
+            for: original,
+            section: .after,
+            title: "Keep task"
+        )
+        let moved = makeEvent(
+            id: "undo-moved",
+            start: date(2026, 7, 11, 13),
+            end: date(2026, 7, 11, 14),
+            calendarIdentifier: "destination-calendar"
+        )
+        let originalChange = try harness.store.rebindAndRecordMutation(
+            contextID: context.id,
+            from: original,
+            to: moved,
+            changeType: .moved,
+            scope: .single,
+            undoState: .available
+        )
+        let restoredReceipt = makeEvent(id: "undo-restored")
+
+        let restoredChange = try harness.store.rebindAfterUndo(
+            contextID: context.id,
+            originalChangeID: originalChange.id,
+            from: moved,
+            to: restoredReceipt,
+            scope: .single
+        )
+
+        XCTAssertEqual(restoredChange.changeType, .restored)
+        XCTAssertEqual(restoredChange.undoState, .unavailable)
+        XCTAssertEqual(restoredChange.undoOfChangeID, originalChange.id)
+        XCTAssertEqual(restoredChange.before.calendarIdentifier, moved.calendarIdentifier)
+        XCTAssertEqual(
+            restoredChange.after.calendarIdentifier,
+            restoredReceipt.calendarIdentifier
+        )
+        let history = try harness.store.changeHistory(contextID: context.id)
+        XCTAssertEqual(history.map(\.id), [restoredChange.id, originalChange.id])
+        XCTAssertEqual(history[1].undoState, .undone)
+        XCTAssertEqual(history[1].undoneAt, harness.now)
+        let brief = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(brief.context.id, context.id)
+        XCTAssertEqual(brief.context.notes, "Keep note")
+        XCTAssertEqual(brief.link.startSnapshot, restoredReceipt.startDate)
+        XCTAssertEqual(brief.tasks.map(\.id), [task.id])
+
+        XCTAssertThrowsError(
+            try harness.store.rebindAfterUndo(
+                contextID: context.id,
+                originalChangeID: originalChange.id,
+                from: restoredReceipt,
+                to: moved,
+                scope: .single
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? EventChangeLogError,
+                .undoUnavailable(originalChange.id)
+            )
+        }
+        XCTAssertEqual(
+            try harness.store.changeHistory(contextID: context.id).count,
+            2
+        )
+    }
+
+    func testUndoRollbackKeepsLinkAndOriginalChangeAvailable() throws {
+        let IDs = IDSequence([
+            "undo-rollback-context", "undo-rollback-link",
+            "duplicate-undo-log", "duplicate-undo-log"
+        ])
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { self.date(2026, 7, 10, 12) },
+            makeID: IDs.next
+        )
+        let original = makeEvent(id: "undo-rollback-original")
+        let context = try XCTUnwrap(
+            store.saveNotes(for: original, notes: "Keep")
+        )
+        let moved = makeEvent(
+            id: "undo-rollback-moved",
+            start: date(2026, 7, 10, 13),
+            end: date(2026, 7, 10, 14)
+        )
+        let change = try store.rebindAndRecordMutation(
+            contextID: context.id,
+            from: original,
+            to: moved,
+            changeType: .moved,
+            scope: .single,
+            undoState: .available
+        )
+        let beforeFailure = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        XCTAssertThrowsError(
+            try store.rebindAfterUndo(
+                contextID: context.id,
+                originalChangeID: change.id,
+                from: moved,
+                to: makeEvent(id: "undo-rollback-restored"),
+                scope: .single
+            )
+        )
+
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id),
+            beforeFailure
+        )
+        let history = try store.changeHistory(contextID: context.id)
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history.first?.id, change.id)
+        XCTAssertEqual(history.first?.undoState, .available)
+        XCTAssertNil(history.first?.undoneAt)
+    }
+
     func testUserApprovedMutationCollisionRollsBackBothContextsAndTasks() throws {
         let store = try makeHarness().store
         let first = makeEvent(id: "collision-first")
@@ -1579,7 +2003,7 @@ final class ContextStoreTests: XCTestCase {
 
             XCTAssertEqual(
                 try database.appliedMigrations(),
-                ["v1_context_store"]
+                ["v1_context_store", "v2_event_change_log"]
             )
             XCTAssertEqual(brief.context.notes, "Persistent notes")
             XCTAssertEqual(brief.tasks.map(\.id), [eventTaskID])
