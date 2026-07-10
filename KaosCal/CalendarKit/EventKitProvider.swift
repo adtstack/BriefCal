@@ -1,3 +1,4 @@
+import AppKit
 import EventKit
 import Foundation
 
@@ -61,7 +62,8 @@ final class EventKitProvider: CalendarProviding {
                     title: calendar.title,
                     sourceTitle: calendar.source.title,
                     accountType: accountType(for: calendar.source.sourceType),
-                    isWritable: calendar.allowsContentModifications
+                    isWritable: calendar.allowsContentModifications,
+                    color: colorSnapshot(for: calendar)
                 )
             }
             .sorted {
@@ -90,11 +92,22 @@ final class EventKitProvider: CalendarProviding {
     }
 
     private func makeDisplayEvent(_ event: EKEvent) -> DisplayEvent {
-        let identifier = event.eventIdentifier ?? event.calendarItemIdentifier
-        let occurrence = event.occurrenceDate ?? event.startDate
-        let occurrenceTimestamp = occurrence?.timeIntervalSinceReferenceDate ?? 0
-        let stableID = "\(identifier)#\(occurrenceTimestamp)"
         let title = event.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled event"
+        let isRecurring = event.hasRecurrenceRules
+            || event.occurrenceDate != nil
+            || event.isDetached
+        let stableID = DisplayEventIdentity.make(
+            calendarIdentifier: event.calendar.calendarIdentifier,
+            externalIdentifier: event.calendarItemExternalIdentifier,
+            calendarItemIdentifier: event.calendarItemIdentifier,
+            eventIdentifier: event.eventIdentifier,
+            isRecurring: isRecurring,
+            occurrenceDate: event.occurrenceDate,
+            startDate: event.startDate,
+            endDate: event.endDate,
+            title: title
+        )
+        let timeSemantics = makeTimeSemantics(event)
 
         return DisplayEvent(
             id: stableID,
@@ -105,17 +118,69 @@ final class EventKitProvider: CalendarProviding {
             calendarTitle: event.calendar.title,
             sourceTitle: event.calendar.source.title,
             accountType: accountType(for: event.calendar.source.sourceType),
+            calendarColor: colorSnapshot(for: event.calendar),
             title: title,
             location: event.location,
             startDate: event.startDate,
             endDate: event.endDate,
             isAllDay: event.isAllDay,
             timeZoneIdentifier: event.timeZone?.identifier,
-            isRecurring: event.hasRecurrenceRules,
+            timeSemantics: timeSemantics,
+            isRecurring: isRecurring,
             occurrenceDate: event.occurrenceDate,
             isDetached: event.isDetached,
             isReadOnly: !event.calendar.allowsContentModifications,
             isInvitation: event.organizer.map { !$0.isCurrentUser } ?? false
+        )
+    }
+
+    private func makeTimeSemantics(_ event: EKEvent) -> EventTimeSemantics {
+        var semanticCalendar = Calendar(identifier: .gregorian)
+        semanticCalendar.timeZone = event.timeZone ?? .autoupdatingCurrent
+
+        if event.isAllDay {
+            let range = CalendarEventDateFormatting.normalizedAllDayDateRange(
+                startDate: event.startDate,
+                endDate: event.endDate,
+                calendar: semanticCalendar
+            )
+            return .allDay(
+                start: LocalDateTimeComponents(
+                    date: range.start,
+                    calendar: semanticCalendar
+                ),
+                endExclusive: LocalDateTimeComponents(
+                    date: range.endExclusive,
+                    calendar: semanticCalendar
+                )
+            )
+        }
+
+        let start = LocalDateTimeComponents(
+            date: event.startDate,
+            calendar: semanticCalendar
+        )
+        let end = LocalDateTimeComponents(
+            date: event.endDate,
+            calendar: semanticCalendar
+        )
+
+        if let identifier = event.timeZone?.identifier {
+            return .zoned(timeZoneIdentifier: identifier)
+        }
+        return .floating(start: start, end: end)
+    }
+
+    private func colorSnapshot(for calendar: EKCalendar) -> CalendarColor? {
+        guard let cgColor = calendar.cgColor,
+              let color = NSColor(cgColor: cgColor)?.usingColorSpace(.sRGB) else {
+            return nil
+        }
+        return CalendarColor(
+            red: color.redComponent,
+            green: color.greenComponent,
+            blue: color.blueComponent,
+            alpha: color.alphaComponent
         )
     }
 

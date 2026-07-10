@@ -9,7 +9,8 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 
 - Phase 0: **완료** — 2026-07-10, build/test/ad-hoc signing/window 생성 검증
 - Phase 1: **실계정 검증 중** — 코드·15개 자동 테스트·ad-hoc 서명 검증 완료, full access 사용자 승인 및 `KAOS-TEST` 확인 대기
-- Phase 2~10: 대기
+- Phase 2: **구현·자동 검증 완료 / 실계정 UI 검증 중** — Day/Week/Agenda 공통 범위, 실제 시간·종일 배치, 33개 전체 테스트, Release·서명 build, offscreen 렌더 검증 완료
+- Phase 3~10: 대기
 
 ## Phase 표
 
@@ -81,6 +82,15 @@ Definition of Done:
 - Today 버튼과 이전/다음 기간 이동 동작
 - Day/Week/Agenda에서 시간·종일·출처 표현이 일관됨
 - 고밀도에서도 겹침과 클리핑 없음
+
+현재 판정:
+- 구현 완료: 24시간 wall-clock grid, 현재 시각선, 종일·다일 span, 자정 횡단 segment, 최소 높이와 겹침 column, 고밀도 가로·종일 세로 scroll
+- 공통 의미 완료: Day/Week/Agenda의 반개구간 filtering, 명시적 display calendar/time zone, floating/all-day local components, 반복 occurrence UI identity
+- 조회 완료: 초기 오늘 -30/+90일과 visible period가 범위를 벗어날 때의 확장 조회, stale pending 조회 취소, 마지막 loaded range 변경 알림 재조회
+- 자동 검증 통과: 전체 33 tests, 0 failures; unsigned Release와 ad-hoc signed Debug build
+- 시각 검증 통과: 샘플 15개 일정으로 Week offscreen render에서 calendar color, 3열 overlap, current-time, 자정 횡단, 10행 all-day scroll container 확인
+- 수동 검증 대기: 실제 서명 앱에서 권한 승인, `KAOS-TEST`의 Exchange/writable/color 노출, Day/Week/Agenda 선택·scroll·inspector 상호작용
+- 실계정 호환성 이월: KC-E2~KC-E4와 공유 read-only Viewer는 각각 해당 phase/Phase 8 gate에서 판정
 
 ## Phase 3: Local Context DB
 

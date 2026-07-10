@@ -76,6 +76,19 @@ Task Center:
 - 시간과 calendar role을 작은 metadata로 표시
 - read-only 또는 conflict는 icon/text로 표시하고 색상만으로 전달하지 않는다.
 
+### Phase 2 실제 적용값
+
+- 시간축: 24시간, 시간당 56pt, 30분 보조선
+- 시간 gutter: 64pt
+- Week 날짜 최소 너비: 112pt
+- overlap column 최소 너비: 44pt; 더 좁아지면 날짜 열을 늘려 가로 scroll
+- timed card: 최소 22pt, 3pt calendar rail, 5pt radius, 선택 시 2pt outline
+- 높이 34pt 미만은 제목 중심, 34pt 이상은 시간, 58pt 이상은 calendar title까지 표시한다. 생략 정보는 tooltip과 VoiceOver label에 모두 남긴다.
+- all-day row: 26pt, card 22pt. lane은 내용에 맞춰 늘지만 화면 높이의 35%·최대 240pt에서 내부 세로 scroll로 전환한다.
+- 오늘 열은 약한 accent fill, 현재 시각은 red line과 dot으로 표시한다.
+- calendar rail은 EventKit calendar의 실제 sRGB color snapshot을 사용한다. 색을 가져올 수 없을 때만 Exchange 공통 blue 또는 secondary gray를 fallback으로 쓴다.
+- calendar role, 사용자 color override, calendar set은 Phase 8에서 추가한다.
+
 ## Event Brief 규칙
 
 Before:

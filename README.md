@@ -2,7 +2,7 @@
 
 KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 각 일정의 준비물·메모·후속 작업을 로컬에 보존하는 macOS 앱이다.
 
-현재 상태: **Phase 1 EventKit read-only 구현 완료 — 실계정 승인 검증 진행 중**. full access 설명·요청, Exchange source 표시, Agenda 조회, 권한 복구, 변경 알림 재조회가 구현되어 있다.
+현재 상태: **Phase 2 Calendar layout 구현·자동 검증 완료 — 실계정 권한/UI 검증 진행 중**. full access 흐름과 Agenda에 더해 실제 Day/Week 24시간 배치, 종일·다일 lane, 겹침 column, 캘린더별 색상, 표시 범위 확장 조회가 구현되어 있다. Exchange backend 종류와 실제 `KAOS-TEST` EventKit 노출은 아직 검증 중이다.
 
 ## 제품 범위
 

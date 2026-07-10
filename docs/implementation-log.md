@@ -105,6 +105,47 @@
 - 이월: 공유 read-only Exchange calendar가 없어 실계정 read-only 판정은 `blocked`다. Day/Week 구현은 계속하고 Phase 8 호환성 게이트 전에 해소한다.
 - 남은 위험: Exchange backend 종류 unknown, 실제 TCC/System Settings UI 미검증, KC-E1/KC-E2/KC-E4와 외부 변경 알림 실계정 검증 미완료.
 
+## 2026-07-10 — Phase 2 Day/Week/Agenda 실제 배치 구현 및 자동 검증 완료
+
+- 관련 ADR: ADR-003, ADR-004, ADR-005, ADR-007
+- 변경 파일:
+  - `KaosCal/CalendarKit/CalendarEventLayout.swift`: Foundation-only timed/all-day layout, 날짜 분할, span/row, visual interval, overlap column
+  - `CalendarModels`, `EventKitProvider`, `CalendarEventDateFormatting`: 시간 의미, UI occurrence identity, calendar color snapshot, all-day raw end 정규화, 명시적 calendar/time zone formatting
+  - `AppState`: Day 1일·Week/Agenda 7일 visible period, 화면 밖 확장 조회, stale 조회 취소, 선택 정리
+  - `CalendarTimelineView`, `CalendarShellView`, `KaosCalTheme`: 실제 24시간 Day/Week, 고정 header/all-day lane, current-time, event card, 고밀도 scroll, 캘린더별 rail, 접근성 identifier
+  - `CalendarEventLayoutTests`와 기존 fixture: 레이아웃·시간 의미·범위 조회 회귀 테스트
+  - ADR-007, architecture, EventKit, design, phase, QA, compatibility, data model, scope/setup 문서
+- 동작:
+  - Day/Week/Agenda는 같은 반개구간 visible interval과 정렬된 `visibleEvents`를 사용한다.
+  - 시간 일정은 현지 자정에서 나누고 24시간 wall-clock 축에 배치한다. fall-back의 같은 현지 시각은 별도 column으로 표시한다.
+  - 짧은 일정은 배치에만 최소 24분을 사용하며 자정 근처 visual start 이동도 같은 collision interval로 계산한다.
+  - 종일·다일 일정은 배타 종료로 span을 만들고, 고밀도 lane은 35%·240pt에서 내부 세로 scroll한다.
+  - EventKit이 all-day end를 `23:59:59`로 정규화하는 로컬 SDK 동작을 재현하고, 자정 raw end와 함께 provider 경계에서 배타 종료 자정으로 통일했다.
+  - all-day/floating components에 원 calendar identifier를 보존해 non-Gregorian 표시 달력에서도 날짜가 이동하지 않게 했다.
+  - 초기 오늘 -30/+90일을 벗어나면 visible interval 주변을 다시 읽고, 빠른 왕복 navigation의 pending far-range 조회는 취소한다.
+  - actual EventKit calendar color snapshot을 sidebar, Agenda, timed/all-day rail에 사용한다. role/override는 Phase 8에 남긴다.
+- 자동 검증:
+  - 최종 `xcodebuild test` result bundle: **33 tests passed, 0 failed, 0 skipped**
+  - unsigned Release build: pass
+  - ad-hoc signed Debug build: pass
+  - `codesign --verify --deep --strict`: pass
+  - signed entitlement의 app sandbox, Calendar access, get-task-allow: pass
+  - built Info.plist의 macOS 14 minimum과 `NSCalendarsFullAccessUsageDescription`: pass
+  - `git diff --check`: pass
+- 시각 검증:
+  - 민감정보가 없는 `/private/tmp` 전용 provider로 1,360×840 Week를 offscreen render했다.
+  - 15개 샘플에서 calendar별 blue/pink rail, 3열 timed overlap, current-time line, 자정 횡단 card, 10행 all-day의 제한 높이와 scroll container를 눈으로 확인했다.
+  - 이 fixture와 PNG는 제품 runtime·저장소에 포함하지 않는다.
+- 실계정 실행:
+  - 최신 signed app의 `open -n` 실행 요청: pass
+  - 사용자의 full access 승인 결과와 실제 `KAOS-TEST`의 Exchange/writable/color 노출, Day/Week/Agenda click·scroll·inspector 상호작용은 **수동 대기**다.
+- 보안:
+  - password, MFA, OAuth token, tenant/client secret을 요청·저장하지 않는다.
+  - runtime에 `KAOS-TEST`나 테스트 일정 내용을 하드코딩하지 않았다.
+- 결과: Phase 2 코드·자동·offscreen 표시 checkpoint 완료. Phase 1 실계정 권한 gate는 닫지 않았으며 Phase 3 구현을 막지 않는다.
+- 계획 변경: 실제 calendar color snapshot은 source 구분을 위해 Phase 2로 앞당겼다. calendar role·사용자 override·Viewer 설명은 Phase 8에 유지한다.
+- 남은 위험: Exchange backend unknown, 실제 TCC 승인 미확인, KC-E1~KC-E4와 외부 변경 실계정 검증, Viewer calendar `blocked`, 실제 창의 VoiceOver/키보드/scroll 수동 QA.
+
 ## 다음 항목 템플릿
 
 ```markdown

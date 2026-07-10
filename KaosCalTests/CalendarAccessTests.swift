@@ -176,7 +176,8 @@ final class CalendarAccessTests: XCTestCase {
             title: "KAOS-TEST",
             sourceTitle: "Work",
             accountType: .exchange,
-            isWritable: true
+            isWritable: true,
+            color: nil
         )
     }
 
@@ -193,7 +194,21 @@ final class CalendarAccessTests: XCTestCase {
         endDate: Date,
         isAllDay: Bool
     ) -> DisplayEvent {
-        DisplayEvent(
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let startComponents = LocalDateTimeComponents(
+            date: startDate,
+            calendar: calendar
+        )
+        let endComponents = LocalDateTimeComponents(
+            date: endDate,
+            calendar: calendar
+        )
+        let timeSemantics: EventTimeSemantics = isAllDay
+            ? .allDay(start: startComponents, endExclusive: endComponents)
+            : .zoned(timeZoneIdentifier: "Asia/Seoul")
+
+        return DisplayEvent(
             id: "event#1",
             eventIdentifier: "event",
             calendarItemIdentifier: "item",
@@ -202,12 +217,14 @@ final class CalendarAccessTests: XCTestCase {
             calendarTitle: "KAOS-TEST",
             sourceTitle: "Work",
             accountType: .exchange,
+            calendarColor: nil,
             title: "Phase 1 fixture",
             location: nil,
             startDate: startDate,
             endDate: endDate,
             isAllDay: isAllDay,
             timeZoneIdentifier: "Asia/Seoul",
+            timeSemantics: timeSemantics,
             isRecurring: false,
             occurrenceDate: nil,
             isDetached: false,

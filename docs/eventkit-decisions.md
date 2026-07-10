@@ -81,7 +81,7 @@ UI:
 EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 감지한다.
 감지 실패를 데이터 삭제로 해석하지 않는다.
 
-`EKEventStoreChanged`를 받으면 기존 event object를 stale로 취급하고 현재 날짜 범위를 다시 fetch한다. 알림은 어떤 일정이 바뀌었는지 알려 주지 않는다. 연속 알림은 250ms 동안 병합해 같은 범위를 불필요하게 반복 조회하지 않는다.
+`EKEventStoreChanged`를 받으면 기존 event object를 stale로 취급하고 마지막으로 성공한 loaded interval을 다시 fetch한다. 알림은 어떤 일정이 바뀌었는지 알려 주지 않는다. 연속 알림은 250ms 동안 병합해 같은 범위를 불필요하게 반복 조회하지 않는다.
 
 상태 전환:
 - 한 번 찾지 못하면 `missing`
@@ -111,18 +111,22 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - 권한 허용 후 시간·종일·반복 occurrence 이벤트 목록이 보인다.
 - 권한 거부 상태가 crash 없이 표시된다.
 - read-only 캘린더가 구분된다.
-- Event store 변경 알림 후 현재 범위를 다시 조회한다.
+- Event store 변경 알림 후 마지막 loaded interval을 다시 조회한다.
 - EventKit read-only 단계에서 local DB를 추가하지 않는다.
 
 ## 결정 8: 초대 일정은 원본을 건드리지 않는다
 
 초대받은 일정에는 local Event Brief와 작업을 붙일 수 있다. 그러나 v1은 RSVP, 참석자, organizer, 원본 제목·시간·삭제 변경을 제공하지 않는다. 이 동작은 Calendar.app에서 수행하도록 안내한다.
 
-## 결정 9: Phase 1 조회 모델과 새로고침 의미
+## 결정 9: 조회 모델과 새로고침 의미
 
 - 앱 생명주기 동안 하나의 `EKEventStore`를 유지한다.
 - EventKit 객체를 UI state에 보관하지 않고 `CalendarSource`와 `DisplayEvent` 값 snapshot으로 변환한다.
-- Phase 1 조회 범위는 실행 시점의 오늘을 기준으로 -30일~+90일이다.
-- toolbar의 `Reload events`는 현재 EventKit store를 다시 조회한다. Exchange 서버 동기화 자체는 macOS Calendar가 담당하며 KaosCal이 강제하지 않는다.
-- EventKit 종일 일정의 `endDate`는 배타적이므로 Agenda와 inspector에서는 하루를 빼 사람이 보는 포함 종료 날짜로 표시한다.
+- 초기 조회 범위는 실행 시점의 오늘을 기준으로 -30일~+90일이다.
+- 사용자가 loaded interval 밖으로 이동하면 visible interval 앞 30일과 뒤 90일을 포함하는 범위를 다시 가져온다. 현재 화면으로 되돌아오면 대기 중인 먼 범위 조회를 취소한다.
+- toolbar의 `Reload events`는 마지막 loaded interval의 현재 EventKit snapshot을 다시 조회한다. Exchange 서버 동기화 자체는 macOS Calendar가 담당하며 KaosCal이 강제하지 않는다.
+- EventKit 종일 일정의 raw `endDate`는 다음 날 자정뿐 아니라 마지막 날 `23:59:59`로도 관찰되므로 provider 경계에서 날짜 배타 종료 자정으로 정규화한다. Agenda와 inspector는 이 배타 종료에서 하루를 빼 사람이 보는 포함 종료 날짜를 표시한다.
 - 날짜가 바뀌는 시간 일정은 시작과 종료 양쪽 날짜를 표시한다.
+- calendar color는 `EKCalendar.cgColor`를 sRGB 값 snapshot으로 바꾸고 rail에만 사용한다.
+- all-day/floating local components에는 원래 calendar identifier를 보존한다. 표시 달력이 Buddhist/Japanese 등이어도 재구성 날짜가 이동하지 않게 하고, 표시 time zone만 적용한다.
+- UI occurrence identity는 calendar identifier + 가능한 EventKit item identifier + 반복 occurrence anchor 조합이다. 영속 Event Brief 복구는 결정 7의 별도 resolver를 따른다.

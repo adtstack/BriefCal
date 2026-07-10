@@ -41,7 +41,7 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 
 ## 목표 모듈 구조
 
-아래 tree는 v1 목표 구조다. Phase 1 현재 구현은 `App`, `CalendarKit`, `Features/CalendarShell`, `DesignSystem`, hosted unit tests이며, 나머지는 각 phase에서 추가한다.
+아래 tree는 v1 목표 구조다. Phase 2 현재 구현은 `App`, `CalendarKit`, `Features/CalendarShell`, `DesignSystem`, hosted unit tests이며, 나머지는 각 phase에서 추가한다.
 
 ```text
 KaosCal.app
@@ -52,7 +52,8 @@ KaosCal.app
 │  ├─ CalendarProvider.swift
 │  ├─ EventKitProvider.swift
 │  ├─ CalendarModels.swift
-│  └─ CalendarEventDateFormatting.swift
+│  ├─ CalendarEventDateFormatting.swift
+│  └─ CalendarEventLayout.swift
 ├─ ContextStore/
 │  ├─ Database.swift
 │  ├─ Migrations.swift
@@ -84,7 +85,7 @@ KaosCal.app
 
 ## 런타임 흐름
 
-아래는 목표 런타임 흐름이다. Phase 1에서는 1~3과 CalendarShell의 기본 표시만 구현되어 있고 ContextStore 연결은 Phase 3부터 활성화한다.
+아래는 목표 런타임 흐름이다. Phase 2에서는 1~3과 CalendarShell의 Day/Week/Agenda 읽기·표시를 구현했고 ContextStore 연결은 Phase 3부터 활성화한다.
 
 1. 앱 시작 시 AppState가 권한 상태와 로컬 DB 상태를 로드한다.
 2. CalendarProvider가 EventKit 권한 상태를 확인한다.
@@ -95,7 +96,7 @@ KaosCal.app
 7. 사용자가 체크리스트, notes, 개인 작업, 상태를 바꾸면 SQLite만 변경한다.
 8. 사용자가 일정 자체를 바꾸면 EventKit을 변경하고 change log를 SQLite에 남긴다.
 
-위 구조에서 `App`, `CalendarKit`, `CalendarShell`, `DesignSystem`은 Phase 1에 구현되어 있다. `ContextStore`와 나머지 feature 폴더는 해당 phase에서 추가한다.
+위 구조에서 `App`, `CalendarKit`, `CalendarShell`, `DesignSystem`은 Phase 2까지 구현되어 있다. `ContextStore`와 나머지 feature 폴더는 해당 phase에서 추가한다.
 
 ## CalendarProvider 경계
 
@@ -114,6 +115,27 @@ protocol CalendarProviding: AnyObject {
 Phase 1은 위 read-only 경계와 `EventKitProvider` 하나로 시작한다. Phase 5에서 create/update/delete 명령을 별도 안전 use case로 확장한다. 직접 Google/Microsoft/CalDAV adapter는 만들지 않는다.
 
 Provider는 long-lived `EKEventStore`를 소유하지만 UI에 `EKEvent`를 전달하지 않는다. source, identifier, 시간, 종일, 반복, 초대, 수정 가능 상태를 값 타입 snapshot으로 만든다. 연속 store change 알림은 AppState에서 250ms 병합하고 다시 fetch한다.
+
+## Phase 2 표시 파이프라인
+
+```text
+EventKitProvider
+  → DisplayEvent value snapshot
+  → AppState visible period/filter/cache
+  → CalendarEventLayout
+  → CalendarTimelineView / AgendaView / EventInspectorView
+```
+
+- `DisplayEvent`는 EventKit 객체가 아니라 calendar color, source, read-only, recurrence, 시간 의미를 가진 값 snapshot이다.
+- all-day와 floating은 `LocalDateTimeComponents`에 원래 calendar identifier를 함께 보존하고 표시 calendar의 time zone에서 재구성한다. zoned는 raw `Date`의 절대 시점을 사용한다.
+- EventKit all-day raw end가 다음 날 자정 또는 마지막 날 `23:59:59`로 들어오는 두 경우를 provider 경계에서 배타 종료 자정으로 정규화한다.
+- `AppState`는 Day 1일, Week/Agenda 7일의 같은 visible interval을 사용한다. 실행 시 오늘 -30/+90일을 읽고 화면이 범위를 벗어나면 visible interval 앞 30일·뒤 90일을 포함해 다시 읽는다.
+- pending 범위 조회는 다음 navigation 전에 취소해 오래된 결과가 현재 화면을 덮지 않게 한다. `EKEventStoreChanged`는 마지막 loaded interval을 250ms 병합 재조회한다.
+- `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
+- `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
+- UI용 `DisplayEventIdentity`는 SwiftUI 선택 안정성을 위한 값이다. Phase 3의 영속 Event Brief `EventIdentityResolver`와 같은 ID 또는 같은 우선순위를 보장하지 않는다.
+
+세부 배치 결정은 [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md)을 따른다.
 
 ## Event Brief 경계
 

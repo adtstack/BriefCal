@@ -19,6 +19,9 @@
 		A1000000000000000000000A /* FakeCalendarProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* FakeCalendarProvider.swift */; };
 		A1000000000000000000000B /* CalendarAccessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* CalendarAccessTests.swift */; };
 		A1000000000000000000000C /* CalendarEventDateFormatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* CalendarEventDateFormatting.swift */; };
+		A1000000000000000000000D /* CalendarEventLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* CalendarEventLayout.swift */; };
+		A1000000000000000000000E /* CalendarEventLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* CalendarEventLayoutTests.swift */; };
+		A1000000000000000000000F /* CalendarTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* CalendarTimelineView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -48,6 +51,9 @@
 		A2000000000000000000000E /* FakeCalendarProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakeCalendarProvider.swift; sourceTree = "<group>"; };
 		A2000000000000000000000F /* CalendarAccessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarAccessTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000010 /* CalendarEventDateFormatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventDateFormatting.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 /* CalendarEventLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventLayout.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 /* CalendarEventLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventLayoutTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 /* CalendarTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimelineView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -110,6 +116,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000003 /* CalendarShellView.swift */,
+				A20000000000000000000013 /* CalendarTimelineView.swift */,
 			);
 			path = CalendarShell;
 			sourceTree = "<group>";
@@ -137,6 +144,7 @@
 			children = (
 				A20000000000000000000009 /* AppStateTests.swift */,
 				A2000000000000000000000F /* CalendarAccessTests.swift */,
+				A20000000000000000000012 /* CalendarEventLayoutTests.swift */,
 				A2000000000000000000000E /* FakeCalendarProvider.swift */,
 			);
 			path = KaosCalTests;
@@ -155,6 +163,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000010 /* CalendarEventDateFormatting.swift */,
+				A20000000000000000000011 /* CalendarEventLayout.swift */,
 				A2000000000000000000000B /* CalendarModels.swift */,
 				A2000000000000000000000C /* CalendarProvider.swift */,
 				A2000000000000000000000D /* EventKitProvider.swift */,
@@ -263,10 +272,12 @@
 			files = (
 				A10000000000000000000002 /* AppState.swift in Sources */,
 				A1000000000000000000000C /* CalendarEventDateFormatting.swift in Sources */,
+				A1000000000000000000000D /* CalendarEventLayout.swift in Sources */,
 				A10000000000000000000008 /* CalendarProvider.swift in Sources */,
 				A10000000000000000000007 /* CalendarModels.swift in Sources */,
 				A10000000000000000000009 /* EventKitProvider.swift in Sources */,
 				A10000000000000000000003 /* CalendarShellView.swift in Sources */,
+				A1000000000000000000000F /* CalendarTimelineView.swift in Sources */,
 				A10000000000000000000004 /* KaosCalTheme.swift in Sources */,
 				A10000000000000000000001 /* KaosCalApp.swift in Sources */,
 			);
@@ -278,6 +289,7 @@
 			files = (
 				A10000000000000000000006 /* AppStateTests.swift in Sources */,
 				A1000000000000000000000B /* CalendarAccessTests.swift in Sources */,
+				A1000000000000000000000E /* CalendarEventLayoutTests.swift in Sources */,
 				A1000000000000000000000A /* FakeCalendarProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

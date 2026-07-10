@@ -22,13 +22,14 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 절차:
 1. 앱을 처음 실행한다.
 2. 캘린더 권한 요청을 허용한다.
-3. Phase 1에서는 Agenda를 확인한다. Week의 실제 event card 검증은 Phase 2 이후 수행한다.
+3. Agenda와 실제 Day/Week event card를 각각 확인한다.
 
 기대 결과:
 - 실제 Exchange Calendar 일정이 표시된다.
 - 캘린더 목록이 표시된다.
 - 앱이 로컬 저장 정책을 명확히 설명한다.
 - `KAOS-TEST`가 `Exchange`로 표시되고 lock이 없으면 writable로 판정한다.
+- `KAOS-TEST`의 EventKit calendar color가 sidebar와 event rail에 일관되게 표시된다.
 - Exchange source 표시는 backend가 Exchange Online이라는 증거로 사용하지 않는다.
 - `Reload events`는 EventKit 재조회이며 원격 동기화 버튼으로 해석하지 않는다.
 
@@ -136,12 +137,33 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 절차:
 1. 같은 날짜 범위에서 Day, Week, Agenda를 각각 연다.
 2. 시간 일정, 종일 일정, 반복 occurrence를 확인한다.
-3. 동일한 이벤트를 선택한다.
+3. 자정을 넘는 일정과 같은 시간대에 겹치는 3개 이상의 일정을 확인한다.
+4. 종일 일정이 10개 이상인 날짜에서 all-day lane을 세로로 scroll한다.
+5. 이전/다음, Today, 날짜 header를 사용해 loaded range 안팎으로 이동한다.
+6. 동일한 이벤트를 선택한다.
 
 기대 결과:
 - 세 화면에서 제목, 시간 또는 날짜 범위, source, 읽기 전용 상태가 일관된다.
 - 종일 일정은 Day/Week의 all-day lane과 Agenda의 날짜 범위로 명확히 표시된다.
+- 자정에 끝나는 일정은 다음 날에 중복되지 않고, 자정을 넘는 시간 일정은 날짜별 segment로 이어진다.
+- 짧은 일정과 23:59 근처 일정도 카드가 잘리거나 같은 column에서 겹치지 않는다.
+- 고밀도 timed 일정은 가로 scroll, 고밀도 종일 일정은 all-day 내부 세로 scroll로 모두 접근할 수 있다.
+- 현재 시각선은 오늘 열에만 표시되고, 초기 수직 위치는 오늘 현재 시각·첫 일정·08:00 순으로 결정된다.
+- loaded range 밖 이동은 새 범위를 조회하고 빠르게 되돌아오면 오래된 조회 결과가 현재 화면을 덮지 않는다.
 - 선택한 Event Brief가 같은 occurrence에 연결된다.
+
+### 10-a. 표시 달력과 DST 회귀
+
+절차:
+1. `America/New_York`의 spring-forward와 fall-back 날짜를 연다.
+2. fall-back의 서로 다른 두 `01:30` occurrence를 확인한다.
+3. macOS 표시 달력을 Gregorian 이외의 달력으로 바꾼 테스트 환경을 연다.
+
+기대 결과:
+- Week는 DST 날짜에도 같은 24시간 wall-clock 축을 유지한다.
+- fall-back의 두 `01:30`은 같은 y 위치에서 서로 다른 column으로 보인다.
+- all-day/floating 일정이 다른 연도로 이동하거나 화면에서 사라지지 않는다.
+- 이 자동 배치 결과와 실제 Exchange `KC-E3` 지원 판정은 구분해 기록한다.
 
 ### 11. 시간대와 DST
 
@@ -199,11 +221,24 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - import는 기존 DB를 경고 없이 덮어쓰지 않는다.
 - 일정 이동 취소는 EventKit과 local DB 모두 변경하지 않는다.
 - orphaned context는 사용자 선택 없이 자동 삭제하지 않는다.
-- EventKit 변경 알림 뒤에는 현재 범위를 다시 fetch하고 stale event object를 저장하지 않는다.
+- EventKit 변경 알림 뒤에는 마지막 loaded interval을 다시 fetch하고 stale event object를 저장하지 않는다.
 - recurrence occurrence를 ID 하나나 UTC timestamp 하나로 잘못 연결하지 않는다.
 - Task Center의 personal task는 EventKit/Exchange에 동기화하지 않는다.
 
 ## Unit test 후보
+
+Phase 2에서 구현·통과한 항목:
+- visible period 반개구간 경계와 Day/Week/Agenda filtering
+- 자정 횡단 timed segment와 종일 배타 종료 column
+- EventKit의 `23:59:59`/자정 all-day raw end 정규화
+- timed overlap cluster, 맞닿는 일정, 최소 visual duration, 23:59 collision
+- all-day span clipping, continuation, row reuse, 12행 고밀도 보존
+- DST fall-back 동일 wall time column과 floating display time
+- non-Gregorian display calendar 재구성
+- UI occurrence ID의 이동 안정성·occurrence/calendar 구분·anonymous fallback
+- loaded range 확장 조회, selection 정리, stale pending 조회 취소
+
+Phase 3 이후 후보:
 
 - EventContextRepository CRUD
 - EventTaskRepository ordering

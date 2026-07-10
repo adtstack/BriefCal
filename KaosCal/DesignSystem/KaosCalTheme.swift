@@ -6,4 +6,22 @@ enum KaosCalTheme {
     static let calendarRail = Color(red: 0.24, green: 0.57, blue: 0.69)
     static let subtleDivider = Color.primary.opacity(0.09)
     static let mutedText = Color.secondary
+
+    static func calendarColor(
+        _ color: CalendarColor?,
+        accountType: CalendarAccountType
+    ) -> Color {
+        guard let color else {
+            return accountType == .exchange
+                ? calendarRail
+                : Color.secondary.opacity(0.65)
+        }
+        return Color(
+            .sRGB,
+            red: color.red,
+            green: color.green,
+            blue: color.blue,
+            opacity: color.alpha
+        )
+    }
 }

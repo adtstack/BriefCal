@@ -27,6 +27,7 @@ struct CalendarShellView: View {
                     Label("Previous", systemImage: "chevron.left")
                 }
                 .accessibilityLabel("Previous period")
+                .accessibilityIdentifier("toolbar.previous")
 
                 Button("Today") {
                     appState.goToToday()
@@ -39,10 +40,11 @@ struct CalendarShellView: View {
                     Label("Next", systemImage: "chevron.right")
                 }
                 .accessibilityLabel("Next period")
+                .accessibilityIdentifier("toolbar.next")
             }
 
             ToolbarItem {
-                Text(appState.focusedDate.formatted(date: .long, time: .omitted))
+                Text(appState.focusedPeriodTitle)
                     .font(.headline)
                     .monospacedDigit()
             }
@@ -76,7 +78,12 @@ private struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(appState.focusedDate.formatted(.dateTime.month(.wide).year()))
+                Text(
+                    CalendarEventDateFormatting.monthAndYear(
+                        appState.focusedDate,
+                        calendar: appState.calendar
+                    )
+                )
                     .font(.headline)
                 Text(appState.calendarAuthorizationState.title)
                     .font(.caption)
@@ -87,7 +94,7 @@ private struct SidebarView: View {
 
             Divider()
 
-            List(selection: $appState.selectedSection) {
+            List(selection: sectionSelection) {
                 Section("Views") {
                     ForEach(WorkspaceSection.allCases) { section in
                         Label(section.title, systemImage: section.symbolName)
@@ -104,11 +111,10 @@ private struct SidebarView: View {
                         ForEach(appState.calendarSources) { source in
                             HStack(spacing: 8) {
                                 RoundedRectangle(cornerRadius: 2)
-                                    .fill(
-                                        source.accountType == .exchange
-                                            ? KaosCalTheme.calendarRail
-                                            : Color.secondary.opacity(0.5)
-                                    )
+                                    .fill(KaosCalTheme.calendarColor(
+                                        source.color,
+                                        accountType: source.accountType
+                                    ))
                                     .frame(width: 3, height: 24)
 
                                 VStack(alignment: .leading, spacing: 1) {
@@ -134,6 +140,19 @@ private struct SidebarView: View {
             }
             .listStyle(.sidebar)
         }
+    }
+
+    private var sectionSelection: Binding<WorkspaceSection?> {
+        Binding(
+            get: { appState.selectedSection },
+            set: { section in
+                guard let section else {
+                    appState.selectedSection = nil
+                    return
+                }
+                appState.select(section)
+            }
+        )
     }
 }
 
@@ -174,7 +193,7 @@ private struct WorkspaceView: View {
             Text("No events")
                 .foregroundStyle(.secondary)
         case .loaded:
-            Text("\(appState.events.count) events")
+            Text("\(appState.visibleEvents.count) events")
                 .foregroundStyle(.secondary)
         case .permissionDenied:
             Label("Permission required", systemImage: "exclamationmark.triangle")
@@ -209,18 +228,8 @@ private struct WorkspaceView: View {
     @ViewBuilder
     private var loadedWorkspace: some View {
         switch appState.selectedSection ?? .week {
-        case .day:
-            CalendarGridPlaceholder(
-                dayCount: 1,
-                focusedDate: appState.focusedDate,
-                calendar: appState.calendar
-            )
-        case .week:
-            CalendarGridPlaceholder(
-                dayCount: 7,
-                focusedDate: appState.focusedDate,
-                calendar: appState.calendar
-            )
+        case .day, .week:
+            CalendarTimelineView(appState: appState)
         case .agenda:
             AgendaView(appState: appState)
         case .tasks:
@@ -298,136 +307,22 @@ private struct CalendarFailureView: View {
     }
 }
 
-private struct CalendarGridPlaceholder: View {
-    let dayCount: Int
-    let focusedDate: Date
-    let calendar: Calendar
-
-    private var dates: [Date] {
-        (0..<dayCount).compactMap {
-            calendar.date(byAdding: .day, value: $0, to: focusedDate)
-        }
-    }
-
-    var body: some View {
-        ScrollView([.horizontal, .vertical]) {
-            VStack(spacing: 0) {
-                dayHeader
-                allDayLane
-
-                ForEach(8..<20, id: \.self) { hour in
-                    HStack(spacing: 0) {
-                        Text(String(format: "%02d:00", hour))
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 64, alignment: .trailing)
-                            .padding(.trailing, 8)
-
-                        ForEach(0..<dayCount, id: \.self) { _ in
-                            Rectangle()
-                                .fill(Color.clear)
-                                .frame(minWidth: dayCount == 1 ? 560 : 112, minHeight: 48)
-                                .overlay(alignment: .top) {
-                                    Rectangle()
-                                        .fill(KaosCalTheme.subtleDivider)
-                                        .frame(height: 1)
-                                }
-                                .overlay(alignment: .leading) {
-                                    Rectangle()
-                                        .fill(KaosCalTheme.subtleDivider)
-                                        .frame(width: 1)
-                                }
-                        }
-                    }
-                }
-            }
-        }
-        .overlay {
-            phaseTwoMessage
-        }
-    }
-
-    private var dayHeader: some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: 72, height: 44)
-            ForEach(dates, id: \.self) { date in
-                VStack(spacing: 2) {
-                    Text(date.formatted(.dateTime.weekday(.abbreviated)))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(date.formatted(.dateTime.day()))
-                        .font(.headline.monospacedDigit())
-                }
-                .frame(minWidth: dayCount == 1 ? 560 : 112, maxWidth: .infinity)
-                .frame(height: 44)
-                .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(KaosCalTheme.subtleDivider)
-                        .frame(width: 1)
-                }
-            }
-        }
-        .background(.bar)
-    }
-
-    private var allDayLane: some View {
-        HStack(spacing: 0) {
-            Text("All-day")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 64, alignment: .trailing)
-                .padding(.trailing, 8)
-
-            ForEach(0..<dayCount, id: \.self) { _ in
-                Rectangle()
-                    .fill(KaosCalTheme.accentSoft.opacity(0.35))
-                    .frame(minWidth: dayCount == 1 ? 560 : 112, minHeight: 36)
-                    .overlay(alignment: .leading) {
-                        Rectangle()
-                            .fill(KaosCalTheme.subtleDivider)
-                            .frame(width: 1)
-                    }
-            }
-        }
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(KaosCalTheme.subtleDivider)
-                .frame(height: 1)
-        }
-    }
-
-    private var phaseTwoMessage: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "calendar.badge.clock")
-                .font(.system(size: 28, weight: .medium))
-                .foregroundStyle(KaosCalTheme.accent)
-            Text("Calendar access is connected")
-                .font(.headline)
-            Text("Day and Week event placement is implemented in Phase 2. Agenda already shows fetched events.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .multilineTextAlignment(.center)
-        .padding(24)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
-    }
-}
-
 private struct AgendaView: View {
     @ObservedObject var appState: AppState
 
     var body: some View {
-        if appState.events.isEmpty {
+        if appState.visibleEvents.isEmpty {
             ContentUnavailableView(
-                "No events in this range",
+                "No events in this period",
                 systemImage: "list.bullet.rectangle",
-                description: Text("KaosCal checked 30 days back through 90 days ahead.")
+                description: Text(appState.focusedPeriodTitle)
             )
         } else {
             List(selection: $appState.selectedEventID) {
-                ForEach(appState.events) { event in
+                ForEach(appState.visibleEvents) { event in
                     AgendaEventRow(event: event, calendar: appState.calendar)
                         .tag(event.id)
+                        .accessibilityIdentifier("agenda.event.\(event.id)")
                 }
             }
             .listStyle(.inset)
@@ -442,11 +337,10 @@ private struct AgendaEventRow: View {
     var body: some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 2)
-                .fill(
-                    event.accountType == .exchange
-                        ? KaosCalTheme.calendarRail
-                        : Color.secondary.opacity(0.5)
-                )
+                .fill(KaosCalTheme.calendarColor(
+                    event.calendarColor,
+                    accountType: event.accountType
+                ))
                 .frame(width: 3, height: 42)
 
             VStack(alignment: .leading, spacing: 4) {
@@ -545,7 +439,7 @@ private struct EventInspectorView: View {
                 .foregroundStyle(KaosCalTheme.accent)
             Text("Select an event")
                 .font(.title3.weight(.semibold))
-            Text("Agenda에서 일정을 선택하면 시간, 출처, 편집 가능 상태가 여기에 표시됩니다.")
+            Text("Day, Week 또는 Agenda에서 일정을 선택하면 시간, 출처, 편집 가능 상태가 여기에 표시됩니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

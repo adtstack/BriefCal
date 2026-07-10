@@ -24,6 +24,20 @@ Mac App Store sandbox 빌드:
 ~/Library/Containers/com.yourcompany.KaosCal/Data/Library/Application Support/KaosCal/kaoscal.sqlite
 ```
 
+## Phase 2 메모리 표시 모델
+
+Phase 2에는 SQLite가 아직 없으며 아래 값은 EventKit 객체를 UI와 분리하기 위한 메모리 snapshot이다.
+
+| 값 | 역할 | 영속 모델과의 차이 |
+| --- | --- | --- |
+| `DisplayEvent` | title, source, calendar color, raw date, read-only, invitation, recurrence를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음 |
+| `EventTimeSemantics` | `allDay`, `floating`, `zoned` 구분 | Phase 3 `event_links.time_semantics` 설계 입력 |
+| `LocalDateTimeComponents` | 원 calendar identifier와 civil components 보존 | all-day/floating 표시 재구성용이며 DB schema 확정이 아님 |
+| `DisplayEventIdentity` | SwiftUI selection과 occurrence별 card identity | `external → calendar item → event` 우선순위이며 영속 relink resolver와 목적이 다름 |
+| `CalendarEventLayout` | visible period의 timed/all-day placement | 파생값이므로 저장하지 않음 |
+
+영속 Event Brief 연결은 아래 `Identity resolution 순서`를 그대로 따르며 Phase 3에서 별도 repository와 resolver로 구현한다. Phase 2 UI ID가 같거나 달라졌다는 사실만으로 local context를 자동 연결·삭제하지 않는다.
+
 ## Historical draft: Schema v0
 
 아래 schema v0는 최초 문서 초안이다. 구현 전 요구사항이 종일·시간대·반복·Task Center로 확장되었으므로, 실제 첫 migration은 다음 v1 baseline을 따른다.

@@ -70,9 +70,11 @@ final class AppState: ObservableObject {
     private let now: () -> Date
     private let calendarProvider: CalendarProviding
     private var storeRefreshTask: Task<Void, Never>?
+    private var rangeLoadTask: Task<Void, Never>?
+    private var loadedEventInterval: DateInterval?
 
     init(
-        calendar: Calendar = .current,
+        calendar: Calendar = .autoupdatingCurrent,
         now: @escaping () -> Date = Date.init,
         calendarProvider: CalendarProviding? = nil
     ) {
@@ -95,12 +97,91 @@ final class AppState: ObservableObject {
         return events.first { $0.id == selectedEventID }
     }
 
+    var visibleDates: [Date] {
+        let section = selectedSection ?? .week
+        let focusedDay = calendar.startOfDay(for: focusedDate)
+        let start: Date
+        let dayCount: Int
+
+        switch section {
+        case .day, .tasks:
+            start = focusedDay
+            dayCount = 1
+        case .week, .agenda:
+            start = calendar.dateInterval(
+                of: .weekOfYear,
+                for: focusedDay
+            )?.start ?? focusedDay
+            dayCount = 7
+        }
+
+        return (0..<dayCount).compactMap {
+            calendar.date(byAdding: .day, value: $0, to: start)
+        }
+    }
+
+    var visibleInterval: DateInterval {
+        let start = visibleDates.first ?? calendar.startOfDay(for: focusedDate)
+        let finalDate = visibleDates.last ?? start
+        let end = calendar.date(byAdding: .day, value: 1, to: finalDate)
+            ?? finalDate.addingTimeInterval(86_400)
+        return DateInterval(start: start, end: end)
+    }
+
+    var visibleEvents: [DisplayEvent] {
+        let interval = visibleInterval
+        return events.filter {
+            let range = CalendarEventDateFormatting.effectiveDateRange(
+                for: $0,
+                calendar: calendar
+            )
+            return range.start < interval.end && range.end > interval.start
+        }.sorted { lhs, rhs in
+            let lhsRange = CalendarEventDateFormatting.effectiveDateRange(
+                for: lhs,
+                calendar: calendar
+            )
+            let rhsRange = CalendarEventDateFormatting.effectiveDateRange(
+                for: rhs,
+                calendar: calendar
+            )
+            if lhsRange.start != rhsRange.start {
+                return lhsRange.start < rhsRange.start
+            }
+            if lhs.isAllDay != rhs.isAllDay {
+                return lhs.isAllDay
+            }
+            return lhs.id < rhs.id
+        }
+    }
+
+    var focusedPeriodTitle: String {
+        switch selectedSection ?? .week {
+        case .day, .tasks:
+            return CalendarEventDateFormatting.longDate(
+                focusedDate,
+                calendar: calendar
+            )
+        case .week, .agenda:
+            guard let start = visibleDates.first,
+                  let end = visibleDates.last else {
+                return CalendarEventDateFormatting.longDate(
+                    focusedDate,
+                    calendar: calendar
+                )
+            }
+            return "\(CalendarEventDateFormatting.abbreviatedDate(start, calendar: calendar)) – \(CalendarEventDateFormatting.abbreviatedDate(end, calendar: calendar))"
+        }
+    }
+
     func select(_ section: WorkspaceSection) {
         selectedSection = section
+        visiblePeriodDidChange()
     }
 
     func goToToday() {
         focusedDate = calendar.startOfDay(for: now())
+        visiblePeriodDidChange()
     }
 
     func moveFocusedPeriod(direction: Int) {
@@ -117,6 +198,7 @@ final class AppState: ObservableObject {
             value: dayCount * direction,
             to: focusedDate
         ) ?? focusedDate
+        visiblePeriodDidChange()
     }
 
     func loadCalendarStatus() async {
@@ -161,7 +243,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    func refreshCalendarData() async {
+    func refreshCalendarData(in requestedInterval: DateInterval? = nil) async {
         calendarAuthorizationState = calendarProvider.authorizationState
         guard calendarAuthorizationState.canReadEvents else {
             clearCalendarData()
@@ -180,14 +262,19 @@ final class AppState: ObservableObject {
 
         calendarContentState = .loading
         do {
+            let interval = requestedInterval
+                ?? loadedEventInterval
+                ?? initialFetchInterval()
             let sources = try calendarProvider.listCalendars()
-            let fetchedEvents = try calendarProvider.fetchEvents(in: fetchInterval())
+            let fetchedEvents = try calendarProvider.fetchEvents(in: interval)
             calendarSources = sources
             events = fetchedEvents
+            loadedEventInterval = interval
 
             if let selectedEventID, !fetchedEvents.contains(where: { $0.id == selectedEventID }) {
                 self.selectedEventID = nil
             }
+            clearSelectionOutsideVisiblePeriod()
             calendarContentState = fetchedEvents.isEmpty ? .empty : .loaded
         } catch {
             calendarContentState = .failed(Self.message(for: error))
@@ -202,20 +289,67 @@ final class AppState: ObservableObject {
             } catch {
                 return
             }
-            await self?.refreshCalendarData()
+            guard let self else { return }
+            await self.refreshCalendarData(in: self.loadedEventInterval)
+        }
+    }
+
+    private func visiblePeriodDidChange() {
+        clearSelectionOutsideVisiblePeriod()
+        scheduleVisiblePeriodLoadIfNeeded()
+    }
+
+    private func clearSelectionOutsideVisiblePeriod() {
+        guard let selectedEventID else { return }
+        if !visibleEvents.contains(where: { $0.id == selectedEventID }) {
+            self.selectedEventID = nil
+        }
+    }
+
+    private func scheduleVisiblePeriodLoadIfNeeded() {
+        rangeLoadTask?.cancel()
+        rangeLoadTask = nil
+        guard calendarAuthorizationState.canReadEvents else { return }
+        let visible = visibleInterval
+        if let loadedEventInterval,
+           loadedEventInterval.start <= visible.start,
+           loadedEventInterval.end >= visible.end {
+            return
+        }
+
+        let interval = expandedFetchInterval(around: visible)
+        rangeLoadTask = Task { @MainActor [weak self] in
+            guard !Task.isCancelled else { return }
+            await self?.refreshCalendarData(in: interval)
         }
     }
 
     private func clearCalendarData() {
+        rangeLoadTask?.cancel()
         calendarSources = []
         events = []
         selectedEventID = nil
+        loadedEventInterval = nil
     }
 
-    private func fetchInterval() -> DateInterval {
+    private func initialFetchInterval() -> DateInterval {
         let today = calendar.startOfDay(for: now())
         let start = calendar.date(byAdding: .day, value: -30, to: today) ?? today
         let end = calendar.date(byAdding: .day, value: 90, to: today) ?? today
+        return DateInterval(start: start, end: end)
+    }
+
+    private func expandedFetchInterval(around visible: DateInterval) -> DateInterval {
+        let start = calendar.date(
+            byAdding: .day,
+            value: -30,
+            to: visible.start
+        ) ?? visible.start
+        let end = calendar.date(
+            byAdding: .day,
+            value: 90,
+            to: visible.end
+        ) ?? visible.end
         return DateInterval(start: start, end: end)
     }
 
