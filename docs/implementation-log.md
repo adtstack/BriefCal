@@ -192,6 +192,53 @@
   - full access와 Exchange/writable 실계정 gate는 기존과 같이 대기
 - 결과: Phase 3 코드·자동 검증 checkpoint 완료. 실제 UI를 통한 저장·재실행 확인은 Phase 4 수동 gate로 유지하고 Phase 4 구현을 시작한다.
 
+## 2026-07-10 — Phase 4 Event Brief·Task Center 구현 checkpoint
+
+- 관련 ADR: ADR-002, ADR-004, ADR-008, ADR-009
+- 변경 파일:
+  - `AppState`: private event/filter selection, Brief/notes/Task Center state, local mutation, day/time-zone refresh, strong-only 원본 navigation
+  - `EventBriefView`: Before/During/After task CRUD·완료·이동, notes autosave 상태, identity safety, local editable badge
+  - `TaskCenterView`: Today/Upcoming/Completed grouping, personal quick-add·due editor, typed event/personal row action, 원본 event source
+  - `ContextStore`와 repositories/models: typed Task Center ID, lazy brief load, context-scoped task mutation, idempotent completion, read-only inverse matcher
+  - `LocalWorkspaceTests`, `ContextStoreTests`, interval-aware fake provider와 관련 문서
+- 상호작용 결정:
+  - notes는 700ms debounce하고 선택·local mutation·inactive·종료 전에 flush한다. 같은 event refresh에서는 draft를 유지한다.
+  - task title은 Return·focus loss와 완료·section 이동·원본 열기·화면 이탈 전에 commit한다. 실패하면 후속 action을 중단한다.
+  - candidate/ambiguous identity에서는 새 context를 만들거나 자동 relink하지 않고 편집을 차단한다.
+  - read-only/invitation의 원본 권한과 local Event Brief 편집 가능 상태를 별도 badge로 표시한다.
+  - personal due는 생성·수정·제거 가능하며 Today/Upcoming query를 즉시 다시 읽는다. due는 reminder가 아니다.
+  - event-linked navigation은 저장 range를 fetch한 뒤 강한 identifier+occurrence가 정확히 하나일 때만 선택한다.
+- 감사에서 찾아 수정한 문제:
+  - debounce 중 동일 일정 refresh와 다른 local mutation이 notes draft를 덮던 경로
+  - 이전 visible-range task가 원본 navigation target fetch를 뒤늦게 덮을 수 있던 경로
+  - 완료·이동·navigation 전에 편집 중 task 제목이 사라질 수 있던 경로
+  - 일정 선택이 바뀐 뒤 이전 Event Brief row의 `onDisappear`가 새 Brief에서 task를 찾다가 제목을 잃을 수 있던 경로; typed task/context ID 저장으로 교체
+  - personal due update 부재, Upcoming quick-add의 잘못된 날짜, filter composer state 손실
+  - EventKit move·자정·system time-zone 변경 뒤 Task Center projection이 stale한 경로
+- 현재 자동 검증:
+  - ContextStore 집중: **25 tests, 0 failures**
+  - LocalWorkspace 집중: **15 tests, 0 failures**
+  - pinned package 기반 unsigned Debug build: `BUILD SUCCEEDED`
+  - lazy selection, autosave/flush, typed routing, CRUD·completion, personal due filter 이동, move refresh, day boundary, out-of-range strong navigation, read-only/invitation local edit 포함
+- 최종 자동·빌드·서명 gate:
+  - pinned GRDB 7.10.0 기반 최종 전체 회귀: **75 tests, 0 failures, 0 unexpected**, `TEST SUCCEEDED`; `Test-KaosCal-2026.07.10_23-12-13-+0900.xcresult`
+  - 최종 전체 회귀 전후 direct/sandbox Application Support DB mtime은 각각 `2026-07-10 19:18:24 +0900`, `2026-07-10 19:20:43 +0900`으로 불변
+  - pinned `Package.resolved`만 사용한 unsigned Release build와 ad-hoc signed Debug build: `BUILD SUCCEEDED`
+  - `codesign --verify --deep --strict`: pass
+  - signed Debug entitlements: `com.apple.security.app-sandbox`, `com.apple.security.get-task-allow`, `com.apple.security.personal-information.calendars` 모두 `true`
+  - built Info.plist의 `NSCalendarsFullAccessUsageDescription` 확인
+- fixture 시각 검증:
+  - 실제 DB·EventKit과 분리한 in-memory DB·fake Exchange provider로 1360×840 Event Brief와 Task Center offscreen 창을 렌더했다.
+  - invitation/original 안내와 local editable badge, Before/During/After, notes, Overdue/Today/No date, event/personal source row의 핵심 레이아웃과 clipping 부재를 확인했다.
+  - 임시 렌더 test/helper는 확인 뒤 제거했다. material·toolbar와 interaction은 offscreen 결과로 완료 선언하지 않는다.
+- 수동 gate 대기:
+  - 실제 서명 앱 창의 scroll·keyboard/focus·popover·delete confirmation
+  - 실제 앱 종료·재실행 DB 유지, 실제 `KAOS-TEST` event-linked occurrence, Viewer/KC-E6 local-only 확인
+- 명시적 이월:
+  - event task fixed/relative due 편집 UI와 notification/reminder
+  - weak/ambiguous relink, missing/orphan lifecycle, 원본 EventKit write, change log, backup
+- 결과: Phase 4 구현과 자동·빌드·서명·fixture 시각 gate는 통과했다. 실제 창 상호작용과 Exchange 실계정 gate는 완료로 선언하지 않고 후속 수동 검증으로 유지한다.
+
 ## 다음 항목 템플릿
 
 ```markdown

@@ -33,7 +33,10 @@ final class TaskCenterRepository {
                 }
                 let eventRange = link.effectiveDateRange(calendar: calendar)
                 return TaskCenterItem(
-                    id: "event:\(task.id)",
+                    id: .eventTask(
+                        taskID: task.id,
+                        contextID: context.id
+                    ),
                     title: task.title,
                     isCompleted: task.isCompleted,
                     dueAt: task.effectiveDueDate(
@@ -44,9 +47,13 @@ final class TaskCenterRepository {
                     sortOrder: task.sortOrder,
                     source: .event(
                         contextID: context.id,
+                        section: task.section,
                         eventTitle: context.titleSnapshot,
                         calendarTitle: link.calendarTitleSnapshot,
-                        sourceTitle: link.sourceTitle
+                        sourceTitle: link.sourceTitle,
+                        eventStart: eventRange.start,
+                        eventEnd: eventRange.end,
+                        isAllDay: link.isAllDay
                     )
                 )
             }
@@ -54,7 +61,7 @@ final class TaskCenterRepository {
                 .fetchAll(db)
                 .map { task in
                 TaskCenterItem(
-                    id: "personal:\(task.id)",
+                    id: .personalTask(taskID: task.id),
                     title: task.title,
                     isCompleted: task.isCompleted,
                     dueAt: task.dueAt,

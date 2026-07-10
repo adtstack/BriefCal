@@ -41,7 +41,7 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 
 ## 현재 모듈 구조
 
-아래 tree는 Phase 3 완료 시점에 저장소에 실제로 존재하는 구조다.
+아래 tree는 Phase 4 구현 시점에 저장소에 실제로 존재하는 구조다.
 
 ```text
 KaosCal.app
@@ -65,9 +65,13 @@ KaosCal.app
 │  ├─ TaskCenterRepository.swift
 │  └─ EventIdentityFingerprint.swift
 ├─ Features/
-│  └─ CalendarShell/
-│     ├─ CalendarShellView.swift
-│     └─ CalendarTimelineView.swift
+│  ├─ CalendarShell/
+│  │  ├─ CalendarShellView.swift
+│  │  └─ CalendarTimelineView.swift
+│  ├─ EventBrief/
+│  │  └─ EventBriefView.swift
+│  └─ TaskCenter/
+│     └─ TaskCenterView.swift
 ├─ DesignSystem/
 │  └─ KaosCalTheme.swift
 ├─ Resources/
@@ -79,14 +83,15 @@ KaosCal.app
    ├─ CalendarEventLayoutTests.swift
    ├─ CalendarAccessTests.swift
    ├─ AppStateTests.swift
+   ├─ LocalWorkspaceTests.swift
    └─ FakeCalendarProvider.swift
 ```
 
-`EventBrief`, `TaskCenter`, `MoveConfirmation`, `AfterReview`, `Settings`의 별도 feature 경계는 해당 phase에서 실제 파일을 추가할 때 확정한다. Phase 3에서는 Event Brief와 Task Center의 저장소·query만 `ContextStore`에 있고 실제 편집 화면은 없다.
+`EventBrief`와 `TaskCenter` feature 경계는 Phase 4에서 추가했다. `MoveConfirmation`, `AfterReview`, `Settings`는 해당 phase에서 실제 파일을 추가할 때 확정한다.
 
 ## 런타임 흐름
 
-아래는 v1 런타임 흐름이다. Phase 3까지 1~6의 저장·관찰 기반과 CalendarShell의 Day/Week/Agenda 읽기·표시를 구현했다. 7의 실제 편집 UI는 Phase 4, 8의 일정 쓰기와 change log는 Phase 5~6 범위다.
+아래는 v1 런타임 흐름이다. Phase 4까지 1~7을 구현했다. 8의 일정 쓰기와 change log는 Phase 5~6 범위다.
 
 1. `KaosCalApp` 초기화가 `AppBootstrap.makeAppState`를 호출한다.
 2. production에서는 `AppBootstrap`이 Application Support DB를 열고 migration한 단일 `ContextStore`를 만든다. hosted XCTest에서는 production DB open을 건너뛴다.
@@ -94,8 +99,40 @@ KaosCal.app
 4. `CalendarShell`의 시작 task가 `AppState.loadCalendarStatus`를 호출하고 `CalendarProvider`가 EventKit 권한 상태를 확인한다.
 5. 권한이 있으면 지정 기간의 이벤트와 캘린더 목록을 가져온다.
 6. fetch한 EventKit 값 snapshot을 `ContextStore.observe`가 강한 식별자로 기존 context에 연결하고 최신 snapshot으로 갱신한 뒤 Day/Week/Agenda에 표시한다.
-7. Phase 4에서는 사용자가 체크리스트, notes, 개인 작업, 완료 상태를 바꾸면 SQLite만 변경하고 Event Brief와 Task Center가 함께 갱신된다.
+7. 사용자가 체크리스트, notes, 개인 작업, 완료 상태를 바꾸면 SQLite만 변경하고 Event Brief와 Task Center가 함께 갱신된다. local mutation은 AppState 명령을 거쳐 성공 뒤 두 projection을 다시 읽는다.
 8. Phase 5~6에서는 사용자가 일정 자체를 바꾸면 EventKit을 변경하고, 확정된 변경 뒤 change log를 SQLite에 남긴다.
+
+## Phase 4 local interaction pipeline
+
+```text
+Calendar selection / Task filter
+  → AppState private selection command
+  → ContextStore loadBrief or TaskCenterRepository read
+  → EventBriefState / TaskCenterState
+  → EventBriefView / TaskCenterView
+
+Inline local mutation
+  → pending notes flush
+  → ContextStore context-scoped transaction
+  → selected Brief reload + current Task Center reload
+```
+
+- notes debounce task와 현재 draft는 AppState가 소유한다. 같은 event의 EventKit refresh는 active event snapshot만 교체하고 draft를 유지한다.
+- task row의 제목 draft는 row가 소유하지만 Return·focus loss·완료·이동·navigation·화면 이탈 전 AppState rename을 먼저 호출한다.
+- DB open/migration 실패는 `LocalContextStoreState.failed`로 전체 shell을 차단한다. validation, missing original, weak identity 같은 작업 오류는 `localOperationError`로만 표시해 calendar shell을 중단하지 않는다.
+- `TaskCenterItemID`는 backing task ID와 event context ID를 타입으로 보존한다. UI 문자열은 mutation key가 아니다.
+
+원본 일정 navigation은 별도 read-only 경로다.
+
+```text
+TaskCenter event source click
+  → EventLink effective range read
+  → pending visible-range task cancel
+  → target range EventKit fetch
+  → strong identifier + occurrence inverse match
+  → exactly one match: focused Day + selected event
+  → weak / ambiguous / missing: task 유지 + recoverable message
+```
 
 ## CalendarProvider 경계
 
@@ -157,7 +194,7 @@ KaosCalApp / AppBootstrap
 
 ## Event Brief 경계
 
-Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다. 아래는 v1 목표 정책이며, Phase 3은 지연 생성·SQLite 수정 primitive와 조회만 구현했다. 실제 편집 UI는 Phase 4, move/change log와 orphan lifecycle은 Phase 6~7 범위다.
+Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다. Phase 4는 지연 생성, notes autosave, task CRUD·완료와 Task Center projection을 구현했다. 원본 event move/change log와 orphan lifecycle은 Phase 6~7 범위다.
 
 - Event Brief 생성: 이벤트를 단순 선택할 때는 만들지 않고, 사용자가 처음 메모나 작업을 저장할 때 local context를 만든다.
 - Event Brief 수정: SQLite에만 쓴다.

@@ -186,7 +186,7 @@ final class CalendarAccessTests: XCTestCase {
         provider.events = [sampleEvent]
         let state = makeState(provider: provider)
         await state.loadCalendarStatus()
-        state.selectedEventID = sampleEvent.id
+        state.selectEvent(sampleEvent.id)
 
         provider.authorizationState = .denied
         await state.refreshCalendarData()

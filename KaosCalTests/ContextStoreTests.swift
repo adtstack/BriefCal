@@ -160,6 +160,49 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertEqual(try harness.store.eventContexts.count(), 0)
     }
 
+    func testLoadBriefIsLazyAndRequiresConfirmationForWeakMatch() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(
+            id: "brief",
+            title: "Téam   Sync",
+            location: "Room Ａ"
+        )
+
+        XCTAssertEqual(try harness.store.loadBrief(for: event), .empty)
+        XCTAssertEqual(try harness.store.eventContexts.count(), 0)
+
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: event, notes: "Local brief")
+        )
+        guard case let .loaded(snapshot, basis) = try harness.store.loadBrief(
+            for: event
+        ) else {
+            return XCTFail("Expected a linked brief")
+        }
+        XCTAssertEqual(basis, .eventIdentifier)
+        XCTAssertEqual(snapshot.context.id, context.id)
+        XCTAssertEqual(snapshot.context.notes, "Local brief")
+
+        let weakCandidate = makeEvent(
+            id: "weak-brief",
+            title: " team sync ",
+            location: "room a",
+            includeIdentifiers: false
+        )
+        XCTAssertEqual(
+            try harness.store.loadBrief(for: weakCandidate),
+            .confirmationRequired(
+                contextIDs: [context.id],
+                basis: .fingerprint
+            )
+        )
+        XCTAssertEqual(try harness.store.eventContexts.count(), 1)
+        XCTAssertEqual(
+            try harness.store.eventContexts.fetch(id: context.id)?.titleSnapshot,
+            event.title
+        )
+    }
+
     func testFirstNotesCreateContextAndLinkTogether() throws {
         let harness = try makeHarness()
         let event = makeEvent(id: "event")
@@ -394,6 +437,161 @@ final class ContextStoreTests: XCTestCase {
         }
     }
 
+    func testAppendEventTaskAllocatesSectionOrderInsideTransaction() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(id: "append-order")
+
+        let first = try harness.store.appendEventTask(
+            for: event,
+            section: .before,
+            title: "First"
+        )
+        let second = try harness.store.appendEventTask(
+            for: event,
+            section: .before,
+            title: "Second"
+        )
+        _ = try harness.store.addEventTask(
+            for: event,
+            section: .before,
+            title: "Explicit",
+            sortOrder: 8
+        )
+        let afterExplicit = try harness.store.appendEventTask(
+            for: event,
+            section: .before,
+            title: "After explicit"
+        )
+        let during = try harness.store.appendEventTask(
+            for: event,
+            section: .during,
+            title: "During"
+        )
+
+        XCTAssertEqual(first.sortOrder, 0)
+        XCTAssertEqual(second.sortOrder, 1)
+        XCTAssertEqual(afterExplicit.sortOrder, 9)
+        XCTAssertEqual(during.sortOrder, 0)
+    }
+
+    func testContextScopedEventTaskMutationRejectsWrongContextAndMissingTask() throws {
+        let harness = try makeHarness()
+        let firstTask = try harness.store.appendEventTask(
+            for: makeEvent(id: "scoped-first"),
+            section: .before,
+            title: "First"
+        )
+        let secondTask = try harness.store.appendEventTask(
+            for: makeEvent(
+                id: "scoped-second",
+                title: "Other event",
+                start: date(2026, 7, 10, 11),
+                end: date(2026, 7, 10, 12)
+            ),
+            section: .after,
+            title: "Second"
+        )
+
+        XCTAssertThrowsError(
+            try harness.store.updateEventTask(
+                contextID: secondTask.contextID,
+                taskID: firstTask.id,
+                section: .after,
+                title: "Wrong mutation",
+                sortOrder: 3,
+                due: .none
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .eventTaskContextMismatch(
+                    taskID: firstTask.id,
+                    expectedContextID: secondTask.contextID
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try harness.store.deleteEventTask(
+                contextID: secondTask.contextID,
+                taskID: firstTask.id
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .eventTaskContextMismatch(
+                    taskID: firstTask.id,
+                    expectedContextID: secondTask.contextID
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try harness.store.setEventTaskCompleted(
+                contextID: firstTask.contextID,
+                taskID: "missing-task",
+                isCompleted: true
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .missingEventTask("missing-task")
+            )
+        }
+
+        let unchanged = try XCTUnwrap(
+            harness.store.eventTasks.fetch(id: firstTask.id)
+        )
+        XCTAssertEqual(unchanged.title, "First")
+        XCTAssertEqual(unchanged.section, .before)
+        XCTAssertFalse(unchanged.isCompleted)
+    }
+
+    func testCompletionIsIdempotentForEventAndPersonalTasks() throws {
+        var current = date(2026, 7, 10, 12)
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { current }
+        )
+        let eventTask = try store.appendEventTask(
+            for: makeEvent(id: "idempotent"),
+            section: .after,
+            title: "Follow up"
+        )
+        let personalTask = try store.personalTasks.create(title: "Personal")
+
+        current = date(2026, 7, 10, 13)
+        let completedEvent = try store.setEventTaskCompleted(
+            contextID: eventTask.contextID,
+            taskID: eventTask.id,
+            isCompleted: true
+        )
+        let completedPersonal = try store.setPersonalTaskCompleted(
+            taskID: personalTask.id,
+            isCompleted: true
+        )
+
+        current = date(2026, 7, 10, 14)
+        let repeatedEvent = try store.setEventTaskCompleted(
+            contextID: eventTask.contextID,
+            taskID: eventTask.id,
+            isCompleted: true
+        )
+        let repeatedPersonal = try store.setPersonalTaskCompleted(
+            taskID: personalTask.id,
+            isCompleted: true
+        )
+
+        XCTAssertEqual(repeatedEvent.completedAt, completedEvent.completedAt)
+        XCTAssertEqual(repeatedEvent.updatedAt, completedEvent.updatedAt)
+        XCTAssertEqual(
+            repeatedPersonal.completedAt,
+            completedPersonal.completedAt
+        )
+        XCTAssertEqual(
+            repeatedPersonal.updatedAt,
+            completedPersonal.updatedAt
+        )
+    }
+
     func testDeletingContextCascadesLinkAndEventTasks() throws {
         let harness = try makeHarness()
         let event = makeEvent(id: "cascade")
@@ -474,6 +672,86 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertNil(try harness.store.personalTasks.fetch(id: upcoming.id))
     }
 
+    func testTypedTaskCenterIdentityRoutesCollidingRawIDs() throws {
+        let IDs = IDSequence([
+            "event-context",
+            "event-link",
+            "shared-task-id",
+            "shared-task-id"
+        ])
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { self.date(2026, 7, 10, 12) },
+            makeID: IDs.next
+        )
+        let eventTask = try store.appendEventTask(
+            for: makeEvent(id: "typed-routing"),
+            section: .before,
+            title: "Event task"
+        )
+        let personalTask = try store.personalTasks.create(
+            title: "Personal task"
+        )
+
+        XCTAssertEqual(eventTask.id, personalTask.id)
+        let items = try store.taskCenter.fetch(
+            list: .today,
+            now: date(2026, 7, 10, 12),
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            Set(items.map(\.id)),
+            Set([
+                .eventTask(
+                    taskID: eventTask.id,
+                    contextID: eventTask.contextID
+                ),
+                .personalTask(taskID: personalTask.id)
+            ])
+        )
+
+        let personalResult = try store.setTaskCenterItemCompleted(
+            id: .personalTask(taskID: personalTask.id),
+            isCompleted: true
+        )
+        guard case let .personalTask(completedPersonal) = personalResult else {
+            return XCTFail("Expected personal task completion")
+        }
+        XCTAssertTrue(completedPersonal.isCompleted)
+        XCTAssertFalse(
+            try XCTUnwrap(store.eventTasks.fetch(id: eventTask.id)).isCompleted
+        )
+
+        let eventResult = try store.setTaskCenterItemCompleted(
+            id: .eventTask(
+                taskID: eventTask.id,
+                contextID: eventTask.contextID
+            ),
+            isCompleted: true
+        )
+        guard case let .eventTask(completedEvent) = eventResult else {
+            return XCTFail("Expected event task completion")
+        }
+        XCTAssertTrue(completedEvent.isCompleted)
+        XCTAssertTrue(
+            try XCTUnwrap(
+                store.personalTasks.fetch(id: personalTask.id)
+            ).isCompleted
+        )
+
+        XCTAssertThrowsError(
+            try store.setTaskCenterItemCompleted(
+                id: .personalTask(taskID: "missing-personal"),
+                isCompleted: true
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .missingPersonalTask("missing-personal")
+            )
+        }
+    }
+
     func testTaskCenterCombinesEventAndPersonalTasksAtDayBoundary() throws {
         let harness = try makeHarness()
         let event = makeEvent(
@@ -504,16 +782,39 @@ final class ContextStoreTests: XCTestCase {
         )
         XCTAssertEqual(
             Set(today.map(\.id)),
-            Set(["event:\(eventTask.id)", "personal:\(personalToday.id)"])
+            Set([
+                .eventTask(
+                    taskID: eventTask.id,
+                    contextID: eventTask.contextID
+                ),
+                .personalTask(taskID: personalToday.id)
+            ])
         )
         guard case let .event(
-            _, eventTitle, calendarTitle, sourceTitle
-        ) = try XCTUnwrap(today.first { $0.id == "event:\(eventTask.id)" }).source else {
+            contextID,
+            section,
+            eventTitle,
+            calendarTitle,
+            sourceTitle,
+            eventStart,
+            eventEnd,
+            isAllDay
+        ) = try XCTUnwrap(today.first {
+            $0.id == .eventTask(
+                taskID: eventTask.id,
+                contextID: eventTask.contextID
+            )
+        }).source else {
             return XCTFail("Expected event task source")
         }
+        XCTAssertEqual(contextID, eventTask.contextID)
+        XCTAssertEqual(section, .before)
         XCTAssertEqual(eventTitle, event.title)
         XCTAssertEqual(calendarTitle, "KAOS-TEST")
         XCTAssertEqual(sourceTitle, "Work")
+        XCTAssertEqual(eventStart, event.startDate)
+        XCTAssertEqual(eventEnd, event.endDate)
+        XCTAssertFalse(isAllDay)
 
         XCTAssertEqual(
             try harness.store.taskCenter.fetch(
@@ -521,7 +822,7 @@ final class ContextStoreTests: XCTestCase {
                 now: harness.now,
                 calendar: testCalendar
             ).map(\.id),
-            ["personal:\(personalUpcoming.id)"]
+            [.personalTask(taskID: personalUpcoming.id)]
         )
     }
 
@@ -607,11 +908,17 @@ final class ContextStoreTests: XCTestCase {
         )
 
         XCTAssertEqual(
-            itemsByID["event:\(floatingTask.id)"]?.dueAt,
+            itemsByID[.eventTask(
+                taskID: floatingTask.id,
+                contextID: floatingTask.contextID
+            )]?.dueAt,
             expectedFloatingDue
         )
         XCTAssertEqual(
-            itemsByID["event:\(allDayTask.id)"]?.dueAt,
+            itemsByID[.eventTask(
+                taskID: allDayTask.id,
+                contextID: allDayTask.contextID
+            )]?.dueAt,
             expectedAllDayDue
         )
     }
@@ -669,7 +976,12 @@ final class ContextStoreTests: XCTestCase {
             calendar: testCalendar
         )
         XCTAssertEqual(
-            todayItems.first { $0.id == "event:\(task.id)" }?.dueAt,
+            todayItems.first {
+                $0.id == .eventTask(
+                    taskID: task.id,
+                    contextID: task.contextID
+                )
+            }?.dueAt,
             date(2026, 7, 10, 14)
         )
     }
@@ -722,6 +1034,87 @@ final class ContextStoreTests: XCTestCase {
             try linkedContextID(harness.store.resolve(event: detachedMoved)),
             firstContext.id
         )
+    }
+
+    func testNavigationMatchingIsReadOnlyStrongAndOccurrenceScoped() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(
+            id: "navigation-original",
+            externalIdentifier: "navigation-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9)
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: original, notes: "Keep snapshot")
+        )
+        let before = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        let target = try XCTUnwrap(
+            harness.store.navigationTarget(contextID: context.id)
+        )
+        XCTAssertEqual(target.contextID, context.id)
+        XCTAssertEqual(target.link, before.link)
+
+        let matchingOccurrence = makeEvent(
+            id: "navigation-live",
+            title: "Moved live event",
+            start: date(2026, 7, 10, 13),
+            end: date(2026, 7, 10, 14),
+            externalIdentifier: "navigation-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9),
+            isDetached: true
+        )
+        let siblingOccurrence = makeEvent(
+            id: "navigation-sibling",
+            start: date(2026, 7, 17, 9),
+            end: date(2026, 7, 17, 10),
+            externalIdentifier: "navigation-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 17, 9)
+        )
+
+        XCTAssertEqual(
+            try harness.store.matchLinkedEvent(
+                contextID: context.id,
+                among: [siblingOccurrence, matchingOccurrence]
+            ),
+            .linked(
+                event: matchingOccurrence,
+                basis: .externalIdentifierAndOccurrence
+            )
+        )
+
+        let weakOccurrence = makeEvent(
+            id: "navigation-weak",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9),
+            includeIdentifiers: false
+        )
+        XCTAssertEqual(
+            try harness.store.matchLinkedEvent(
+                contextID: context.id,
+                among: [weakOccurrence]
+            ),
+            .confirmationRequired(
+                eventIDs: [weakOccurrence.id],
+                basis: .exactSnapshot
+            )
+        )
+        XCTAssertEqual(
+            try harness.store.matchLinkedEvent(
+                contextID: "missing-context",
+                among: [matchingOccurrence]
+            ),
+            .notFound
+        )
+
+        let after = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(after, before)
     }
 
     func testFloatingOccurrenceUsesCivilAnchorAcrossTimeZoneAndDetachedMove() throws {
@@ -1100,8 +1493,11 @@ final class ContextStoreTests: XCTestCase {
             XCTAssertEqual(
                 Set(completedItems.map(\.id)),
                 Set([
-                    "event:\(eventTaskID)",
-                    "personal:\(personalTaskID)"
+                    .eventTask(
+                        taskID: eventTaskID,
+                        contextID: contextID
+                    ),
+                    .personalTask(taskID: personalTaskID)
                 ])
             )
         }

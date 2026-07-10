@@ -1,8 +1,8 @@
 # Exchange Compatibility
 
-> 상태: Phase 3 local identity/persistence 및 54-test 전체 회귀 완료 / Phase 4 UX와 실계정 검증 진행 중
+> 상태: Phase 4 local Event Brief·Task Center 자동·서명 검증 완료 / 실계정 검증 대기
 > 제품 대상: macOS Calendar에 구성된 Exchange Online
-> 현재 테스트 환경: Exchange backend 종류 미확인, 수정 가능한 `KAOS-TEST` calendar
+> 현재 테스트 환경: Exchange backend 종류 미확인, 사용자가 수정 가능 테스트 대상으로 지정한 `KAOS-TEST` calendar(EventKit 확인 대기)
 > 마지막 갱신: 2026-07-10
 
 ## 지원 선언 기준
@@ -11,9 +11,9 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 
 | 기능 | 현재 테스트 환경 | 상태 | 증거 |
 | --- | --- | --- | --- |
-| full calendar access | 설명·요청·거부 복구 구현, 실계정 승인 결과 미확인 | 수동 대기 | Phase 2의 33-test·signed app 실행; 최신 54-test와 Phase 3 signed build/codesign 통과 |
+| full calendar access | 설명·요청·거부 복구 구현, 실계정 승인 결과 미확인 | 수동 대기 | 최신 전체 75-test, ad-hoc signed Debug, strict codesign, Calendar entitlement·usage description 통과 |
 | Exchange source·calendar 식별 | `EKSourceType.exchange`·calendar color mapping 구현, 실계정 미확인 | 수동 대기 | `KAOS-TEST` sidebar/color 확인 필요 |
-| editable calendar 확인 | `KAOS-TEST` | 사용자 확인 | 수정 가능하다고 확인 |
+| editable calendar 확인 | 사용자가 `KAOS-TEST`를 수정 가능 테스트 대상으로 지정 | 수동 대기 | 실제 EventKit 노출과 `allowsContentModifications` 확인 필요 |
 | read-only 구분 | `allowsContentModifications` mapping·unit state 구현 | blocked | Viewer calendar 미준비, Phase 8 전 해소 |
 | 시간 일정 조회 | 미검증 | 대기 | KC-E1 |
 | 종일·다일 일정 조회 | 자정/`23:59:59` raw end 정규화, 배타 범위·all-day span unit 통과 | 실계정 대기 | KC-E2 |
@@ -24,7 +24,7 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 | 이번 일정·이번 이후 반복 변경 | 미검증 | 대기 | KC-E4 |
 | 외부 변경 알림 후 재조회 | 마지막 loaded interval 250ms 병합 재조회 unit 통과 | 실계정 대기 | Calendar.app/Outlook 변경 |
 | 권한 철회 후 데이터 제거 | calendar/event/selection 제거 unit 통과 | 실계정 대기 | System Settings 권한 철회 |
-| 초대 일정 local-only Brief | 미검증 | 대기 | KC-E6 |
+| 초대 일정 local-only Brief | invitation/read-only local notes·task unit flow 통과, 실계정 미확인 | 실계정 대기 | KC-E6에서 원본 control 부재·변경 메일 없음 확인 필요 |
 
 ## 검증 규칙
 

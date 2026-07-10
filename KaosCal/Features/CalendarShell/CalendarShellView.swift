@@ -31,53 +31,92 @@ struct CalendarShellView: View {
         .tint(KaosCalTheme.accent)
         .toolbar {
             ToolbarItemGroup {
-                Button {
-                    appState.moveFocusedPeriod(direction: -1)
-                } label: {
-                    Label("Previous", systemImage: "chevron.left")
-                }
-                .accessibilityLabel("Previous period")
-                .accessibilityIdentifier("toolbar.previous")
+                if appState.selectedSection != .tasks {
+                    Button {
+                        appState.moveFocusedPeriod(direction: -1)
+                    } label: {
+                        Label("Previous", systemImage: "chevron.left")
+                    }
+                    .accessibilityLabel("Previous period")
+                    .accessibilityIdentifier("toolbar.previous")
 
-                Button("Today") {
-                    appState.goToToday()
-                }
-                .accessibilityIdentifier("toolbar.today")
+                    Button("Today") {
+                        appState.goToToday()
+                    }
+                    .accessibilityIdentifier("toolbar.today")
 
-                Button {
-                    appState.moveFocusedPeriod(direction: 1)
-                } label: {
-                    Label("Next", systemImage: "chevron.right")
+                    Button {
+                        appState.moveFocusedPeriod(direction: 1)
+                    } label: {
+                        Label("Next", systemImage: "chevron.right")
+                    }
+                    .accessibilityLabel("Next period")
+                    .accessibilityIdentifier("toolbar.next")
                 }
-                .accessibilityLabel("Next period")
-                .accessibilityIdentifier("toolbar.next")
             }
 
             ToolbarItem {
-                Text(appState.focusedPeriodTitle)
+                Text(
+                    appState.selectedSection == .tasks
+                        ? "Task Center"
+                        : appState.focusedPeriodTitle
+                )
                     .font(.headline)
                     .monospacedDigit()
             }
 
             ToolbarItem {
-                Button {
-                    Task {
-                        await appState.refreshCalendarData()
+                if appState.selectedSection == .tasks {
+                    Button {
+                        appState.refreshTaskCenter()
+                    } label: {
+                        Label("Reload tasks", systemImage: "arrow.clockwise")
                     }
-                } label: {
-                    Label("Reload events", systemImage: "arrow.clockwise")
+                } else {
+                    Button {
+                        Task {
+                            await appState.refreshCalendarData()
+                        }
+                    } label: {
+                        Label("Reload events", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!appState.calendarAuthorizationState.canReadEvents)
                 }
-                .disabled(!appState.calendarAuthorizationState.canReadEvents)
             }
         }
         .task {
             await appState.loadCalendarStatus()
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
-            Task {
-                await appState.loadCalendarStatus()
+            if phase == .active {
+                Task {
+                    await appState.loadCalendarStatus()
+                    appState.refreshTaskCenter()
+                }
+            } else {
+                appState.flushPendingEventNotes()
             }
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: NSApplication.willTerminateNotification
+            )
+        ) { _ in
+            appState.flushPendingEventNotes()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .NSCalendarDayChanged
+            )
+        ) { _ in
+            appState.refreshTaskCenter()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .NSSystemTimeZoneDidChange
+            )
+        ) { _ in
+            appState.refreshTaskCenter()
         }
     }
 }
@@ -214,35 +253,49 @@ private struct WorkspaceView: View {
 
     @ViewBuilder
     private var statusBadge: some View {
-        switch appState.calendarContentState {
-        case .disconnected:
-            Label("Not connected", systemImage: "link.badge.plus")
-                .foregroundStyle(.secondary)
-        case .loading:
-            ProgressView()
-                .controlSize(.small)
-        case .empty:
-            Text("No events")
-                .foregroundStyle(.secondary)
-        case .loaded:
-            Text("\(appState.visibleEvents.count) events")
-                .foregroundStyle(.secondary)
-        case .permissionDenied:
-            Label("Permission required", systemImage: "exclamationmark.triangle")
-                .foregroundStyle(.orange)
-        case let .failed(message):
-            Label(message, systemImage: "exclamationmark.circle")
-                .foregroundStyle(.red)
+        if appState.selectedSection == .tasks {
+            switch appState.taskCenterState {
+            case .unavailable:
+                Label("Local store unavailable", systemImage: "externaldrive.badge.xmark")
+                    .foregroundStyle(.secondary)
+            case .loading:
+                ProgressView()
+                    .controlSize(.small)
+            case let .loaded(items):
+                Text("\(items.count) tasks")
+                    .foregroundStyle(.secondary)
+            case .failed:
+                Label("Couldn’t load tasks", systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.red)
+            }
+        } else {
+            switch appState.calendarContentState {
+            case .disconnected:
+                Label("Not connected", systemImage: "link.badge.plus")
+                    .foregroundStyle(.secondary)
+            case .loading:
+                ProgressView()
+                    .controlSize(.small)
+            case .empty:
+                Text("No events")
+                    .foregroundStyle(.secondary)
+            case .loaded:
+                Text("\(appState.visibleEvents.count) events")
+                    .foregroundStyle(.secondary)
+            case .permissionDenied:
+                Label("Permission required", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            case let .failed(message):
+                Label(message, systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.red)
+            }
         }
     }
 
     @ViewBuilder
     private var content: some View {
         if appState.selectedSection == .tasks {
-            TaskCenterPlaceholderView(
-                filter: $appState.selectedTaskFilter,
-                storeState: appState.localContextStoreState
-            )
+            TaskCenterView(appState: appState)
         } else {
             switch appState.calendarContentState {
             case .disconnected:
@@ -268,10 +321,7 @@ private struct WorkspaceView: View {
         case .agenda:
             AgendaView(appState: appState)
         case .tasks:
-            TaskCenterPlaceholderView(
-                filter: $appState.selectedTaskFilter,
-                storeState: appState.localContextStoreState
-            )
+            TaskCenterView(appState: appState)
         }
     }
 }
@@ -356,7 +406,7 @@ private struct AgendaView: View {
                 description: Text(appState.focusedPeriodTitle)
             )
         } else {
-            List(selection: $appState.selectedEventID) {
+            List(selection: eventSelection) {
                 ForEach(appState.visibleEvents) { event in
                     AgendaEventRow(event: event, calendar: appState.calendar)
                         .tag(event.id)
@@ -365,6 +415,13 @@ private struct AgendaView: View {
             }
             .listStyle(.inset)
         }
+    }
+
+    private var eventSelection: Binding<String?> {
+        Binding(
+            get: { appState.selectedEventID },
+            set: { appState.selectEvent($0) }
+        )
     }
 }
 
@@ -426,41 +483,6 @@ private struct AgendaEventRow: View {
     }
 }
 
-private struct TaskCenterPlaceholderView: View {
-    @Binding var filter: TaskFilter
-    let storeState: LocalContextStoreState
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("Task filter", selection: $filter) {
-                ForEach(TaskFilter.allCases) { item in
-                    Text(item.title).tag(item)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 420)
-            .padding(16)
-
-            Divider()
-
-            switch storeState {
-            case let .failed(message):
-                ContentUnavailableView(
-                    "Local task storage unavailable",
-                    systemImage: "externaldrive.badge.exclamationmark",
-                    description: Text(message)
-                )
-            case .ready, .unavailable:
-                ContentUnavailableView(
-                    "No \(filter.title.lowercased()) tasks",
-                    systemImage: "checklist",
-                    description: Text("Event tasks and personal tasks are stored locally on this Mac.")
-                )
-            }
-        }
-    }
-}
-
 private struct EventInspectorView: View {
     @ObservedObject var appState: AppState
 
@@ -509,7 +531,7 @@ private struct EventInspectorView: View {
 
                 HStack(spacing: 6) {
                     Text("\(event.sourceTitle) · \(event.calendarTitle)")
-                    Text(event.isReadOnly || event.isInvitation ? "Read-only" : "Editable")
+                    Text(originalEventPermissionText(event))
                 }
                 .font(.caption.weight(.medium))
                 .padding(.horizontal, 8)
@@ -517,7 +539,10 @@ private struct EventInspectorView: View {
                 .background(KaosCalTheme.accentSoft, in: Capsule())
 
                 if event.isInvitation {
-                    Label("Invitation editing stays in Calendar.app", systemImage: "person.crop.circle.badge.exclamationmark")
+                    Label(
+                        "Invitation and RSVP stay in Calendar.app; the local Event Brief remains editable.",
+                        systemImage: "person.crop.circle.badge.exclamationmark"
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -529,31 +554,20 @@ private struct EventInspectorView: View {
             }
 
             Divider()
-
-            briefSection("Before", symbol: "arrow.up.circle")
-            briefSection("During", symbol: "circle")
-            briefSection("After", symbol: "arrow.down.circle")
-
-            Divider()
-
-            Label("Notes", systemImage: "note.text")
-                .font(.headline)
-            Text("Event Brief editing begins in Phase 4. KaosCal data will stay on this Mac.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            EventBriefView(appState: appState, event: event)
+                .id(event.id)
         }
     }
 
-    private func briefSection(_ title: String, symbol: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: symbol)
-                .font(.headline)
-            Text("No items")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+    private func originalEventPermissionText(_ event: DisplayEvent) -> String {
+        if event.isInvitation {
+            return "Invitation · Original in Calendar.app"
         }
+        if event.isReadOnly {
+            return "Calendar event · Read-only"
+        }
+        return "Calendar event · Editable"
     }
-
 }
 
 #if DEBUG

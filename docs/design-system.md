@@ -52,7 +52,7 @@ Event Brief Panel:
 - 선택 일정의 title/time/source
 - Before/During/After
 - KaosCal notes
-- change history 요약
+- change history 요약은 Phase 6에서 추가
 - read-only 설명
 
 Task Center:
@@ -108,6 +108,27 @@ After:
 빈 상태:
 - 과한 설명보다 바로 추가할 수 있는 입력 상태를 제공한다.
 - 병원/회의/출장 템플릿은 Phase 4 이후 검토한다.
+
+### Phase 4 실제 상호작용
+
+- 원본 일정 badge와 `Event Brief · Local editable` badge를 분리한다. read-only·invitation이어도 local Brief 입력은 잠그지 않는다.
+- notes는 700ms debounce로 저장하고 `Waiting to save…`, `Saving…`, `Saved on this Mac`, `Not saved · Retry`를 notes 바로 아래에 표시한다.
+- Before/During/After는 각 섹션에 항상 inline add row를 둔다. task 제목은 Return·focus loss에 저장하고 완료·이동·원본 열기 전에 먼저 commit한다.
+- task checkbox는 원형 outline/filled check를 사용하고 완료 시 제목에 취소선을 표시한다.
+- 개별 task 삭제는 확인 alert를 거치며 `The calendar event will not be changed`를 명시한다. 전체 Brief 삭제 UI는 제공하지 않는다.
+- `due_kind = none` event task는 `Follows event`로 표시한다. Before/During은 시작, After는 종료 시각을 따른다. fixed/relative due editor는 후속 범위다.
+- identity candidate/ambiguous 상태는 빈 Brief로 위장하지 않고 편집을 중단한 safety card와 설명을 표시한다.
+
+### Phase 4 Task Center 실제 상호작용
+
+- toolbar의 날짜 이동 control을 숨기고 `Task Center`와 local reload만 표시한다. 목록 기준일은 사용자가 이동한 calendar focused date가 아니라 현재 시각이다.
+- 상단 segmented control로 Today/Upcoming/Completed를 전환한다.
+- Today는 Overdue/Today/No date, Upcoming은 날짜별, Completed는 최근 완료 group으로 표시한다.
+- row는 checkbox, inline title, task due, event section·원본 일정 범위·calendar/source 또는 `Personal · Local`, due edit, delete 순서다.
+- personal quick-add는 제목·선택 due를 받는다. Upcoming에서는 내일 이후 due가 필수이고, due 변경 시 Today/Upcoming의 해당 목록으로 이동한다.
+- due는 정렬·분류 metadata이며 reminder notification을 생성하지 않는다.
+- event source를 누르면 target range를 불러온 뒤 강한 occurrence match만 Day 화면에서 연다. 못 찾으면 task는 유지하고 오류를 표시한다.
+- loading, empty, query failed를 서로 다른 상태로 표시하며 실패에는 Retry를 제공한다.
 
 ## Source badge
 

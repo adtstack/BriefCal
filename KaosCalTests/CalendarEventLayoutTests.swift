@@ -407,7 +407,7 @@ final class CalendarEventLayoutTests: XCTestCase {
             calendarProvider: provider
         )
         await state.loadCalendarStatus()
-        state.selectedEventID = selected.id
+        state.selectEvent(selected.id)
 
         state.focusedDate = date(2027, 7, 8)
         state.select(.day)

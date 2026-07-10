@@ -14,6 +14,7 @@ final class FakeCalendarProvider: CalendarProviding {
     var requestResult = true
     var calendars: [CalendarSource] = []
     var events: [DisplayEvent] = []
+    var eventsForInterval: ((DateInterval) -> [DisplayEvent])?
     var error: Error?
     private(set) var requestCallCount = 0
     private(set) var listCallCount = 0
@@ -41,7 +42,7 @@ final class FakeCalendarProvider: CalendarProviding {
         fetchCallCount += 1
         lastFetchInterval = interval
         if let error { throw error }
-        return events
+        return eventsForInterval?(interval) ?? events
     }
 
     func sendStoreChanged() {

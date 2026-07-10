@@ -43,8 +43,12 @@ final class PersonalTaskRepository {
 
     func fetch(id: String) throws -> PersonalTask? {
         try database.read { db in
-            try PersonalTask.fetchOne(db, key: id)
+            try fetch(id: id, in: db)
         }
+    }
+
+    func fetch(id: String, in db: Database) throws -> PersonalTask? {
+        try PersonalTask.fetchOne(db, key: id)
     }
 
     func fetch(
@@ -104,15 +108,14 @@ final class PersonalTaskRepository {
         isCompleted: Bool
     ) throws -> PersonalTask? {
         try database.write { db in
-            guard var task = try PersonalTask.fetchOne(db, key: id) else {
+            guard let task = try fetch(id: id, in: db) else {
                 return nil
             }
-            let timestamp = now()
-            task.isCompleted = isCompleted
-            task.completedAt = isCompleted ? timestamp : nil
-            task.updatedAt = timestamp
-            try task.update(db)
-            return task
+            return try setCompleted(
+                task: task,
+                isCompleted: isCompleted,
+                in: db
+            )
         }
     }
 
@@ -126,6 +129,23 @@ final class PersonalTaskRepository {
         try database.read { db in
             try PersonalTask.fetchCount(db)
         }
+    }
+
+    func setCompleted(
+        task existingTask: PersonalTask,
+        isCompleted: Bool,
+        in db: Database
+    ) throws -> PersonalTask {
+        guard existingTask.isCompleted != isCompleted else {
+            return existingTask
+        }
+        var task = existingTask
+        let timestamp = now()
+        task.isCompleted = isCompleted
+        task.completedAt = isCompleted ? timestamp : nil
+        task.updatedAt = timestamp
+        try task.update(db)
+        return task
     }
 
     private func validate(title: String) throws {

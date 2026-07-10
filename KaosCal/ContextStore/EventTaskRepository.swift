@@ -6,6 +6,33 @@ enum ContextStoreError: Error, Equatable {
     case invalidRelativeDue
     case identityConfirmationRequired([String])
     case missingContext(String)
+    case missingEventTask(String)
+    case eventTaskContextMismatch(
+        taskID: String,
+        expectedContextID: String
+    )
+    case missingPersonalTask(String)
+}
+
+extension ContextStoreError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .emptyTitle:
+            "Task title cannot be empty."
+        case .invalidRelativeDue:
+            "The relative due date is invalid."
+        case .identityConfirmationRequired:
+            "Confirm the matching calendar event before changing local data."
+        case let .missingContext(contextID):
+            "The local event context is missing: \(contextID)."
+        case let .missingEventTask(taskID):
+            "The event task is missing: \(taskID)."
+        case let .eventTaskContextMismatch(taskID, expectedContextID):
+            "Event task \(taskID) does not belong to context \(expectedContextID)."
+        case let .missingPersonalTask(taskID):
+            "The personal task is missing: \(taskID)."
+        }
+    }
 }
 
 final class EventTaskRepository {
@@ -45,8 +72,12 @@ final class EventTaskRepository {
 
     func fetch(id: String) throws -> EventTask? {
         try database.read { db in
-            try EventTask.fetchOne(db, key: id)
+            try fetch(id: id, in: db)
         }
+    }
+
+    func fetch(id: String, in db: Database) throws -> EventTask? {
+        try EventTask.fetchOne(db, key: id)
     }
 
     func fetch(
@@ -72,18 +103,18 @@ final class EventTaskRepository {
         sortOrder: Int,
         due: EventTaskDue
     ) throws -> EventTask? {
-        try validate(title: title, due: due)
         return try database.write { db in
-            guard var task = try EventTask.fetchOne(db, key: id) else {
+            guard let task = try fetch(id: id, in: db) else {
                 return nil
             }
-            apply(due: due, to: &task)
-            task.section = section
-            task.title = title
-            task.sortOrder = sortOrder
-            task.updatedAt = now()
-            try task.update(db)
-            return task
+            return try update(
+                task: task,
+                section: section,
+                title: title,
+                sortOrder: sortOrder,
+                due: due,
+                in: db
+            )
         }
     }
 
@@ -93,15 +124,14 @@ final class EventTaskRepository {
         isCompleted: Bool
     ) throws -> EventTask? {
         try database.write { db in
-            guard var task = try EventTask.fetchOne(db, key: id) else {
+            guard let task = try fetch(id: id, in: db) else {
                 return nil
             }
-            let timestamp = now()
-            task.isCompleted = isCompleted
-            task.completedAt = isCompleted ? timestamp : nil
-            task.updatedAt = timestamp
-            try task.update(db)
-            return task
+            return try setCompleted(
+                task: task,
+                isCompleted: isCompleted,
+                in: db
+            )
         }
     }
 
@@ -147,6 +177,64 @@ final class EventTaskRepository {
 
     func insert(task: EventTask, in db: Database) throws {
         try task.insert(db)
+    }
+
+    func update(
+        task existingTask: EventTask,
+        section: EventTaskSection,
+        title: String,
+        sortOrder: Int,
+        due: EventTaskDue,
+        in db: Database
+    ) throws -> EventTask {
+        try validate(title: title, due: due)
+        var task = existingTask
+        apply(due: due, to: &task)
+        task.section = section
+        task.title = title
+        task.sortOrder = sortOrder
+        task.updatedAt = now()
+        try task.update(db)
+        return task
+    }
+
+    func setCompleted(
+        task existingTask: EventTask,
+        isCompleted: Bool,
+        in db: Database
+    ) throws -> EventTask {
+        guard existingTask.isCompleted != isCompleted else {
+            return existingTask
+        }
+        var task = existingTask
+        let timestamp = now()
+        task.isCompleted = isCompleted
+        task.completedAt = isCompleted ? timestamp : nil
+        task.updatedAt = timestamp
+        try task.update(db)
+        return task
+    }
+
+    @discardableResult
+    func delete(task: EventTask, in db: Database) throws -> Bool {
+        try EventTask.deleteOne(db, key: task.id)
+    }
+
+    func nextSortOrder(
+        contextID: String,
+        section: EventTaskSection,
+        in db: Database
+    ) throws -> Int {
+        let maximum = try Int.fetchOne(
+            db,
+            sql: """
+                SELECT MAX(sort_order)
+                FROM event_tasks
+                WHERE context_id = ? AND section = ?
+                """,
+            arguments: [contextID, section.rawValue]
+        )
+        return (maximum ?? -1) + 1
     }
 
     private func validate(

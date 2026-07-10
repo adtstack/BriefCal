@@ -7,6 +7,33 @@ struct EventBriefSnapshot: Equatable {
     let tasks: [EventTask]
 }
 
+enum EventBriefLoadResult: Equatable {
+    case empty
+    case loaded(
+        snapshot: EventBriefSnapshot,
+        basis: EventIdentityMatchBasis
+    )
+    case confirmationRequired(
+        contextIDs: [String],
+        basis: EventIdentityMatchBasis
+    )
+}
+
+struct EventNavigationTarget: Equatable {
+    let contextID: String
+    let link: EventLink
+}
+
+enum EventNavigationResolution: Equatable {
+    case linked(event: DisplayEvent, basis: EventIdentityMatchBasis)
+    case confirmationRequired(
+        eventIDs: [String],
+        basis: EventIdentityMatchBasis
+    )
+    case ambiguous(eventIDs: [String], basis: EventIdentityMatchBasis)
+    case notFound
+}
+
 enum EventIdentityMatchBasis: Equatable {
     case eventIdentifier
     case calendarItemIdentifier
@@ -46,22 +73,36 @@ final class EventContextRepository {
 
     func fetchBrief(contextID: String) throws -> EventBriefSnapshot? {
         try database.read { db in
-            guard let context = try EventContext.fetchOne(db, key: contextID),
-                  let link = try EventLink
-                    .filter(EventLink.Columns.contextID == contextID)
-                    .fetchOne(db) else {
-                return nil
-            }
-            let tasks = try EventTask
-                .filter(EventTask.Columns.contextID == contextID)
-                .fetchAll(db)
-                .sorted(by: Self.taskOrder)
-            return EventBriefSnapshot(
-                context: context,
-                link: link,
-                tasks: tasks
-            )
+            try fetchBrief(contextID: contextID, in: db)
         }
+    }
+
+    func fetchBrief(
+        contextID: String,
+        in db: Database
+    ) throws -> EventBriefSnapshot? {
+        guard let context = try EventContext.fetchOne(db, key: contextID),
+              let link = try fetchLink(contextID: contextID, in: db) else {
+            return nil
+        }
+        let tasks = try EventTask
+            .filter(EventTask.Columns.contextID == contextID)
+            .fetchAll(db)
+            .sorted(by: Self.taskOrder)
+        return EventBriefSnapshot(
+            context: context,
+            link: link,
+            tasks: tasks
+        )
+    }
+
+    func fetchLink(
+        contextID: String,
+        in db: Database
+    ) throws -> EventLink? {
+        try EventLink
+            .filter(EventLink.Columns.contextID == contextID)
+            .fetchOne(db)
     }
 
     func fetchAll() throws -> [EventContext] {
@@ -169,6 +210,115 @@ final class EventContextRepository {
         }
         if !fingerprintMatches.isEmpty {
             return Self.weakResolution(
+                fingerprintMatches,
+                basis: .fingerprint
+            )
+        }
+
+        return .notFound
+    }
+
+    func matchLinkedEvent(
+        link: EventLink,
+        among events: [DisplayEvent]
+    ) throws -> EventNavigationResolution {
+        let candidates = try events.map { event in
+            (event: event, snapshot: try EventLinkSnapshot(event: event))
+        }
+
+        if let identifier = link.eventIdentifier, !identifier.isEmpty {
+            let matches = candidates.filter {
+                $0.snapshot.eventIdentifier == identifier
+                    && Self.occurrenceMatches(
+                        link: link,
+                        eventIsRecurring: $0.event.isRecurring,
+                        occurrenceIdentityKey:
+                            $0.snapshot.occurrenceIdentityKey
+                    )
+            }
+            if let resolution = Self.strongNavigationResolution(
+                matches,
+                basis: .eventIdentifier
+            ) { return resolution }
+        }
+
+        if let identifier = link.calendarItemIdentifier,
+           !identifier.isEmpty {
+            let matches = candidates.filter {
+                $0.snapshot.calendarItemIdentifier == identifier
+                    && Self.occurrenceMatches(
+                        link: link,
+                        eventIsRecurring: $0.event.isRecurring,
+                        occurrenceIdentityKey:
+                            $0.snapshot.occurrenceIdentityKey
+                    )
+            }
+            if let resolution = Self.strongNavigationResolution(
+                matches,
+                basis: .calendarItemIdentifier
+            ) { return resolution }
+        }
+
+        if let identifier = link.calendarItemExternalIdentifier,
+           !identifier.isEmpty {
+            let matches = candidates.filter {
+                $0.snapshot.calendarItemExternalIdentifier == identifier
+                    && $0.snapshot.calendarIdentifier
+                        == link.calendarIdentifier
+                    && Self.occurrenceMatches(
+                        link: link,
+                        eventIsRecurring: $0.event.isRecurring,
+                        occurrenceIdentityKey:
+                            $0.snapshot.occurrenceIdentityKey
+                    )
+            }
+            if let resolution = Self.strongNavigationResolution(
+                matches,
+                basis: .externalIdentifierAndOccurrence
+            ) { return resolution }
+        }
+
+        if link.isRecurring,
+           let seriesIdentifier = link.recurrenceSeriesIdentifier,
+           !seriesIdentifier.isEmpty {
+            let matches = candidates.filter {
+                $0.snapshot.calendarIdentifier == link.calendarIdentifier
+                    && $0.snapshot.recurrenceSeriesIdentifier
+                        == seriesIdentifier
+                    && $0.snapshot.occurrenceIdentityKey
+                        == link.occurrenceIdentityKey
+            }
+            if let resolution = Self.strongNavigationResolution(
+                matches,
+                basis: .recurrenceSeriesAndOccurrence
+            ) { return resolution }
+        }
+
+        let exactSnapshotMatches = candidates.filter {
+            $0.snapshot.calendarIdentifier == link.calendarIdentifier
+                && $0.snapshot.title == link.titleSnapshot
+                && Self.sameInstant(
+                    $0.snapshot.startDate,
+                    link.startSnapshot
+                )
+                && Self.sameInstant(
+                    $0.snapshot.endDate,
+                    link.endSnapshot
+                )
+                && $0.snapshot.location == link.locationSnapshot
+        }
+        if !exactSnapshotMatches.isEmpty {
+            return Self.weakNavigationResolution(
+                exactSnapshotMatches,
+                basis: .exactSnapshot
+            )
+        }
+
+        let fingerprintMatches = candidates.filter {
+            $0.snapshot.fingerprint == link.fingerprint
+        }
+        if !fingerprintMatches.isEmpty {
+            return Self.weakNavigationResolution(
                 fingerprintMatches,
                 basis: .fingerprint
             )
@@ -346,6 +496,50 @@ final class EventContextRepository {
             return .candidate(contextIDs: contextIDs, basis: basis)
         }
         return .ambiguous(contextIDs: contextIDs, basis: basis)
+    }
+
+    private static func strongNavigationResolution(
+        _ candidates: [(event: DisplayEvent, snapshot: EventLinkSnapshot)],
+        basis: EventIdentityMatchBasis
+    ) -> EventNavigationResolution? {
+        let events = uniqueDisplayEvents(candidates)
+        if events.count == 1 {
+            return .linked(event: events[0], basis: basis)
+        }
+        if events.count > 1 {
+            return .ambiguous(
+                eventIDs: events.map(\.id),
+                basis: basis
+            )
+        }
+        return nil
+    }
+
+    private static func weakNavigationResolution(
+        _ candidates: [(event: DisplayEvent, snapshot: EventLinkSnapshot)],
+        basis: EventIdentityMatchBasis
+    ) -> EventNavigationResolution {
+        let events = uniqueDisplayEvents(candidates)
+        if events.count == 1 {
+            return .confirmationRequired(
+                eventIDs: [events[0].id],
+                basis: basis
+            )
+        }
+        return .ambiguous(
+            eventIDs: events.map(\.id),
+            basis: basis
+        )
+    }
+
+    private static func uniqueDisplayEvents(
+        _ candidates: [(event: DisplayEvent, snapshot: EventLinkSnapshot)]
+    ) -> [DisplayEvent] {
+        var seenIDs = Set<String>()
+        return candidates
+            .map { $0.event }
+            .filter { seenIDs.insert($0.id).inserted }
+            .sorted { $0.id < $1.id }
     }
 
     private static func uniqueContextIDs(_ links: [EventLink]) -> [String] {

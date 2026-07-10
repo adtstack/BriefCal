@@ -61,17 +61,51 @@ enum LocalContextStoreState: Equatable {
     case failed(String)
 }
 
+enum EventBriefState: Equatable {
+    case noSelection
+    case unavailable
+    case empty
+    case loaded(EventBriefSnapshot)
+    case confirmationRequired([String])
+    case failed(String)
+}
+
+enum NotesSaveState: Equatable {
+    case idle
+    case pending
+    case saving
+    case saved
+    case failed(String)
+}
+
+enum TaskCenterState: Equatable {
+    case unavailable
+    case loading
+    case loaded([TaskCenterItem])
+    case failed(String)
+}
+
+private struct FailedNotesDraft {
+    let text: String
+    let message: String
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var selectedSection: WorkspaceSection? = .week
-    @Published var selectedTaskFilter: TaskFilter = .today
+    @Published private(set) var selectedTaskFilter: TaskFilter = .today
     @Published var focusedDate: Date
-    @Published var selectedEventID: String?
+    @Published private(set) var selectedEventID: String?
     @Published var calendarContentState: CalendarContentState = .disconnected
     @Published private(set) var calendarAuthorizationState: CalendarAuthorizationState
     @Published private(set) var calendarSources: [CalendarSource] = []
     @Published private(set) var events: [DisplayEvent] = []
     @Published private(set) var localContextStoreState: LocalContextStoreState
+    @Published private(set) var eventBriefState: EventBriefState = .noSelection
+    @Published private(set) var selectedEventNotes = ""
+    @Published private(set) var notesSaveState: NotesSaveState = .idle
+    @Published private(set) var taskCenterState: TaskCenterState = .unavailable
+    @Published private(set) var localOperationError: String?
 
     let calendar: Calendar
     let contextStore: ContextStore?
@@ -79,7 +113,11 @@ final class AppState: ObservableObject {
     private let calendarProvider: CalendarProviding
     private var storeRefreshTask: Task<Void, Never>?
     private var rangeLoadTask: Task<Void, Never>?
+    private var notesSaveTask: Task<Void, Never>?
     private var loadedEventInterval: DateInterval?
+    private var activeBriefEvent: DisplayEvent?
+    private var persistedEventNotes = ""
+    private var failedNotesDrafts: [String: FailedNotesDraft] = [:]
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
@@ -108,6 +146,8 @@ final class AppState: ObservableObject {
         guard let selectedEventID else { return nil }
         return events.first { $0.id == selectedEventID }
     }
+
+    var taskReferenceDate: Date { now() }
 
     var visibleDates: [Date] {
         let section = selectedSection ?? .week
@@ -188,7 +228,365 @@ final class AppState: ObservableObject {
 
     func select(_ section: WorkspaceSection) {
         selectedSection = section
+        if section == .tasks {
+            refreshTaskCenter()
+        }
         visiblePeriodDidChange()
+    }
+
+    func selectTaskFilter(_ filter: TaskFilter) {
+        selectedTaskFilter = filter
+        refreshTaskCenter()
+    }
+
+    func selectEvent(_ id: String?) {
+        let event = id.flatMap { requestedID in
+            events.first { $0.id == requestedID }
+        }
+        let isChangingEvent = activeBriefEvent?.id != event?.id
+
+        guard isChangingEvent else {
+            selectedEventID = event?.id
+            activeBriefEvent = event
+            return
+        }
+        flushPendingEventNotes()
+        notesSaveTask?.cancel()
+        notesSaveTask = nil
+        selectedEventID = event?.id
+        activeBriefEvent = event
+        loadSelectedEventBrief()
+    }
+
+    func reloadSelectedEventBrief() {
+        flushPendingEventNotes()
+        loadSelectedEventBrief()
+    }
+
+    func updateSelectedEventNotes(_ notes: String) {
+        guard let event = activeBriefEvent else { return }
+        selectedEventNotes = notes
+        notesSaveTask?.cancel()
+        notesSaveTask = nil
+
+        guard notes != persistedEventNotes else {
+            failedNotesDrafts.removeValue(forKey: event.id)
+            notesSaveState = .idle
+            return
+        }
+
+        notesSaveState = .pending
+        notesSaveTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 700_000_000)
+            } catch {
+                return
+            }
+            guard !Task.isCancelled,
+                  let self,
+                  self.activeBriefEvent?.id == event.id else {
+                return
+            }
+            self.saveSelectedEventNotesNow()
+        }
+    }
+
+    func flushPendingEventNotes() {
+        notesSaveTask?.cancel()
+        notesSaveTask = nil
+        guard selectedEventNotes != persistedEventNotes,
+              activeBriefEvent != nil else {
+            return
+        }
+        saveSelectedEventNotesNow()
+    }
+
+    func retrySelectedEventNotes() {
+        saveSelectedEventNotesNow()
+    }
+
+    func clearLocalOperationError() {
+        localOperationError = nil
+    }
+
+    func addSelectedEventTask(
+        section: EventTaskSection,
+        title: String
+    ) {
+        performLocalMutation {
+            guard let event = activeBriefEvent,
+                  let contextStore else {
+                throw ContextStoreError.missingContext("selected-event")
+            }
+            flushPendingEventNotes()
+            _ = try contextStore.appendEventTask(
+                for: event,
+                section: section,
+                title: title
+            )
+        }
+    }
+
+    func setSelectedEventTaskCompleted(
+        id taskID: String,
+        isCompleted: Bool
+    ) {
+        performSelectedEventTaskMutation(taskID: taskID) {
+            contextStore, contextID, task in
+            _ = try contextStore.setEventTaskCompleted(
+                contextID: contextID,
+                taskID: task.id,
+                isCompleted: isCompleted
+            )
+        }
+    }
+
+    @discardableResult
+    func renameSelectedEventTask(id taskID: String, title: String) -> Bool {
+        performSelectedEventTaskMutation(taskID: taskID) {
+            contextStore, contextID, task in
+            _ = try contextStore.updateEventTask(
+                contextID: contextID,
+                taskID: task.id,
+                section: task.section,
+                title: title,
+                sortOrder: task.sortOrder,
+                due: Self.duePolicy(for: task)
+            )
+        }
+    }
+
+    func moveSelectedEventTask(
+        id taskID: String,
+        to section: EventTaskSection
+    ) {
+        performSelectedEventTaskMutation(taskID: taskID) {
+            contextStore, contextID, task in
+            _ = try contextStore.updateEventTask(
+                contextID: contextID,
+                taskID: task.id,
+                section: section,
+                title: task.title,
+                sortOrder: task.sortOrder,
+                due: Self.duePolicy(for: task)
+            )
+        }
+    }
+
+    @discardableResult
+    func deleteSelectedEventTask(id taskID: String) -> Bool {
+        performSelectedEventTaskMutation(taskID: taskID) {
+            contextStore, contextID, task in
+            try contextStore.deleteEventTask(
+                contextID: contextID,
+                taskID: task.id
+            )
+        }
+    }
+
+    @discardableResult
+    func createPersonalTask(title: String, dueAt: Date?) -> Bool {
+        let tomorrow = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: now())
+        ) ?? now()
+        if selectedTaskFilter == .upcoming,
+           dueAt.map({ $0 < tomorrow }) ?? true {
+            localOperationError = "Upcoming tasks need a due date of tomorrow or later."
+            return false
+        }
+
+        let didCreate = performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            _ = try contextStore.personalTasks.create(
+                title: title,
+                dueAt: dueAt
+            )
+        }
+        if didCreate, let dueAt, dueAt >= tomorrow,
+           selectedTaskFilter == .today {
+            selectTaskFilter(.upcoming)
+        }
+        return didCreate
+    }
+
+    func setTaskCenterItemCompleted(
+        _ id: TaskCenterItemID,
+        isCompleted: Bool
+    ) {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            _ = try contextStore.setTaskCenterItemCompleted(
+                id: id,
+                isCompleted: isCompleted
+            )
+        }
+    }
+
+    @discardableResult
+    func renameTaskCenterItem(
+        _ id: TaskCenterItemID,
+        title: String
+    ) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            switch id {
+            case let .eventTask(taskID, contextID):
+                guard let task = try contextStore.eventTasks.fetch(id: taskID) else {
+                    throw ContextStoreError.missingEventTask(taskID)
+                }
+                _ = try contextStore.updateEventTask(
+                    contextID: contextID,
+                    taskID: taskID,
+                    section: task.section,
+                    title: title,
+                    sortOrder: task.sortOrder,
+                    due: Self.duePolicy(for: task)
+                )
+            case let .personalTask(taskID):
+                guard let task = try contextStore.personalTasks.fetch(id: taskID) else {
+                    throw ContextStoreError.missingPersonalTask(taskID)
+                }
+                guard try contextStore.personalTasks.update(
+                    id: taskID,
+                    title: title,
+                    notes: task.notes,
+                    dueAt: task.dueAt,
+                    sortOrder: task.sortOrder
+                ) != nil else {
+                    throw ContextStoreError.missingPersonalTask(taskID)
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    func updatePersonalTaskDue(
+        _ id: TaskCenterItemID,
+        dueAt: Date?
+    ) -> Bool {
+        guard case let .personalTask(taskID) = id else {
+            localOperationError = "Only personal tasks have an editable personal due date."
+            return false
+        }
+        let didUpdate = performLocalMutation {
+            guard let contextStore,
+                  let task = try contextStore.personalTasks.fetch(id: taskID) else {
+                throw ContextStoreError.missingPersonalTask(taskID)
+            }
+            guard try contextStore.personalTasks.update(
+                id: taskID,
+                title: task.title,
+                notes: task.notes,
+                dueAt: dueAt,
+                sortOrder: task.sortOrder
+            ) != nil else {
+                throw ContextStoreError.missingPersonalTask(taskID)
+            }
+        }
+        guard didUpdate else { return false }
+
+        let tomorrow = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: calendar.startOfDay(for: now())
+        ) ?? now()
+        if dueAt.map({ $0 >= tomorrow }) ?? false {
+            selectTaskFilter(.upcoming)
+        } else {
+            selectTaskFilter(.today)
+        }
+        return true
+    }
+
+    @discardableResult
+    func deleteTaskCenterItem(_ id: TaskCenterItemID) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            switch id {
+            case let .eventTask(taskID, contextID):
+                try contextStore.deleteEventTask(
+                    contextID: contextID,
+                    taskID: taskID
+                )
+            case let .personalTask(taskID):
+                guard try contextStore.personalTasks.fetch(id: taskID) != nil else {
+                    throw ContextStoreError.missingPersonalTask(taskID)
+                }
+                try contextStore.personalTasks.delete(id: taskID)
+            }
+        }
+    }
+
+    func openOriginalEvent(contextID: String) async {
+        localOperationError = nil
+        guard calendarAuthorizationState.canReadEvents else {
+            localOperationError = "Full calendar access is required to open the original event. The local task was kept."
+            return
+        }
+        guard let contextStore else {
+            localOperationError = "Local task storage is unavailable."
+            return
+        }
+
+        do {
+            guard let target = try contextStore.navigationTarget(
+                contextID: contextID
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            let effectiveRange = target.link.effectiveDateRange(
+                calendar: calendar
+            )
+            let targetDay = calendar.startOfDay(for: effectiveRange.start)
+            let targetEnd = calendar.date(
+                byAdding: .day,
+                value: 1,
+                to: targetDay
+            ) ?? effectiveRange.end
+            let targetInterval = expandedFetchInterval(
+                around: DateInterval(start: targetDay, end: targetEnd)
+            )
+
+            rangeLoadTask?.cancel()
+            rangeLoadTask = nil
+            await refreshCalendarData(in: targetInterval)
+            guard calendarContentState == .loaded
+                    || calendarContentState == .empty else {
+                localOperationError = "The original calendar event could not be loaded. The local task was kept."
+                return
+            }
+
+            switch try contextStore.matchLinkedEvent(
+                contextID: contextID,
+                among: events
+            ) {
+            case let .linked(event, _):
+                focusedDate = calendar.startOfDay(
+                    for: CalendarEventDateFormatting.effectiveDateRange(
+                        for: event,
+                        calendar: calendar
+                    ).start
+                )
+                selectedSection = .day
+                selectEvent(event.id)
+            case .confirmationRequired, .ambiguous:
+                localOperationError = "KaosCal found similar events but will not choose one automatically. The local task was kept."
+            case .notFound:
+                localOperationError = "Calendar event unavailable in the stored date range. The local task was kept."
+            }
+        } catch {
+            localOperationError = Self.message(for: error)
+        }
     }
 
     func goToToday() {
@@ -285,10 +683,14 @@ final class AppState: ObservableObject {
             loadedEventInterval = interval
 
             if let selectedEventID, !fetchedEvents.contains(where: { $0.id == selectedEventID }) {
-                self.selectedEventID = nil
+                selectEvent(nil)
+            } else if let selectedEventID {
+                selectEvent(selectedEventID)
+                refreshSelectedBriefPreservingDraft()
             }
             clearSelectionOutsideVisiblePeriod()
             calendarContentState = fetchedEvents.isEmpty ? .empty : .loaded
+            refreshTaskCenter()
         } catch {
             calendarContentState = .failed(Self.message(for: error))
         }
@@ -317,6 +719,178 @@ final class AppState: ObservableObject {
         }
     }
 
+    func refreshTaskCenter() {
+        guard let contextStore else {
+            taskCenterState = .unavailable
+            return
+        }
+        taskCenterState = .loading
+        do {
+            let list: TaskCenterList = switch selectedTaskFilter {
+            case .today: .today
+            case .upcoming: .upcoming
+            case .completed: .completed
+            }
+            let items = try contextStore.taskCenter.fetch(
+                list: list,
+                now: now(),
+                calendar: calendar
+            )
+            taskCenterState = .loaded(items)
+        } catch {
+            taskCenterState = .failed(Self.message(for: error))
+        }
+    }
+
+    private func loadSelectedEventBrief() {
+        guard let event = activeBriefEvent else {
+            eventBriefState = .noSelection
+            selectedEventNotes = ""
+            persistedEventNotes = ""
+            notesSaveState = .idle
+            return
+        }
+        guard let contextStore else {
+            eventBriefState = .unavailable
+            selectedEventNotes = ""
+            persistedEventNotes = ""
+            notesSaveState = .idle
+            return
+        }
+
+        do {
+            let result = try contextStore.loadBrief(for: event)
+            applyBriefLoadResult(result, eventID: event.id)
+        } catch {
+            eventBriefState = .failed(Self.message(for: error))
+        }
+    }
+
+    private func refreshSelectedBriefPreservingDraft() {
+        let draft = selectedEventNotes
+        let saveState = notesSaveState
+        let shouldPreserveDraft = draft != persistedEventNotes
+        loadSelectedEventBrief()
+        guard shouldPreserveDraft else { return }
+        selectedEventNotes = draft
+        notesSaveState = saveState
+    }
+
+    private func applyBriefLoadResult(
+        _ result: EventBriefLoadResult,
+        eventID: String
+    ) {
+        switch result {
+        case .empty:
+            eventBriefState = .empty
+            persistedEventNotes = ""
+        case let .loaded(snapshot, _):
+            eventBriefState = .loaded(snapshot)
+            persistedEventNotes = snapshot.context.notes
+        case let .confirmationRequired(contextIDs, _):
+            eventBriefState = .confirmationRequired(contextIDs)
+            persistedEventNotes = ""
+        }
+
+        if let failedDraft = failedNotesDrafts[eventID] {
+            selectedEventNotes = failedDraft.text
+            notesSaveState = .failed(failedDraft.message)
+        } else {
+            selectedEventNotes = persistedEventNotes
+            notesSaveState = .idle
+        }
+    }
+
+    private func saveSelectedEventNotesNow() {
+        guard let event = activeBriefEvent,
+              let contextStore else {
+            return
+        }
+        let draft = selectedEventNotes
+        guard draft != persistedEventNotes else {
+            notesSaveState = .idle
+            return
+        }
+
+        notesSaveState = .saving
+        do {
+            _ = try contextStore.saveNotes(for: event, notes: draft)
+            failedNotesDrafts.removeValue(forKey: event.id)
+            let result = try contextStore.loadBrief(for: event)
+            applyBriefLoadResult(result, eventID: event.id)
+            notesSaveState = .saved
+        } catch {
+            let message = Self.message(for: error)
+            selectedEventNotes = draft
+            failedNotesDrafts[event.id] = FailedNotesDraft(
+                text: draft,
+                message: message
+            )
+            notesSaveState = .failed(message)
+        }
+    }
+
+    @discardableResult
+    private func performSelectedEventTaskMutation(
+        taskID: String,
+        operation: (
+            _ contextStore: ContextStore,
+            _ contextID: String,
+            _ task: EventTask
+        ) throws -> Void
+    ) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingContext("selected-event")
+            }
+            guard case let .loaded(snapshot) = eventBriefState else {
+                throw ContextStoreError.missingEventTask(taskID)
+            }
+            guard let task = snapshot.tasks.first(where: { $0.id == taskID }) else {
+                throw ContextStoreError.missingEventTask(taskID)
+            }
+            try operation(contextStore, snapshot.context.id, task)
+        }
+    }
+
+    @discardableResult
+    private func performLocalMutation(
+        _ operation: () throws -> Void
+    ) -> Bool {
+        localOperationError = nil
+        flushPendingEventNotes()
+        do {
+            try operation()
+            loadSelectedEventBrief()
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    private static func duePolicy(for task: EventTask) -> EventTaskDue {
+        switch task.dueKind {
+        case .none:
+            return .none
+        case .relative:
+            guard let anchor = task.relativeAnchor,
+                  let offsetMinutes = task.offsetMinutes else {
+                return .none
+            }
+            return .relative(
+                anchor: anchor,
+                offsetMinutes: offsetMinutes
+            )
+        case .fixed:
+            guard let fixedDueAt = task.fixedDueAt else {
+                return .none
+            }
+            return .fixed(fixedDueAt)
+        }
+    }
+
     private func visiblePeriodDidChange() {
         clearSelectionOutsideVisiblePeriod()
         scheduleVisiblePeriodLoadIfNeeded()
@@ -325,7 +899,7 @@ final class AppState: ObservableObject {
     private func clearSelectionOutsideVisiblePeriod() {
         guard let selectedEventID else { return }
         if !visibleEvents.contains(where: { $0.id == selectedEventID }) {
-            self.selectedEventID = nil
+            selectEvent(nil)
         }
     }
 
@@ -349,9 +923,9 @@ final class AppState: ObservableObject {
 
     private func clearCalendarData() {
         rangeLoadTask?.cancel()
+        selectEvent(nil)
         calendarSources = []
         events = []
-        selectedEventID = nil
         loadedEventInterval = nil
     }
 

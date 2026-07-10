@@ -11,7 +11,7 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 - Phase 1: **실계정 검증 중** — 코드·15개 자동 테스트·ad-hoc 서명 검증 완료, full access 사용자 승인 및 `KAOS-TEST` 확인 대기
 - Phase 2: **구현·자동 검증 완료 / 실계정 UI 검증 중** — Day/Week/Agenda 공통 범위, 실제 시간·종일 배치, 33개 전체 테스트, Release·서명 build, offscreen 렌더 검증 완료
 - Phase 3: **완료** — GRDB v1 migration, 앱 bootstrap, Event Brief/task repository, identity resolver, 파일 재열기·동시 저장, 54-test 전체 회귀, Release·서명 Debug 검증 완료
-- Phase 4: **진행 중** — Event Brief와 Task Center 실제 편집·완료 UX
+- Phase 4: **구현·자동·빌드·서명·fixture 시각 검증 완료 / 수동 gate 대기** — notes autosave, event/personal task CRUD·완료·due, typed Task Center, strong-only 원본 탐색 구현; 전체 75 tests와 Release·서명 Debug·strict codesign 통과
 - Phase 5~10: 대기
 
 ## Phase 표
@@ -136,6 +136,17 @@ Definition of Done:
 - 완료 체크 상태 저장
 - 일정 선택 전환 시 올바른 Brief 로드
 - Task Center에서 event-linked task의 원본 일정을 열 수 있음
+
+현재 판정:
+- Event Brief 구현: 선택만으로 row를 만들지 않고 Before/During/After inline add·rename·move·complete·delete와 local notes를 제공
+- notes 안전성 구현: 700ms debounce, 선택·local mutation·inactive·종료 전 flush, 동일 일정 refresh draft 보존, 실패 draft와 Retry
+- Task Center 구현: typed event/personal ID, Today/Upcoming/Completed, 개인 task 생성·rename·due 수정/제거·complete·delete, 날짜·시간대 변경 refresh
+- 연결 안전성 구현: candidate/ambiguous 편집 차단, target range fetch 전 이전 range task 취소, strong identifier+occurrence가 하나일 때만 원본 선택
+- 권한 구분 구현: read-only/invitation 원본 badge와 `Event Brief · Local editable`을 분리하고 Phase 4에서 EventKit write control을 제공하지 않음
+- 자동·빌드·서명 gate 통과: 집중 ContextStore 25 tests와 LocalWorkspace 15 tests에 이어 전체 **75 tests, 0 failures, 0 unexpected**; unsigned Release와 ad-hoc signed Debug build, strict codesign, app sandbox·Calendar entitlement·full-access usage description 확인
+- fixture 시각 점검 통과: 실제 DB·EventKit과 분리한 메모리 DB·가짜 provider의 1360×840 offscreen 창에서 초대 원본 안내, local editable badge, Before/During/After·notes, Overdue/Today/No date와 event/personal row의 잘림 없는 핵심 레이아웃 확인
+- 수동 gate/이월: 실제 서명 앱 창의 scroll·keyboard focus·popover·삭제 확인, 종료·재실행 유지, `KAOS-TEST` 원본 occurrence 탐색과 Viewer/KC-E6 local-only 동작
+- 후속 이월: event task fixed/relative due editor, reminder notification, relink/orphan UI, 원본 일정 편집
 
 ## Phase 5: Real Event Editing
 

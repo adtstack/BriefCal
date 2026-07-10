@@ -52,11 +52,14 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 1. 기존 일정을 선택한다.
 2. Before task를 추가한다.
 3. After task를 추가한다.
-4. notes를 작성한다.
-5. 앱을 종료 후 재실행한다.
+4. notes를 작성하고 700ms 이내에 다른 일정으로 전환한다.
+5. 다시 선택해 task 제목을 편집한 채 완료·section 이동을 실행한다.
+6. 앱을 inactive로 보낸 뒤 종료·재실행한다.
 
 기대 결과:
 - 체크리스트와 notes가 유지된다.
+- pending notes와 편집 중 task 제목이 화면 전환·완료·이동 전에 저장된다.
+- notes 저장 실패 시 draft와 Retry가 남고 빈 상태로 위장하지 않는다.
 - 같은 원본 일정에 같은 Event Brief가 연결된다.
 - Calendar.app의 원본 notes에는 KaosCal 체크리스트가 쓰이지 않는다.
 
@@ -194,10 +197,16 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 절차:
 1. Before/After event task와 Personal task를 만든다.
 2. 오늘, 예정, 완료 목록을 차례로 연다.
-3. event task를 클릭해 연결 일정을 연다.
+3. personal due를 미래 날짜로 바꿨다가 제거한다.
+4. event task 제목을 편집한 채 연결 일정을 연다.
+5. 자정 또는 system time zone 변경 알림 뒤 목록을 확인한다.
 
 기대 결과:
 - event task와 personal task가 출처를 잃지 않고 한 목록에 표시된다.
+- event task에는 task due와 별도로 section·원본 일정 시간·calendar/source가 표시된다.
+- personal due 변경에 따라 Today/Upcoming으로 이동하고 due 없음은 Today에 포함된다.
+- target range 밖 일정은 해당 범위를 fetch한 뒤 강한 occurrence match일 때만 열린다.
+- weak/ambiguous/not-found이면 다른 일정을 열지 않고 local task와 오류 안내를 유지한다.
 - 완료 상태와 기한이 앱 재실행 후에도 유지된다.
 - Task Center 데이터는 EventKit/Exchange에 쓰이지 않는다.
 
@@ -255,9 +264,28 @@ Phase 3에서 구현·통과한 항목:
 - AppState fetch→ContextStore batch observe 연동
 - hosted XCTest가 live Application Support DB를 열지 않는 bootstrap 격리
 
-Phase 4 이후 후보:
+Phase 4에서 구현·자동 회귀 통과한 항목:
 
-- Event Brief/Task Center UI CRUD와 완료 상호작용
+- lazy Brief load와 candidate/ambiguous 편집 차단
+- notes debounce, 선택·mutation 전 flush, 동일 일정 refresh draft 보존
+- event task add/rename/move/complete/delete와 action 전 title commit
+- 일정 선택 뒤 사라지는 이전 Event Brief row도 typed task/context ID로 제목 저장
+- typed Task Center ID의 event/personal completion routing과 동일 raw ID 충돌
+- personal task create/rename/due update·remove/complete/delete와 Today/Upcoming 이동
+- 완료 toggle의 `completed_at` 멱등성
+- event-linked target range fetch, stale range task 취소, strong-only occurrence 선택
+- EventKit move 뒤 Brief snapshot·Task Center default due 갱신과 pending draft 보존
+- read-only/invitation의 local-only notes/task mutation
+- injected clock day-boundary refresh와 display calendar 기반 날짜 문자열
+- 전체 **75 tests, 0 failures, 0 unexpected**
+- unsigned Release, ad-hoc signed Debug, strict codesign, app sandbox·Calendar entitlement·usage description
+- in-memory DB·fake provider 1360×840 fixture의 invitation/local badge, Before/During/After·notes와 Overdue/Today/No date·event/personal row 핵심 레이아웃
+
+Phase 4 수동 gate와 이후 후보:
+
+- 실제 SwiftUI 창에서 focus loss·delete confirmation·popover·VoiceOver 상호작용
+- app 종료·재실행과 실제 `KAOS-TEST` event-linked navigation 수동 흐름
+- event task fixed/relative due 편집 UI와 notification/reminder 정책
 - ChangeLogRepository append/query
 - MoveEventUseCase confirmation과 context_id 보존
 - missing/orphaned lifecycle 전환과 relink UI

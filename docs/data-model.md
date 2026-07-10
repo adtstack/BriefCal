@@ -28,7 +28,7 @@ KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 ## 표시 모델과 영속 모델
 
-Phase 3는 EventKit 객체를 UI 값 snapshot으로 분리하고, 필요한 연결·맥락만 SQLite에 영속화한다.
+Phase 4는 EventKit 객체를 UI 값 snapshot으로 분리하고, 필요한 연결·맥락만 SQLite에 영속화하며 두 local 편집 화면의 projection을 AppState에서 조정한다.
 
 | 값 | 역할 | 영속 모델과의 차이 |
 | --- | --- | --- |
@@ -169,6 +169,21 @@ create table app_settings (
 - `personal_tasks` 테이블을 별도로 둔다. `id`, `title`, `notes`, `due_at`, `completed`, `sort_order`, `created_at`, `updated_at`, `completed_at`을 최소 필드로 사용한다.
 - personal task는 EventKit/Exchange에 동기화하지 않는다.
 
+`due_kind = none`인 event task도 Task Center에서 파생 due를 가진다. Before/During은 저장된 event 시작, After는 event 종료를 사용한다. all-day 종료는 배타 범위이므로 After 기본 due가 마지막 표시 날짜의 다음 날이 될 수 있다. 이 값은 notification/reminder가 아니라 목록 분류와 정렬 기준이다.
+
+Phase 4의 `TaskCenterItem`은 저장 record가 아닌 read projection이며 backing identity를 타입으로 유지한다.
+
+```swift
+enum TaskCenterItemID {
+    case eventTask(taskID: String, contextID: String)
+    case personalTask(taskID: String)
+}
+```
+
+event source projection에는 section, event title, calendar/source, effective event start/end, all-day 여부가 포함된다. UI는 task due와 원본 event range를 구분해 표시한다. 문자열 `event:<id>`/`personal:<id>` parsing은 mutation에 사용하지 않는다.
+
+Personal task due는 생성 뒤 수정하거나 제거할 수 있다. due 없음과 내일 시작 전은 Today, 내일 이후는 Upcoming이다. 완료 task는 due와 무관하게 Completed에 남는다.
+
 ## Status values
 
 `event_contexts.lifecycle_status`:
@@ -248,6 +263,9 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - identity resolution과 첫 context/link 생성의 transaction 경계
 - EventKit fetch 관찰 시 강한 link snapshot refresh
 - weak candidate의 자동 연결 차단
+- lazy Brief load와 context-scoped event task mutation
+- side-effect-free navigation target read와 strong-only inverse event match
+- typed Task Center completion routing과 missing/context mismatch 방어
 
 `EventTaskRepository`:
 - task 생성, 수정, 삭제
@@ -261,6 +279,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 
 `TaskCenterRepository`:
 - event task와 personal task를 한 DB read에서 결합
+- typed backing task identity와 event section/effective range projection
 - `Today`: 미완료이며 내일 시작 전 due 또는 due 없음. overdue를 포함
 - `Upcoming`: 미완료이며 내일 시작 이후 due
 - `Completed`: event/personal 완료 항목을 완료 시각 역순으로 결합

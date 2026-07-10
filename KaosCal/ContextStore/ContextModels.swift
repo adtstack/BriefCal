@@ -322,24 +322,57 @@ enum PersonalTaskList: Equatable {
     case completed
 }
 
+enum TaskCenterItemID: Hashable, Comparable {
+    case eventTask(taskID: String, contextID: String)
+    case personalTask(taskID: String)
+
+    static func < (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case let (
+            .eventTask(lhsTaskID, lhsContextID),
+            .eventTask(rhsTaskID, rhsContextID)
+        ):
+            if lhsContextID != rhsContextID {
+                return lhsContextID < rhsContextID
+            }
+            return lhsTaskID < rhsTaskID
+        case (.eventTask, .personalTask):
+            return true
+        case (.personalTask, .eventTask):
+            return false
+        case let (.personalTask(lhsTaskID), .personalTask(rhsTaskID)):
+            return lhsTaskID < rhsTaskID
+        }
+    }
+}
+
 enum TaskCenterItemSource: Equatable {
     case event(
         contextID: String,
+        section: EventTaskSection,
         eventTitle: String,
         calendarTitle: String,
-        sourceTitle: String
+        sourceTitle: String,
+        eventStart: Date,
+        eventEnd: Date,
+        isAllDay: Bool
     )
     case personal
 }
 
 struct TaskCenterItem: Equatable, Identifiable {
-    let id: String
+    let id: TaskCenterItemID
     let title: String
     let isCompleted: Bool
     let dueAt: Date?
     let completedAt: Date?
     let sortOrder: Int
     let source: TaskCenterItemSource
+}
+
+enum TaskCenterCompletionResult: Equatable {
+    case eventTask(EventTask)
+    case personalTask(PersonalTask)
 }
 
 enum TaskCenterList: Equatable {

@@ -47,6 +47,70 @@ final class ContextStore {
         }
     }
 
+    func loadBrief(for event: DisplayEvent) throws -> EventBriefLoadResult {
+        try database.write { db in
+            switch try eventContexts.resolve(event: event, in: db) {
+            case let .linked(contextID, basis):
+                guard try eventContexts.updateSnapshot(
+                    contextID: contextID,
+                    event: event,
+                    notes: nil,
+                    in: db
+                ) != nil,
+                let snapshot = try eventContexts.fetchBrief(
+                    contextID: contextID,
+                    in: db
+                ) else {
+                    throw ContextStoreError.missingContext(contextID)
+                }
+                return .loaded(snapshot: snapshot, basis: basis)
+            case .notFound:
+                return .empty
+            case let .candidate(contextIDs, basis),
+                 let .ambiguous(contextIDs, basis):
+                return .confirmationRequired(
+                    contextIDs: contextIDs,
+                    basis: basis
+                )
+            }
+        }
+    }
+
+    func navigationTarget(
+        contextID: String
+    ) throws -> EventNavigationTarget? {
+        try database.read { db in
+            guard let link = try eventContexts.fetchLink(
+                contextID: contextID,
+                in: db
+            ) else {
+                return nil
+            }
+            return EventNavigationTarget(
+                contextID: contextID,
+                link: link
+            )
+        }
+    }
+
+    func matchLinkedEvent(
+        contextID: String,
+        among events: [DisplayEvent]
+    ) throws -> EventNavigationResolution {
+        try database.read { db in
+            guard let link = try eventContexts.fetchLink(
+                contextID: contextID,
+                in: db
+            ) else {
+                return .notFound
+            }
+            return try eventContexts.matchLinkedEvent(
+                link: link,
+                among: events
+            )
+        }
+    }
+
     @discardableResult
     func saveNotes(
         for event: DisplayEvent,
@@ -93,9 +157,149 @@ final class ContextStore {
         sortOrder: Int,
         due: EventTaskDue = .none
     ) throws -> EventTask {
+        try persistEventTask(
+            for: event,
+            section: section,
+            title: title,
+            requestedSortOrder: sortOrder,
+            due: due
+        )
+    }
+
+    func appendEventTask(
+        for event: DisplayEvent,
+        section: EventTaskSection,
+        title: String,
+        due: EventTaskDue = .none
+    ) throws -> EventTask {
+        try persistEventTask(
+            for: event,
+            section: section,
+            title: title,
+            requestedSortOrder: nil,
+            due: due
+        )
+    }
+
+    func updateEventTask(
+        contextID: String,
+        taskID: String,
+        section: EventTaskSection,
+        title: String,
+        sortOrder: Int,
+        due: EventTaskDue
+    ) throws -> EventTask {
+        try database.write { db in
+            let task = try checkedEventTask(
+                contextID: contextID,
+                taskID: taskID,
+                in: db
+            )
+            return try eventTasks.update(
+                task: task,
+                section: section,
+                title: title,
+                sortOrder: sortOrder,
+                due: due,
+                in: db
+            )
+        }
+    }
+
+    func setEventTaskCompleted(
+        contextID: String,
+        taskID: String,
+        isCompleted: Bool
+    ) throws -> EventTask {
+        try database.write { db in
+            let task = try checkedEventTask(
+                contextID: contextID,
+                taskID: taskID,
+                in: db
+            )
+            return try eventTasks.setCompleted(
+                task: task,
+                isCompleted: isCompleted,
+                in: db
+            )
+        }
+    }
+
+    func deleteEventTask(
+        contextID: String,
+        taskID: String
+    ) throws {
+        try database.write { db in
+            let task = try checkedEventTask(
+                contextID: contextID,
+                taskID: taskID,
+                in: db
+            )
+            guard try eventTasks.delete(task: task, in: db) else {
+                throw ContextStoreError.missingEventTask(taskID)
+            }
+        }
+    }
+
+    func setPersonalTaskCompleted(
+        taskID: String,
+        isCompleted: Bool
+    ) throws -> PersonalTask {
+        try database.write { db in
+            guard let task = try personalTasks.fetch(id: taskID, in: db) else {
+                throw ContextStoreError.missingPersonalTask(taskID)
+            }
+            return try personalTasks.setCompleted(
+                task: task,
+                isCompleted: isCompleted,
+                in: db
+            )
+        }
+    }
+
+    func setTaskCenterItemCompleted(
+        id: TaskCenterItemID,
+        isCompleted: Bool
+    ) throws -> TaskCenterCompletionResult {
+        switch id {
+        case let .eventTask(taskID, contextID):
+            return .eventTask(
+                try setEventTaskCompleted(
+                    contextID: contextID,
+                    taskID: taskID,
+                    isCompleted: isCompleted
+                )
+            )
+        case let .personalTask(taskID):
+            return .personalTask(
+                try setPersonalTaskCompleted(
+                    taskID: taskID,
+                    isCompleted: isCompleted
+                )
+            )
+        }
+    }
+
+    private func persistEventTask(
+        for event: DisplayEvent,
+        section: EventTaskSection,
+        title: String,
+        requestedSortOrder: Int?,
+        due: EventTaskDue
+    ) throws -> EventTask {
         try database.write { db in
             switch try eventContexts.resolve(event: event, in: db) {
             case let .linked(contextID, _):
+                let sortOrder: Int
+                if let requestedSortOrder {
+                    sortOrder = requestedSortOrder
+                } else {
+                    sortOrder = try eventTasks.nextSortOrder(
+                        contextID: contextID,
+                        section: section,
+                        in: db
+                    )
+                }
                 let task = try eventTasks.makeTask(
                     contextID: contextID,
                     section: section,
@@ -118,6 +322,7 @@ final class ContextStore {
                     for: event,
                     notes: ""
                 )
+                let sortOrder = requestedSortOrder ?? 0
                 let task = try eventTasks.makeTask(
                     contextID: records.context.id,
                     section: section,
@@ -139,6 +344,23 @@ final class ContextStore {
                 )
             }
         }
+    }
+
+    private func checkedEventTask(
+        contextID: String,
+        taskID: String,
+        in db: Database
+    ) throws -> EventTask {
+        guard let task = try eventTasks.fetch(id: taskID, in: db) else {
+            throw ContextStoreError.missingEventTask(taskID)
+        }
+        guard task.contextID == contextID else {
+            throw ContextStoreError.eventTaskContextMismatch(
+                taskID: taskID,
+                expectedContextID: contextID
+            )
+        }
+        return task
     }
 
     private func resolveAndRefresh(
