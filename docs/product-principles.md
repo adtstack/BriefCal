@@ -3,7 +3,7 @@
 ## 제품 진실
 
 KaosCal은 사용자를 대신해서 하루를 결정하는 AI 스케줄러가 아니다.
-KaosCal은 사용자가 직접 일정을 관리할 때 준비물, 체크리스트, 메모, 후속 작업, 변경 기록, 캘린더 출처를 잃지 않게 해주는 macOS-first local-first calendar다.
+KaosCal은 사용자가 직접 일정을 관리할 때 준비물, 체크리스트, 메모, 후속 작업, 변경 기록, 개인 할 일, 캘린더 출처를 잃지 않게 해주는 macOS-first local-first calendar다.
 
 ## 한 줄 정의
 
@@ -11,7 +11,7 @@ KaosCal은 사용자가 직접 일정을 관리할 때 준비물, 체크리스�
 
 ## v1 제품 약속
 
-KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일정에 KaosCal만의 Event Brief를 로컬로 붙인다.
+KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일정에 KaosCal만의 Event Brief를 로컬로 붙인다. Day, Week, Agenda와 Task Center는 하나의 흐름으로 동작한다.
 사용자는 병원, 회의, 출장, 행정 일정처럼 준비와 후속 작업이 필요한 일정을 더 안전하게 관리할 수 있어야 한다.
 
 ## 핵심 사용자
@@ -19,7 +19,7 @@ KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일
 - Mac을 주 작업 기기로 쓰는 개인 사용자
 - 회사/개인/가족 캘린더를 함께 쓰는 사용자
 - 준비물과 후속 작업이 많은 일정을 자주 관리하는 사용자
-- 투두 앱 전체는 부담스럽지만 일정에 붙은 체크리스트는 필요한 사용자
+- 일정에 붙은 체크리스트와 한눈에 보는 개인 할 일 목록이 모두 필요한 사용자
 - 구독, 계정 가입, 서버 의존을 원하지 않는 사용자
 
 ## 제품 원칙
@@ -30,18 +30,21 @@ KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일
 | 2 | 사용자가 직접 바꿀 때 실수하지 않게 돕는다. | 이동, 취소, 삭제, 반복 변경 전 영향 범위를 보여준다. |
 | 3 | 일정의 시간보다 맥락을 더 오래 보존한다. | 원본 일정이 삭제되어도 Event Brief는 즉시 삭제하지 않는다. |
 | 4 | 캘린더 출처와 권한을 숨기지 않는다. | source, calendar role, editable/read-only 상태를 명확히 표시한다. |
-| 5 | 할 일 앱이 아니라 event-centric workflow를 만든다. | 프로젝트, inbox, priority matrix는 v1에 넣지 않는다. |
+| 5 | 일정 중심이되 할 일 목록을 숨기지 않는다. | Event task와 가벼운 Personal task를 Task Center에 모으되, 프로젝트·팀 협업·Kanban은 넣지 않는다. |
 | 6 | 구독 없이 살 수 있는 앱이어야 한다. | 서버 의존 기능은 v1 범위 밖으로 둔다. |
 | 7 | 로컬 우선이다. | KaosCal 맥락 데이터는 이 Mac의 Application Support 아래 SQLite에 저장한다. |
 
 ## v1에 반드시 들어가는 것
 
 - EventKit 권한 요청과 캘린더 목록 표시
-- Week view, Day view, Agenda view의 기본 골격
+- Day view, Week view, Agenda view의 완성된 공통 흐름
 - 일정 생성, 수정, 삭제의 기본 기능
+- 종일 일정, 시간대가 있는 일정, floating 일정의 표시와 안전한 편집
+- 반복 occurrence 표시와 기본 반복 규칙 편집
 - 오른쪽 Event Brief 패널
 - Before, During, After 체크리스트
 - KaosCal local notes
+- Event task와 Personal task를 보여 주는 Task Center
 - 일정 이동 시 연결 항목 이동 확인
 - 일정 완료 후 After 작업 확인
 - 캘린더 출처, 역할, 읽기 전용 상태 표시
@@ -56,8 +59,9 @@ KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일
 - Microsoft Graph 직접 연동
 - CalDAV/iCloud 직접 sync engine
 - 모바일 앱
-- 완전한 반복 일정 편집
-- 프로젝트 관리 앱 또는 전체 투두 앱
+- Exchange Tasks 또는 Apple Reminders 직접 동기화
+- 프로젝트 관리 앱, 팀 할 일, Kanban
+- 초대 일정 RSVP·참석자·주최자 관리
 - 서버 기반 KaosCal Cloud
 
 ## 핵심 데모
@@ -69,7 +73,8 @@ KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일
 5. KaosCal이 연결된 체크리스트, 메모, 후속 작업, 변경 기록이 함께 유지된다는 확인을 보여준다.
 6. 이동 후에도 같은 Event Brief가 유지된다.
 7. 일정 시간이 지나면 After Review에서 후속 작업만 따로 확인할 수 있다.
-8. 상세에는 "Personal Google · Editable" 같은 출처와 권한이 명확히 보인다.
+8. 상세에는 "Work Exchange · Editable" 같은 출처와 권한이 명확히 보인다.
+9. Task Center에서 일정 작업과 개인 작업을 오늘 기준으로 함께 확인한다.
 
 ## 기능 판단 질문
 
@@ -78,11 +83,11 @@ KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일
 - 병원 일정 데모를 더 완성도 있게 만드는가?
 - Event Brief가 일정과 함께 안전하게 유지되는 데 기여하는가?
 - 멀티 캘린더 출처와 권한을 더 명확하게 만드는가?
+- Task Center에서 오늘 해야 할 일을 더 명확하게 만드는가?
 - local-first, no account, no subscription 포지션을 해치지 않는가?
 - v1을 더 빨리 검증하게 만드는가?
 
 ## 브랜드 톤
 
 KaosCal은 calendar chaos를 정리한다는 이름을 가지지만, UI와 문구는 장난스럽거나 공격적이면 안 된다.
-제품 톤은 Calm Pro Calendar다. 차분하고 단단하며, 바쁜 사용자가 빠르게 읽고 판단할 수 있어야 한다.
-
+제품 톤은 Calm Pro Calendar다. BusyCal의 정보 밀도와 작업 흐름은 참고하되, 색·아이콘·레이아웃은 KaosCal 고유 디자인으로 만든다.

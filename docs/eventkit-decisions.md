@@ -5,10 +5,14 @@
 KaosCal v1은 직접 sync engine을 만들지 않고 EventKit을 통해 macOS Calendar와 연결한다.
 이 문서는 EventKit 사용에서 제품 품질과 데이터 안전성에 영향을 주는 결정을 고정한다.
 
+최신 범위와 대체 이력은 [ADR](adr/README.md)을 우선한다.
+
 ## 결정 1: EventKit은 원본 일정의 유일한 v1 입출력 계층이다
 
 v1에서는 Google Calendar API, Microsoft Graph, CalDAV, iCloud API를 직접 구현하지 않는다.
 사용자는 macOS System Settings와 Calendar.app에 이미 연결된 계정을 통해 일정을 사용한다.
+
+Exchange 우선 지원 범위는 macOS Calendar에 구성된 Exchange Online calendar다. 온프레미스 Exchange는 실제 호환성 검증 전까지 지원을 약속하지 않는다.
 
 이유:
 - v1의 차별점은 sync coverage가 아니라 Event Brief다.
@@ -41,6 +45,8 @@ Before/During/After 체크리스트, KaosCal notes, change log, Event Brief 상�
 - write-only 또는 제한된 접근 상태가 있는 OS 버전
 - unknown future status
 
+macOS 14 이상에서 KaosCal은 `requestFullAccessToEvents`를 사용한다. 일정 목록을 읽어 Day/Week/Agenda를 표시해야 하므로 write-only access는 기능을 충족하지 못한다. sandbox 빌드는 calendars entitlement와 full-access usage description을 포함한다.
+
 UI 원칙:
 - 권한이 없으면 왜 필요한지 설명한다.
 - 권한 거부 시 System Settings로 가는 복구 경로를 제공한다.
@@ -56,20 +62,23 @@ UI:
 - Source badge에 read-only 상태를 표시한다.
 - "이 캘린더는 원본 일정을 수정할 수 없지만 KaosCal 메모와 체크리스트는 저장할 수 있습니다." 같은 문구를 사용한다.
 
-## 결정 5: 반복 일정은 v1에서 단일 occurrence 중심으로 제한한다
+## 결정 5: 종일·시간대·반복 일정은 명시적 의미를 가진다
 
-반복 일정 전체 편집은 v1 범위 밖이다.
-v1에서는 선택한 occurrence의 표시와 제한적 편집을 우선한다.
-
-원칙:
-- 반복 전체 변경 UI를 만들기 전에는 전체 series 변경을 제공하지 않는다.
-- 사용자가 반복 이벤트를 편집하려 하면 영향 범위를 명확히 보여준다.
-- 구현이 불확실한 경우 Calendar.app에서 편집하도록 안내한다.
+- 종일 일정은 시각이 아니라 날짜 범위로 표시·저장한다.
+- `timeZone == nil`은 floating time으로 구분한다.
+- 시간대 변경 전에는 `현지 시각 유지`와 `동일 시점 유지` 결과를 미리 보여 준다.
+- 모든 반복 occurrence를 표시한다.
+- 기본 일·주·월·년 반복, interval, 종료, 주간 요일을 생성·편집한다.
+- 반복 변경 범위는 EventKit의 의미에 맞춰 `이번 일정` 또는 `이번 이후`로 표시한다.
+- KaosCal이 안전하게 표현할 수 없는 복잡한 서버 규칙은 읽고 보존하며, 수정은 Calendar.app으로 안내한다.
+- Event Brief는 기본적으로 occurrence별이다.
 
 ## 결정 6: 변경 감지는 보수적으로 한다
 
 EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 감지한다.
 감지 실패를 데이터 삭제로 해석하지 않는다.
+
+`EKEventStoreChanged`를 받으면 기존 event object를 stale로 취급하고 현재 날짜 범위를 다시 fetch한다. 알림은 어떤 일정이 바뀌었는지 알려 주지 않는다.
 
 상태 전환:
 - 한 번 찾지 못하면 `missing`
@@ -89,13 +98,19 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - source title
 - title/start/end/location snapshot
 - fingerprint
+- is_all_day, time_semantics, time_zone_identifier
+- recurrence master identifier, occurrence date, is_detached
 
 ## Phase 1 체크리스트
 
-- 권한 요청 화면이 있다.
-- 권한 허용 후 캘린더 목록이 보인다.
-- 권한 허용 후 이벤트 목록이 보인다.
+- full access 권한 요청 화면이 있다.
+- 권한 허용 후 Exchange source와 캘린더 목록이 보인다.
+- 권한 허용 후 시간·종일·반복 occurrence 이벤트 목록이 보인다.
 - 권한 거부 상태가 crash 없이 표시된다.
 - read-only 캘린더가 구분된다.
+- Event store 변경 알림 후 현재 범위를 다시 조회한다.
 - EventKit read-only 단계에서 local DB를 추가하지 않는다.
 
+## 결정 8: 초대 일정은 원본을 건드리지 않는다
+
+초대받은 일정에는 local Event Brief와 작업을 붙일 수 있다. 그러나 v1은 RSVP, 참석자, organizer, 원본 제목·시간·삭제 변경을 제공하지 않는다. 이 동작은 Calendar.app에서 수행하도록 안내한다.

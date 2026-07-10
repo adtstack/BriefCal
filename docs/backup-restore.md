@@ -2,13 +2,13 @@
 
 ## 목표
 
-KaosCal은 local-first 앱이므로 사용자의 Event Brief 데이터는 이 Mac의 SQLite DB에 있다.
+KaosCal은 local-first 앱이므로 사용자의 Event Brief와 Task Center 데이터는 이 Mac의 SQLite DB에 있다.
 백업/복원 기능은 구독 없는 제품에서 신뢰를 만드는 핵심 기능이다.
 
 ## 원칙
 
 - 원본 캘린더 이벤트는 backup에 포함하지 않는다.
-- KaosCal local context만 backup한다.
+- Event Brief, event task, personal task, 변경 기록 등 KaosCal local data만 backup한다.
 - Export는 사용자가 읽을 수 있는 zip 파일로 만든다.
 - Import는 기존 DB를 경고 없이 덮어쓰지 않는다.
 - schema version이 맞지 않으면 안전하게 중단한다.
@@ -42,7 +42,7 @@ Settings에서 사용자가 직접 backup을 만든다.
 사용자 문구:
 
 ```text
-이 백업에는 KaosCal 체크리스트, 메모, 변경 기록만 포함됩니다.
+이 백업에는 KaosCal 체크리스트, 개인 할 일, 메모, 변경 기록만 포함됩니다.
 원본 캘린더 일정은 기존 캘린더 계정에 그대로 남아 있습니다.
 ```
 
@@ -75,7 +75,7 @@ Settings에서 KaosCal local data만 삭제할 수 있어야 한다.
 필수 확인 문구:
 
 ```text
-이 작업은 KaosCal의 체크리스트, 메모, 변경 기록을 이 Mac에서 삭제합니다.
+이 작업은 KaosCal의 체크리스트, 개인 할 일, 메모, 변경 기록을 이 Mac에서 삭제합니다.
 기존 캘린더 계정의 일정은 삭제되지 않습니다.
 ```
 
@@ -106,4 +106,3 @@ v1에서는 수동 backup을 우선한다.
 - reset local data 후 원본 캘린더 이벤트 유지
 - 손상된 zip import 실패 처리
 - schema mismatch 실패 처리
-

@@ -5,6 +5,8 @@
 KaosCal의 톤은 Calm Pro Calendar다.
 바쁜 사용자가 하루의 일정을 빠르게 읽고, 어떤 일정에 어떤 맥락이 붙어 있는지 바로 판단할 수 있어야 한다.
 
+BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. 그러나 KaosCal은 BusyCal의 색, 아이콘, 화면 구성, 브랜드 요소를 복제하지 않는다.
+
 ## 제품 느낌
 
 - 차분하다.
@@ -41,7 +43,8 @@ Sidebar:
 - visible filters
 
 Calendar Area:
-- Day/Week/Agenda 중심
+- Day/Week/Agenda는 모두 v1 필수
+- Day/Week에는 종일 일정용 all-day lane
 - Month는 v1에서 가볍게 시작하거나 후순위
 - today indicator 명확히 표시
 
@@ -51,6 +54,12 @@ Event Brief Panel:
 - KaosCal notes
 - change history 요약
 - read-only 설명
+
+Task Center:
+- sidebar 항목으로 열고 오늘·예정·완료를 빠르게 전환
+- event task에는 연결 일정의 시간과 source를 작게 표시
+- personal task에는 로컬 저장 badge를 표시
+- 프로젝트·팀 collaboration UI는 제공하지 않음
 
 ## Event card 규칙
 
@@ -126,6 +135,14 @@ Move confirmation은 공포를 주는 경고가 아니라 영향 범위 확인�
 - glass/blur는 sidebar, toolbar, popover에 제한한다.
 - 긴 일정 제목에서도 레이아웃이 무너지지 않아야 한다.
 - 고밀도 week view에서 겹침과 clipping을 피한다.
+- 종일 일정, floating time, 고정 시간대 일정은 아이콘과 텍스트를 함께 사용해 구분한다.
+
+## 초기 브랜드 방향
+
+- 앱 아이콘: 날짜 격자와 정리된 체크 표시를 결합한 단순한 KaosCal mark
+- 기본 색: system background 위에 ink navy, muted slate, calendar accent만 사용
+- 강조 색: calendar source color는 narrow rail과 badge에 제한
+- 다크 모드: 같은 정보 계층을 유지하고 과한 neon/glass 효과를 피함
 
 ## 키보드 우선 작업
 
@@ -144,4 +161,3 @@ Move confirmation은 공포를 주는 경고가 아니라 영향 범위 확인�
 - source/read-only 상태는 텍스트로도 표시한다.
 - hit target은 Mac 앱 기준에서 너무 작지 않게 유지한다.
 - dynamic type 또는 accessibility font size에서 clipping을 점검한다.
-

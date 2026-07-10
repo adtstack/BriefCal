@@ -5,6 +5,8 @@
 KaosCal v1은 direct download first로 간다.
 Mac App Store는 sandbox, 심사, 라이선스 정책, 업데이트 전략이 안정된 뒤 검토한다.
 
+첫 베타의 최소 지원 버전은 macOS 14이며, Exchange 지원 문구는 macOS Calendar에 구성된 Exchange Online calendar로 한정한다.
+
 이유:
 - 구독 없는 one-time license 모델과 직접 배포가 잘 맞는다.
 - local-first 제품이라 서버 비용을 낮출 수 있다.
@@ -91,4 +93,3 @@ KaosCal v1은 서버로 Event Brief 데이터를 전송하지 않습니다.
 - 다운로드 버튼
 - 개인정보/로컬 저장 정책
 - 가격 또는 베타 신청
-
