@@ -185,4 +185,35 @@ struct DisplayEvent: Equatable, Identifiable {
     let isDetached: Bool
     let isReadOnly: Bool
     let isInvitation: Bool
+    let hasAttendees: Bool
+    let originalNotes: String?
+}
+
+extension DisplayEvent {
+    func hasSameEditableTime(as other: DisplayEvent) -> Bool {
+        guard isAllDay == other.isAllDay else { return false }
+
+        switch (timeSemantics, other.timeSemantics) {
+        case let (
+            .allDay(start, endExclusive),
+            .allDay(otherStart, otherEndExclusive)
+        ):
+            return start == otherStart
+                && endExclusive == otherEndExclusive
+        case let (
+            .floating(start, end),
+            .floating(otherStart, otherEnd)
+        ):
+            return start == otherStart && end == otherEnd
+        case let (
+            .zoned(timeZoneIdentifier),
+            .zoned(otherTimeZoneIdentifier)
+        ):
+            return timeZoneIdentifier == otherTimeZoneIdentifier
+                && startDate == other.startDate
+                && endDate == other.endDate
+        default:
+            return false
+        }
+    }
 }

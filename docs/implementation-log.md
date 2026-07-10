@@ -239,6 +239,66 @@
   - weak/ambiguous relink, missing/orphan lifecycle, 원본 EventKit write, change log, backup
 - 결과: Phase 4 구현과 자동·빌드·서명·fixture 시각 gate는 통과했다. 실제 창 상호작용과 Exchange 실계정 gate는 완료로 선언하지 않고 후속 수동 검증으로 유지한다.
 
+## 2026-07-11 — Phase 5 비반복 원본 일정 편집 checkpoint
+
+- 관련 ADR: ADR-001, ADR-003, ADR-004, ADR-008, ADR-009, ADR-010
+- 변경 파일:
+  - `CalendarEventEditing.swift`: create/update draft, all-day 배타 범위, reference time zone, preserve-local/preserve-instant, validation·write error
+  - `CalendarProvider` / `EventKitProvider`: default writable calendar, create/update/delete, strong re-fetch, fresh snapshot, changed-field patch
+  - `AppState`: 단일 editor session, create/edit/delete command, local mutation preflight·rebind, receipt focus와 부분 성공 안내
+  - `EventEditorView`: title/calendar/location/time/all-day/time-zone/original notes editor와 delete confirmation
+  - `DisplayEvent`: 원본 notes, invitation과 attendee meeting 구분
+  - `ContextStore`: mutation context read와 사용자 승인 rebind transaction
+  - `CalendarEventEditingTests`, `ContextStoreTests`, fake provider와 Phase 5 정책·QA·호환성 문서
+- 쓰기 범위 결정:
+  - full access, writable, attendee 없음, 비반복 일정만 Phase 5 원본 write 대상으로 삼는다.
+  - 새 일정은 EventKit default, 현재 선택, Exchange, 첫 writable calendar 순서로 초기 calendar를 고른다.
+  - linked same-calendar title/time/all-day/time-zone/location/original notes 변경은 editor Save를 승인으로 보고 허용한 뒤 같은 context ID에 receipt snapshot을 rebind한다.
+  - linked calendar 이동은 Phase 6, linked 삭제·orphan review는 Phase 7, recurrence/`EKSpan`은 Phase 6으로 이월했다.
+  - attendee meeting은 사용자가 organizer여도 Calendar.app 전용이다. invitation과 attendee meeting 표시는 별도로 유지한다.
+  - 원본 event notes와 local Event Brief notes를 서로 다른 field와 저장소로 유지한다.
+- provider 안전성:
+  - 편집 시작 `EKEvent`를 저장하지 않고 같은 long-lived store에서 event ID → calendar item ID → external ID 순으로 다시 찾는다.
+  - 원 calendar의 유일한 nonrecurring 후보만 허용하고 지원 필드가 외부에서 달라졌으면 stale 오류로 중단한다.
+  - no-op은 save하지 않고 변경된 field만 patch해 unchanged structured location/rich metadata를 보존한다.
+  - provider에서도 현재 read-only, attendee, recurrence 상태를 다시 확인한다.
+- 시간 의미:
+  - all-day editor는 포함 종료를 보여 주되 draft/EventKit은 배타 종료를 사용한다.
+  - timed 일정이 정확히 자정에 끝날 때 all-day 변환으로 하루가 추가되던 경계를 수정했다.
+  - draft reference time zone을 고정해 UI와 provider validation이 같은 civil 의미를 사용한다.
+  - 편집 중 Mac 기본 time zone이 바뀌면 all-day/floating wall components를 현재 기본 zone의 Date로 재구성해 선택한 civil 날짜·시각을 유지한다.
+  - stale time 비교도 zoned는 absolute instant+zone, all-day/floating은 civil components를 사용해 기본 zone 변화 자체를 외부 일정 수정으로 오판하지 않는다.
+  - preserve-local 결과가 DST gap/overlap이면 Foundation의 자동 보정이나 첫 occurrence 선택을 허용하지 않고 중단한다.
+- local 안전성:
+  - pending notes 저장 실패와 weak/ambiguous identity에서는 editor를 열지 않는다.
+  - active editor가 있으면 toolbar/`⌘N`과 AppState 양쪽에서 두 번째 session을 차단한다.
+  - linked rebind는 notes/tasks를 유지하는 단일 SQLite transaction이며 unique 충돌과 missing context가 다른 row를 바꾸지 않음을 검증했다.
+  - EventKit 성공 뒤 rebind 실패는 원본 성공을 숨기지 않고 sheet에 부분 성공·local 보존 오류를 남긴다.
+  - receipt focus의 external identifier fallback은 non-empty identifier가 있을 때만 사용해 nil끼리 잘못 선택하지 않게 했다.
+- UI 안전성:
+  - floating toggle/IANA 입력이 Apply·confirmation 전이면 Save를 비활성화한다.
+  - attendee meeting/invitation, recurrence, read-only는 inspector에서 원본 잠금 이유를 표시한다. event card는 meeting/read-only lock과 recurrence repeat 상태를 구분하고 local Brief는 계속 편집할 수 있다.
+- 최종 자동 검증:
+  - `CalendarEventEditingTests`: **18 tests, 0 failures**
+  - `ContextStoreTests`: **29 tests, 0 failures**
+  - 전체 회귀: **97 tests, 0 failures, 0 unexpected**, `TEST SUCCEEDED`
+  - 최종 result bundle: `Test-KaosCal-2026.07.11_00-27-42-+0900.xcresult`
+  - production direct/sandbox DB는 테스트 전후 각각 `2026-07-10 19:18:24 +0900`, `2026-07-10 19:20:43 +0900`, 모두 `110592 bytes`로 불변
+- 빌드·서명 gate:
+  - pinned GRDB 7.10.0 기반 unsigned Release: `BUILD SUCCEEDED`
+  - ad-hoc signed Debug: `BUILD SUCCEEDED`
+  - `codesign --verify --deep --strict`: pass
+  - signed Debug entitlement: app sandbox, get-task-allow, calendars 모두 `true`
+  - built Info.plist의 `NSCalendarsFullAccessUsageDescription` 확인
+- 수동 gate 대기:
+  - 실제 macOS full calendar access 승인·복구
+  - `KAOS-TEST`의 Exchange source/writable/calendar color 노출
+  - Calendar.app 비반복 create/update/delete, all-day, floating/zoned round-trip
+  - 실제 EventKit identifier churn, Exchange 서버 정규화, 외부 변경 충돌
+  - attendee meeting/초대에 변경 메일이 발생하지 않는지 확인
+  - shared read-only Viewer는 미준비로 Phase 8 gate 전까지 `blocked`
+- 결과: Phase 5 코드·자동·Release·ad-hoc 서명 checkpoint를 통과했다. fake provider 자동 검증을 실제 Exchange save/remove 지원으로 해석하지 않으며, 위 실계정 수동 gate는 계속 열린 상태다.
+
 ## 다음 항목 템플릿
 
 ```markdown

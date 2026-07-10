@@ -85,6 +85,33 @@ enum TaskCenterState: Equatable {
     case failed(String)
 }
 
+enum CalendarEventEditorTarget: Equatable {
+    case newEvent
+    case existing(DisplayEvent)
+}
+
+struct CalendarEventEditorSession: Equatable, Identifiable {
+    let target: CalendarEventEditorTarget
+    let initialDraft: CalendarEventDraft
+    let writableCalendars: [CalendarSource]
+    let mutationContext: EventMutationContext
+
+    var id: String {
+        switch target {
+        case .newEvent:
+            "new-event"
+        case let .existing(event):
+            "edit-\(event.id)"
+        }
+    }
+}
+
+enum CalendarEventEditorOperationState: Equatable {
+    case idle
+    case saving
+    case deleting
+}
+
 private struct FailedNotesDraft {
     let text: String
     let message: String
@@ -106,6 +133,9 @@ final class AppState: ObservableObject {
     @Published private(set) var notesSaveState: NotesSaveState = .idle
     @Published private(set) var taskCenterState: TaskCenterState = .unavailable
     @Published private(set) var localOperationError: String?
+    @Published private(set) var eventEditorSession: CalendarEventEditorSession?
+    @Published private(set) var eventEditorOperationState: CalendarEventEditorOperationState = .idle
+    @Published private(set) var eventEditorError: String?
 
     let calendar: Calendar
     let contextStore: ContextStore?
@@ -589,6 +619,229 @@ final class AppState: ObservableObject {
         }
     }
 
+    func beginCreatingEvent() {
+        guard eventEditorSession == nil,
+              eventEditorOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.editorAlreadyOpen
+            )
+            return
+        }
+        eventEditorError = nil
+        guard calendarAuthorizationState.canReadEvents else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.fullAccessRequired
+            )
+            return
+        }
+        let writableCalendars = calendarSources.filter(\.isWritable)
+        guard !writableCalendars.isEmpty else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.noWritableCalendar
+            )
+            return
+        }
+
+        let providerDefault = calendarProvider
+            .defaultCalendarIdentifierForNewEvents()
+        let selectedCalendar = selectedEvent?.calendarIdentifier
+        let calendarIdentifier = [providerDefault, selectedCalendar]
+            .compactMap { $0 }
+            .first { identifier in
+                writableCalendars.contains { $0.id == identifier }
+            }
+            ?? writableCalendars.first(where: {
+                $0.accountType == .exchange
+            })?.id
+            ?? writableCalendars[0].id
+        let start = defaultNewEventStart()
+        let end = calendar.date(
+            byAdding: .hour,
+            value: 1,
+            to: start
+        ) ?? start.addingTimeInterval(3_600)
+        eventEditorSession = CalendarEventEditorSession(
+            target: .newEvent,
+            initialDraft: CalendarEventDraft(
+                title: "",
+                calendarIdentifier: calendarIdentifier,
+                startDate: start,
+                endDate: end,
+                isAllDay: false,
+                timeZoneIdentifier: calendar.timeZone.identifier,
+                referenceTimeZoneIdentifier: calendar.timeZone.identifier
+            ),
+            writableCalendars: writableCalendars,
+            mutationContext: .none
+        )
+        eventEditorOperationState = .idle
+    }
+
+    func originalEventWriteRestriction(
+        for event: DisplayEvent
+    ) -> String? {
+        do {
+            try validateOriginalWritePolicy(event)
+            return nil
+        } catch {
+            return Self.message(for: error)
+        }
+    }
+
+    func beginEditingSelectedEvent() {
+        guard eventEditorSession == nil,
+              eventEditorOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.editorAlreadyOpen
+            )
+            return
+        }
+        eventEditorError = nil
+        guard calendarAuthorizationState.canReadEvents else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.fullAccessRequired
+            )
+            return
+        }
+        guard let event = selectedEvent else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.eventUnavailable
+            )
+            return
+        }
+
+        do {
+            try validateOriginalWritePolicy(event)
+            flushPendingEventNotes()
+            if case .failed = notesSaveState {
+                throw CalendarEventWriteError.localDraftSaveRequired
+            }
+            let mutationContext = try contextStore?.mutationContext(
+                for: event
+            ) ?? .none
+            if case .confirmationRequired = mutationContext {
+                throw CalendarEventWriteError.localIdentityConfirmationRequired
+            }
+            let writableCalendars = calendarSources.filter(\.isWritable)
+            guard writableCalendars.contains(where: {
+                $0.id == event.calendarIdentifier
+            }) else {
+                throw CalendarEventWriteError.readOnlyCalendar
+            }
+            eventEditorSession = CalendarEventEditorSession(
+                target: .existing(event),
+                initialDraft: CalendarEventDraft(
+                    event: event,
+                    calendar: calendar
+                ),
+                writableCalendars: writableCalendars,
+                mutationContext: mutationContext
+            )
+            eventEditorOperationState = .idle
+        } catch {
+            eventEditorError = Self.message(for: error)
+        }
+    }
+
+    func cancelEventEditor() {
+        guard eventEditorOperationState == .idle else { return }
+        eventEditorSession = nil
+        eventEditorError = nil
+    }
+
+    func clearEventEditorError() {
+        eventEditorError = nil
+    }
+
+    @discardableResult
+    func saveEventEditor(_ draft: CalendarEventDraft) async -> Bool {
+        guard let session = eventEditorSession else { return false }
+        eventEditorError = nil
+        eventEditorOperationState = .saving
+        defer {
+            if eventEditorOperationState == .saving {
+                eventEditorOperationState = .idle
+            }
+        }
+
+        do {
+            let normalized = try draft.validated(calendar: calendar)
+            let updated: DisplayEvent
+            switch session.target {
+            case .newEvent:
+                updated = try calendarProvider.createEvent(normalized)
+            case let .existing(original):
+                try validateOriginalWritePolicy(original)
+                if case .linked = session.mutationContext,
+                   normalized.calendarIdentifier
+                    != original.calendarIdentifier {
+                    throw CalendarEventWriteError.linkedCalendarMoveDeferred
+                }
+                updated = try calendarProvider.updateEvent(
+                    original,
+                    with: normalized
+                )
+                if case let .linked(contextID) = session.mutationContext,
+                   let contextStore {
+                    do {
+                        try contextStore.rebindUserApprovedMutation(
+                            contextID: contextID,
+                            to: updated
+                        )
+                    } catch {
+                        await refreshCalendarData()
+                        eventEditorError = "The calendar event was saved, but its local Event Brief could not be refreshed. Your local data was kept. \(Self.message(for: error))"
+                        return false
+                    }
+                }
+            }
+
+            eventEditorSession = nil
+            eventEditorOperationState = .idle
+            await focusWrittenEvent(updated)
+            return true
+        } catch {
+            eventEditorError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func deleteEventEditorTarget() async -> Bool {
+        guard let session = eventEditorSession,
+              case let .existing(original) = session.target else {
+            return false
+        }
+        eventEditorError = nil
+        eventEditorOperationState = .deleting
+        defer {
+            if eventEditorOperationState == .deleting {
+                eventEditorOperationState = .idle
+            }
+        }
+
+        do {
+            try validateOriginalWritePolicy(original)
+            switch session.mutationContext {
+            case .linked:
+                throw CalendarEventWriteError.linkedDeleteDeferred
+            case .confirmationRequired:
+                throw CalendarEventWriteError.localIdentityConfirmationRequired
+            case .none:
+                break
+            }
+            try calendarProvider.deleteEvent(original)
+            eventEditorSession = nil
+            eventEditorOperationState = .idle
+            selectEvent(nil)
+            await refreshCalendarData()
+            return true
+        } catch {
+            eventEditorError = Self.message(for: error)
+            return false
+        }
+    }
+
     func goToToday() {
         focusedDate = calendar.startOfDay(for: now())
         visiblePeriodDidChange()
@@ -921,8 +1174,89 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func defaultNewEventStart() -> Date {
+        let focusedDay = calendar.startOfDay(for: focusedDate)
+        guard calendar.isDate(focusedDay, inSameDayAs: now()) else {
+            return calendar.date(
+                bySettingHour: 9,
+                minute: 0,
+                second: 0,
+                of: focusedDay
+            ) ?? focusedDay
+        }
+        let current = now().timeIntervalSinceReferenceDate
+        let halfHour: TimeInterval = 30 * 60
+        return Date(
+            timeIntervalSinceReferenceDate:
+                (floor(current / halfHour) + 1) * halfHour
+        )
+    }
+
+    private func validateOriginalWritePolicy(
+        _ event: DisplayEvent
+    ) throws {
+        guard calendarAuthorizationState.canReadEvents else {
+            throw CalendarEventWriteError.fullAccessRequired
+        }
+        if event.isInvitation || event.hasAttendees {
+            throw CalendarEventWriteError.meetingIsCalendarAppOnly
+        }
+        if event.isReadOnly {
+            throw CalendarEventWriteError.readOnlyCalendar
+        }
+        if event.isRecurring || event.occurrenceDate != nil || event.isDetached {
+            throw CalendarEventWriteError.recurringScopeRequired
+        }
+    }
+
+    private func focusWrittenEvent(_ event: DisplayEvent) async {
+        let range = CalendarEventDateFormatting.effectiveDateRange(
+            for: event,
+            calendar: calendar
+        )
+        let startDay = calendar.startOfDay(for: range.start)
+        let endDay = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: startDay
+        ) ?? range.end
+        rangeLoadTask?.cancel()
+        rangeLoadTask = nil
+        await refreshCalendarData(
+            in: expandedFetchInterval(
+                around: DateInterval(start: startDay, end: endDay)
+            )
+        )
+        focusedDate = startDay
+        selectedSection = .day
+        let writtenEvent = events.first { candidate in
+            if candidate.id == event.id { return true }
+            if let identifier = event.eventIdentifier,
+               !identifier.isEmpty,
+               candidate.eventIdentifier == identifier {
+                return true
+            }
+            if let identifier = event.calendarItemIdentifier,
+               !identifier.isEmpty,
+               candidate.calendarItemIdentifier == identifier {
+                return true
+            }
+            if let identifier = event.calendarItemExternalIdentifier,
+               !identifier.isEmpty {
+                return candidate.calendarIdentifier == event.calendarIdentifier
+                    && candidate.calendarItemExternalIdentifier == identifier
+                    && candidate.startDate == event.startDate
+            }
+            return false
+        }
+        selectEvent(writtenEvent?.id)
+    }
+
     private func clearCalendarData() {
         rangeLoadTask?.cancel()
+        eventEditorSession = nil
+        eventEditorOperationState = .idle
+        eventEditorError = nil
         selectEvent(nil)
         calendarSources = []
         events = []

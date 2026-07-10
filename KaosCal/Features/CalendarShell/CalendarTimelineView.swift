@@ -518,7 +518,9 @@ private struct TimedEventCard: View {
                 .font(.system(size: 8))
                 .accessibilityHidden(true)
         }
-        if placement.event.isReadOnly || placement.event.isInvitation {
+        if placement.event.isReadOnly
+            || placement.event.isInvitation
+            || placement.event.hasAttendees {
             Image(systemName: "lock")
                 .font(.system(size: 8))
                 .accessibilityHidden(true)
@@ -563,8 +565,12 @@ private struct TimedEventCard: View {
             placement.event.calendarTitle
         ]
         if placement.event.isRecurring { parts.append("recurring") }
-        if placement.event.isReadOnly || placement.event.isInvitation {
+        if placement.event.isReadOnly {
             parts.append("read-only")
+        } else if placement.event.isInvitation {
+            parts.append("invitation, original editing in Calendar app")
+        } else if placement.event.hasAttendees {
+            parts.append("meeting with attendees, original editing in Calendar app")
         }
         if placement.continuesBefore { parts.append("continues from previous day") }
         if placement.continuesAfter { parts.append("continues to next day") }
@@ -594,7 +600,9 @@ private struct AllDayEventCard: View {
                 Image(systemName: "repeat")
                     .font(.system(size: 8))
             }
-            if placement.event.isReadOnly || placement.event.isInvitation {
+            if placement.event.isReadOnly
+                || placement.event.isInvitation
+                || placement.event.hasAttendees {
                 Image(systemName: "lock")
                     .font(.system(size: 8))
             }
@@ -640,8 +648,12 @@ private struct AllDayEventCard: View {
             "all-day"
         ]
         if placement.event.isRecurring { parts.append("recurring") }
-        if placement.event.isReadOnly || placement.event.isInvitation {
+        if placement.event.isReadOnly {
             parts.append("read-only")
+        } else if placement.event.isInvitation {
+            parts.append("invitation, original editing in Calendar app")
+        } else if placement.event.hasAttendees {
+            parts.append("meeting with attendees, original editing in Calendar app")
         }
         if placement.continuesBefore { parts.append("continues from previous period") }
         if placement.continuesAfter { parts.append("continues to next period") }

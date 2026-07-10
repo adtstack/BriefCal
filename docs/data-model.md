@@ -28,15 +28,18 @@ KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 ## 표시 모델과 영속 모델
 
-Phase 4는 EventKit 객체를 UI 값 snapshot으로 분리하고, 필요한 연결·맥락만 SQLite에 영속화하며 두 local 편집 화면의 projection을 AppState에서 조정한다.
+Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고, 필요한 연결·맥락만 SQLite에 영속화하며 local 편집 화면과 원본 일정 editor를 AppState에서 조정한다.
 
 | 값 | 역할 | 영속 모델과의 차이 |
 | --- | --- | --- |
-| `DisplayEvent` | title, source, calendar color, raw date, read-only, invitation, recurrence를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음 |
+| `DisplayEvent` | title, source, calendar color, raw date, read-only, meeting/invitation, recurrence, 원본 notes를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음. `originalNotes`는 Event Brief notes가 아님 |
 | `EventTimeSemantics` | `allDay`, `floating`, `zoned` 구분 | `event_links.time_semantics`와 local component snapshot으로 변환 |
 | `LocalDateTimeComponents` | 원 calendar identifier와 civil components 보존 | all-day/floating 표시·due·반복 occurrence 재구성에 사용 |
 | `DisplayEventIdentity` | SwiftUI selection과 occurrence별 card identity | `external → calendar item → event` 우선순위, local occurrence anchor 사용; 영속 resolver와 목적이 다름 |
 | `CalendarEventLayout` | visible period의 timed/all-day placement | 파생값이므로 저장하지 않음 |
+| `CalendarEventDraft` | 원본 일정 create/update 입력과 고정 reference time zone | editor session 동안만 존재하며 DB record가 아님. 저장 시 all-day/floating civil components를 현재 기본 zone에 rebase할 수 있음 |
+| `CalendarEventEditorSession` | new/existing target, writable calendar, local mutation context | AppState의 일시 상태이며 앱 재실행 뒤 복구하지 않음 |
+| `EventMutationContext` | local Brief 없음/strong linked/확인 필요 구분 | 기존 context를 안전하게 rebind할지 정하는 일시 preflight 결과 |
 
 영속 Event Brief 연결은 아래 `Identity resolution 순서`로 구현되어 있다. UI ID가 같거나 달라졌다는 사실만으로 local context를 자동 연결·삭제하지 않는다.
 
@@ -126,6 +129,8 @@ create table app_settings (
 ## 구현된 V1 baseline
 
 첫 GRDB migration `v1_context_store`는 아래 네 테이블만 만든다.
+
+Phase 5 원본 일정 편집은 schema를 바꾸지 않는다. `event_change_log`와 새 migration은 Phase 6까지 추가하지 않는다.
 
 | 테이블 | 현재 책임 |
 | --- | --- |
@@ -266,6 +271,8 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - lazy Brief load와 context-scoped event task mutation
 - side-effect-free navigation target read와 strong-only inverse event match
 - typed Task Center completion routing과 missing/context mismatch 방어
+- 원본 mutation 전 read-only `EventMutationContext` preflight
+- 사용자 승인 뒤 기존 `contextID`의 identifier/snapshot을 갱신하는 transaction rebind. notes/tasks는 유지하고 unique 충돌은 전체 rollback
 
 `EventTaskRepository`:
 - task 생성, 수정, 삭제

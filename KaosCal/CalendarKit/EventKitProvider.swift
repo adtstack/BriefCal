@@ -91,6 +91,79 @@ final class EventKitProvider: CalendarProviding {
             }
     }
 
+    func defaultCalendarIdentifierForNewEvents() -> String? {
+        guard let calendar = eventStore.defaultCalendarForNewEvents,
+              calendar.allowsContentModifications else {
+            return nil
+        }
+        return calendar.calendarIdentifier
+    }
+
+    func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent {
+        try requireFullAccess()
+        let normalized = try draft.validated(calendar: validationCalendar())
+        let calendar = try writableCalendar(
+            identifier: normalized.calendarIdentifier
+        )
+        let event = EKEvent(eventStore: eventStore)
+        applyAll(normalized, calendar: calendar, to: event)
+        try eventStore.save(event, span: .thisEvent, commit: true)
+        return makeDisplayEvent(event)
+    }
+
+    func updateEvent(
+        _ original: DisplayEvent,
+        with draft: CalendarEventDraft
+    ) throws -> DisplayEvent {
+        try requireFullAccess()
+        try validateWritePolicy(original)
+        let normalized = try draft.validated(calendar: validationCalendar())
+        let event = try resolveEvent(for: original)
+        try validateCurrentWritePolicy(event)
+        guard editableFieldsMatch(
+            makeDisplayEvent(event),
+            original
+        ) else {
+            throw CalendarEventWriteError.eventChangedExternally
+        }
+        let calendar = try writableCalendar(
+            identifier: normalized.calendarIdentifier
+        )
+        let current = makeDisplayEvent(event)
+        let comparisonCalendar = normalized.wallTimeCalendar(
+            fallback: validationCalendar()
+        )
+        let currentDraft = try CalendarEventDraft(
+            event: current,
+            calendar: comparisonCalendar
+        ).validated(calendar: comparisonCalendar)
+        guard currentDraft != normalized else {
+            return current
+        }
+        applyChanges(
+            from: currentDraft,
+            to: normalized,
+            calendar: calendar,
+            event: event
+        )
+        try eventStore.save(event, span: .thisEvent, commit: true)
+        return makeDisplayEvent(event)
+    }
+
+    func deleteEvent(_ original: DisplayEvent) throws {
+        try requireFullAccess()
+        try validateWritePolicy(original)
+        let event = try resolveEvent(for: original)
+        try validateCurrentWritePolicy(event)
+        guard editableFieldsMatch(
+            makeDisplayEvent(event),
+            original
+        ) else {
+            throw CalendarEventWriteError.eventChangedExternally
+        }
+        try eventStore.remove(event, span: .thisEvent, commit: true)
+    }
+
     private func makeDisplayEvent(_ event: EKEvent) -> DisplayEvent {
         let title = event.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled event"
         let isRecurring = event.hasRecurrenceRules
@@ -137,8 +210,173 @@ final class EventKitProvider: CalendarProviding {
             occurrenceLocalComponents: occurrenceLocalComponents,
             isDetached: event.isDetached,
             isReadOnly: !event.calendar.allowsContentModifications,
-            isInvitation: event.organizer.map { !$0.isCurrentUser } ?? false
+            isInvitation: event.organizer.map { !$0.isCurrentUser } ?? false,
+            hasAttendees: event.hasAttendees,
+            originalNotes: event.notes
         )
+    }
+
+    private func requireFullAccess() throws {
+        guard authorizationState.canReadEvents else {
+            throw CalendarEventWriteError.fullAccessRequired
+        }
+    }
+
+    private func validateWritePolicy(_ event: DisplayEvent) throws {
+        if event.isInvitation || event.hasAttendees {
+            throw CalendarEventWriteError.meetingIsCalendarAppOnly
+        }
+        if event.isReadOnly {
+            throw CalendarEventWriteError.readOnlyCalendar
+        }
+        if event.isRecurring || event.occurrenceDate != nil || event.isDetached {
+            throw CalendarEventWriteError.recurringScopeRequired
+        }
+    }
+
+    private func validateCurrentWritePolicy(_ event: EKEvent) throws {
+        guard event.calendar.allowsContentModifications else {
+            throw CalendarEventWriteError.readOnlyCalendar
+        }
+        if requiresCalendarAppMeetingManagement(event) {
+            throw CalendarEventWriteError.meetingIsCalendarAppOnly
+        }
+        if event.hasRecurrenceRules
+            || event.occurrenceDate != nil
+            || event.isDetached {
+            throw CalendarEventWriteError.recurringScopeRequired
+        }
+    }
+
+    private func writableCalendar(identifier: String) throws -> EKCalendar {
+        guard let calendar = eventStore.calendar(withIdentifier: identifier) else {
+            throw CalendarEventWriteError.calendarUnavailable
+        }
+        guard calendar.allowsContentModifications else {
+            throw CalendarEventWriteError.readOnlyCalendar
+        }
+        return calendar
+    }
+
+    private func resolveEvent(for original: DisplayEvent) throws -> EKEvent {
+        if let identifier = original.eventIdentifier,
+           !identifier.isEmpty,
+           let event = eventStore.event(withIdentifier: identifier),
+           candidate(event, matchesCalendarOf: original) {
+            return event
+        }
+
+        if let identifier = original.calendarItemIdentifier,
+           !identifier.isEmpty,
+           let event = eventStore.calendarItem(
+               withIdentifier: identifier
+           ) as? EKEvent,
+           candidate(event, matchesCalendarOf: original) {
+            return event
+        }
+
+        if let identifier = original.calendarItemExternalIdentifier,
+           !identifier.isEmpty {
+            let matches = eventStore.calendarItems(
+                withExternalIdentifier: identifier
+            )
+                .compactMap { $0 as? EKEvent }
+                .filter { candidate($0, matchesCalendarOf: original) }
+            if matches.count == 1, let event = matches.first {
+                return event
+            }
+            if matches.count > 1 {
+                throw CalendarEventWriteError.ambiguousEvent
+            }
+        }
+
+        throw CalendarEventWriteError.eventUnavailable
+    }
+
+    private func candidate(
+        _ event: EKEvent,
+        matchesCalendarOf original: DisplayEvent
+    ) -> Bool {
+        event.calendar.calendarIdentifier == original.calendarIdentifier
+            && !event.hasRecurrenceRules
+            && event.occurrenceDate == nil
+            && !event.isDetached
+    }
+
+    private func editableFieldsMatch(
+        _ current: DisplayEvent,
+        _ original: DisplayEvent
+    ) -> Bool {
+        current.calendarIdentifier == original.calendarIdentifier
+            && current.title == original.title
+            && current.location == original.location
+            && current.hasSameEditableTime(as: original)
+            && current.originalNotes == original.originalNotes
+    }
+
+    private func applyAll(
+        _ draft: CalendarEventDraft,
+        calendar: EKCalendar,
+        to event: EKEvent
+    ) {
+        event.calendar = calendar
+        event.title = draft.title
+        event.location = draft.location.isEmpty ? nil : draft.location
+        event.notes = draft.originalNotes.isEmpty
+            ? nil
+            : draft.originalNotes
+        event.startDate = draft.startDate
+        event.endDate = draft.endDate
+        event.isAllDay = draft.isAllDay
+        event.timeZone = draft.isAllDay
+            ? nil
+            : draft.timeZoneIdentifier.flatMap(TimeZone.init(identifier:))
+    }
+
+    private func applyChanges(
+        from current: CalendarEventDraft,
+        to draft: CalendarEventDraft,
+        calendar: EKCalendar,
+        event: EKEvent
+    ) {
+        if draft.calendarIdentifier != current.calendarIdentifier {
+            event.calendar = calendar
+        }
+        if draft.title != current.title {
+            event.title = draft.title
+        }
+        if draft.location != current.location {
+            event.location = draft.location.isEmpty ? nil : draft.location
+        }
+        if draft.originalNotes != current.originalNotes {
+            event.notes = draft.originalNotes.isEmpty
+                ? nil
+                : draft.originalNotes
+        }
+        if draft.startDate != current.startDate
+            || draft.endDate != current.endDate
+            || draft.isAllDay != current.isAllDay
+            || draft.timeZoneIdentifier != current.timeZoneIdentifier {
+            event.startDate = draft.startDate
+            event.endDate = draft.endDate
+            event.isAllDay = draft.isAllDay
+            event.timeZone = draft.isAllDay
+                ? nil
+                : draft.timeZoneIdentifier.flatMap(TimeZone.init(identifier:))
+        }
+    }
+
+    private func requiresCalendarAppMeetingManagement(
+        _ event: EKEvent
+    ) -> Bool {
+        event.hasAttendees
+            || (event.organizer.map { !$0.isCurrentUser } ?? false)
+    }
+
+    private func validationCalendar() -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .autoupdatingCurrent
+        return calendar
     }
 
     private func makeTimeSemantics(_ event: EKEvent) -> EventTimeSemantics {

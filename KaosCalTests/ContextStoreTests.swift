@@ -1117,6 +1117,159 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertEqual(after, before)
     }
 
+    func testUserApprovedMutationRebindsChangedCalendarAndIdentifiers() throws {
+        let store = try makeHarness().store
+        let original = makeEvent(
+            id: "before",
+            title: "Before",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 10),
+            externalIdentifier: "external-before",
+            calendarIdentifier: "calendar-before"
+        )
+        let context = try XCTUnwrap(
+            store.saveNotes(for: original, notes: "Keep this local note")
+        )
+        _ = try store.appendEventTask(
+            for: original,
+            section: .before,
+            title: "Keep this task"
+        )
+        let updated = makeEvent(
+            id: "after",
+            title: "After",
+            start: date(2026, 7, 11, 13),
+            end: date(2026, 7, 11, 14),
+            externalIdentifier: "external-after",
+            calendarIdentifier: "calendar-after"
+        )
+
+        XCTAssertEqual(
+            try store.mutationContext(for: original),
+            .linked(contextID: context.id)
+        )
+        let rebound = try store.rebindUserApprovedMutation(
+            contextID: context.id,
+            to: updated
+        )
+
+        XCTAssertEqual(rebound.context.notes, "Keep this local note")
+        XCTAssertEqual(rebound.context.titleSnapshot, "After")
+        XCTAssertEqual(rebound.link.calendarIdentifier, "calendar-after")
+        XCTAssertEqual(rebound.link.eventIdentifier, "event-id-after")
+        XCTAssertEqual(rebound.tasks.map(\.title), ["Keep this task"])
+        guard case let .linked(linkedID, _) = try store.resolve(event: updated) else {
+            return XCTFail("Expected updated event to stay linked")
+        }
+        XCTAssertEqual(linkedID, context.id)
+    }
+
+    func testUserApprovedMutationCollisionRollsBackBothContextsAndTasks() throws {
+        let store = try makeHarness().store
+        let first = makeEvent(id: "collision-first")
+        let second = makeEvent(
+            id: "collision-second",
+            title: "Other event",
+            location: "Room B",
+            start: date(2026, 7, 10, 11),
+            end: date(2026, 7, 10, 12)
+        )
+        let firstContext = try XCTUnwrap(
+            store.saveNotes(for: first, notes: "First local note")
+        )
+        let secondContext = try XCTUnwrap(
+            store.saveNotes(for: second, notes: "Second local note")
+        )
+        _ = try store.appendEventTask(
+            for: first,
+            section: .before,
+            title: "First task"
+        )
+        _ = try store.appendEventTask(
+            for: second,
+            section: .after,
+            title: "Second task"
+        )
+        let firstBefore = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: firstContext.id)
+        )
+        let secondBefore = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: secondContext.id)
+        )
+
+        XCTAssertThrowsError(
+            try store.rebindUserApprovedMutation(
+                contextID: firstContext.id,
+                to: second
+            )
+        )
+
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: firstContext.id),
+            firstBefore
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: secondContext.id),
+            secondBefore
+        )
+    }
+
+    func testUserApprovedMutationMissingContextChangesNothing() throws {
+        let store = try makeHarness().store
+        let event = makeEvent(id: "missing-rebind")
+        let context = try XCTUnwrap(
+            store.saveNotes(for: event, notes: "Existing note")
+        )
+        let before = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        XCTAssertThrowsError(
+            try store.rebindUserApprovedMutation(
+                contextID: "missing-context",
+                to: makeEvent(id: "new-receipt")
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .missingContext("missing-context")
+            )
+        }
+
+        XCTAssertEqual(try store.eventContexts.count(), 1)
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id),
+            before
+        )
+    }
+
+    func testMutationContextDoesNotAutoChooseWeakCandidate() throws {
+        let store = try makeHarness().store
+        let original = makeEvent(
+            id: "weak-original",
+            title: "Weak candidate",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 10),
+            calendarIdentifier: "calendar",
+            includeIdentifiers: false
+        )
+        let context = try XCTUnwrap(
+            store.saveNotes(for: original, notes: "Candidate note")
+        )
+        let candidate = makeEvent(
+            id: "weak-candidate",
+            title: original.title,
+            start: original.startDate,
+            end: original.endDate,
+            calendarIdentifier: "calendar"
+        )
+
+        XCTAssertEqual(
+            try store.mutationContext(for: candidate),
+            .confirmationRequired(contextIDs: [context.id])
+        )
+    }
+
     func testFloatingOccurrenceUsesCivilAnchorAcrossTimeZoneAndDetachedMove() throws {
         let harness = try makeHarness()
         let occurrenceStart = localComponents(2026, 7, 10, 9)
@@ -1578,6 +1731,7 @@ final class ContextStoreTests: XCTestCase {
         start: Date? = nil,
         end: Date? = nil,
         externalIdentifier: String? = nil,
+        calendarIdentifier: String = "calendar",
         isRecurring: Bool = false,
         occurrenceDate: Date? = nil,
         occurrenceLocalComponents: LocalDateTimeComponents? = nil,
@@ -1602,7 +1756,7 @@ final class ContextStoreTests: XCTestCase {
             eventIdentifier: includeIdentifiers ? "event-id-\(id)" : nil,
             calendarItemIdentifier: includeIdentifiers ? "item-id-\(id)" : nil,
             calendarItemExternalIdentifier: externalIdentifier,
-            calendarIdentifier: "calendar",
+            calendarIdentifier: calendarIdentifier,
             calendarTitle: "KAOS-TEST",
             sourceTitle: "Work",
             accountType: .exchange,
@@ -1619,7 +1773,9 @@ final class ContextStoreTests: XCTestCase {
             occurrenceLocalComponents: occurrenceLocalComponents,
             isDetached: isDetached,
             isReadOnly: false,
-            isInvitation: false
+            isInvitation: false,
+            hasAttendees: false,
+            originalNotes: nil
         )
     }
 }

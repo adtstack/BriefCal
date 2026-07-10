@@ -116,9 +116,9 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - Event store 변경 알림 후 마지막 loaded interval을 다시 조회한다.
 - EventKit read-only 단계에서 local DB를 추가하지 않는다.
 
-## 결정 8: 초대 일정은 원본을 건드리지 않는다
+## 결정 8: 참석자가 있는 일정은 원본을 건드리지 않는다
 
-초대받은 일정에는 local Event Brief와 작업을 붙일 수 있다. 그러나 v1은 RSVP, 참석자, organizer, 원본 제목·시간·삭제 변경을 제공하지 않는다. 이 동작은 Calendar.app에서 수행하도록 안내한다.
+초대받은 일정과 사용자가 주최했더라도 참석자가 있는 meeting에는 local Event Brief와 작업을 붙일 수 있다. 그러나 v1은 RSVP, 참석자, organizer, 원본 제목·시간·삭제 변경을 제공하지 않는다. EventKit의 `hasAttendees`가 참이면 외부 알림·취소 부작용을 피하기 위해 Calendar.app에서 수행하도록 안내한다.
 
 ## 결정 9: 조회 모델과 새로고침 의미
 
@@ -132,3 +132,17 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - calendar color는 `EKCalendar.cgColor`를 sRGB 값 snapshot으로 바꾸고 rail에만 사용한다.
 - all-day/floating local components에는 원래 calendar identifier를 보존한다. 표시 달력이 Buddhist/Japanese 등이어도 재구성 날짜가 이동하지 않게 하고, 표시 time zone만 적용한다.
 - UI occurrence identity는 calendar identifier + 가능한 EventKit item identifier + 반복 occurrence anchor 조합이다. all-day/floating은 raw UTC `Date` 대신 local occurrence anchor를 사용한다. 영속 Event Brief 복구는 결정 7의 별도 resolver를 따른다.
+
+## 결정 10: 원본 write는 최신 강한 identity와 변경 필드만 사용한다
+
+- Phase 5는 full access, writable calendar, attendee 없음, 비반복 일정에만 create/update/delete를 제공한다.
+- 기존 일정은 편집 시작 객체를 저장하지 않고 같은 `EKEventStore`에서 event ID, calendar item ID, external ID 순으로 다시 찾는다. 원 calendar의 유일한 비반복 후보만 허용한다.
+- 다시 읽은 지원 필드가 편집 시작 snapshot과 다르면 외부 변경으로 중단한다. zoned 시간은 absolute instant+zone, all-day/floating은 civil components로 비교한다.
+- no-op은 save하지 않고 변경 필드만 patch한다. 변경하지 않은 structured location, alarm, URL 같은 editor 밖 metadata를 불필요하게 다시 쓰지 않는다.
+- 원본 notes는 명시적 editor field로만 `EKEvent.notes`에 쓰고 local Event Brief notes/tasks와 분리한다.
+- 종일 종료는 배타 자정이다. draft가 포착한 reference time zone을 사용하고, 저장 시 기본 zone이 달라졌으면 all-day/floating wall components를 현재 zone에 rebase해 civil 값을 유지한다.
+- time zone 변경은 preserve-local/preserve-instant를 구분하고 DST gap/overlap의 모호한 local time은 자동 보정하지 않는다.
+- linked same-calendar update 뒤 EventKit receipt로 기존 context snapshot을 rebind한다. linked calendar 이동은 Phase 6, linked 삭제는 Phase 7, 반복 write는 Phase 6까지 차단한다.
+- EventKit 성공 뒤 SQLite rebind 실패는 부분 성공으로 알리고 local 데이터를 삭제하지 않는다.
+
+전체 계약은 [ADR-010](adr/ADR-010-original-event-write-safety.md)을 따른다. 실제 Exchange save/remove 통과 여부는 [Exchange Compatibility](exchange-compatibility.md)에서만 판정한다.

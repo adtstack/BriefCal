@@ -2,7 +2,7 @@
 
 KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 각 일정의 준비물·메모·후속 작업을 로컬에 보존하는 macOS 앱이다.
 
-현재 상태: **Phase 4 Event Brief·Task Center 구현과 자동·빌드·서명 검증 완료 / 실창·실계정 수동 gate 대기**. Day/Week/Agenda와 GRDB 저장소 위에 notes 자동 저장, Before/During/After task CRUD, Today/Upcoming/Completed, personal task CRUD·due 수정, event-linked 원본 탐색 UI를 연결했다. 전체 75 tests, unsigned Release, ad-hoc signed Debug, strict codesign과 sandbox·Calendar entitlement 검증을 통과했다. 메모리 DB·가짜 provider 기반 1360×840 fixture에서 Phase 4 핵심 레이아웃을 확인했지만 실제 서명 앱의 focus·popover·삭제 확인과 Exchange backend 종류, 실제 `KAOS-TEST` EventKit 노출은 계속 수동 검증 대기다.
+현재 상태: **Phase 5 원본 일정 편집 구현·자동·Release·ad-hoc 서명 checkpoint / 실창·실계정 EventKit gate 대기**. Phase 4의 Day/Week/Agenda, Event Brief, Task Center 위에 참석자가 없는 비반복 writable 일정 생성·수정, local Brief가 없는 일정의 calendar 이동·삭제, 종일·floating/zoned 시간대 편집, 원본 notes 분리를 연결했다. 전체 97 tests, unsigned Release, ad-hoc signed Debug, strict codesign과 entitlement 검증이 통과했고 테스트 전후 production DB는 바뀌지 않았다. 실제 full access 승인, `KAOS-TEST`의 EventKit writable 판정과 Calendar.app 생성·수정·삭제 반영, Exchange backend 종류는 아직 수동 검증 대기다. 반복 변경은 Phase 6, linked calendar 이동은 Phase 6, linked 삭제·orphan 처리는 Phase 7 범위다. 초대와 사용자가 주최한 attendee meeting 원본 편집은 v1에서 Calendar.app 전용이다.
 
 ## 제품 범위
 

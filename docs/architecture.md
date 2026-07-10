@@ -29,7 +29,7 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 
 | 데이터 | 소유자 | 저장 위치 |
 | --- | --- | --- |
-| 일정 제목, 시간, 장소, 참석자, 원본 알림 | Calendar account / EventKit | 사용자의 기존 캘린더 계정 |
+| 일정 제목, 시간, 장소, 참석자, 원본 notes·알림 | Calendar account / EventKit | 사용자의 기존 캘린더 계정 |
 | Before/During/After 체크리스트 | KaosCal | Local SQLite |
 | KaosCal notes | KaosCal | Local SQLite |
 | 변경 기록 | KaosCal | Local SQLite |
@@ -41,7 +41,7 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 
 ## 현재 모듈 구조
 
-아래 tree는 Phase 4 구현 시점에 저장소에 실제로 존재하는 구조다.
+아래 tree는 Phase 5 구현 checkpoint 시점에 저장소에 실제로 존재하는 구조다.
 
 ```text
 KaosCal.app
@@ -53,7 +53,8 @@ KaosCal.app
 │  ├─ EventKitProvider.swift
 │  ├─ CalendarModels.swift
 │  ├─ CalendarEventDateFormatting.swift
-│  └─ CalendarEventLayout.swift
+│  ├─ CalendarEventLayout.swift
+│  └─ CalendarEventEditing.swift
 ├─ ContextStore/
 │  ├─ AppDatabase.swift
 │  ├─ DatabaseMigrations.swift
@@ -70,8 +71,10 @@ KaosCal.app
 │  │  └─ CalendarTimelineView.swift
 │  ├─ EventBrief/
 │  │  └─ EventBriefView.swift
-│  └─ TaskCenter/
-│     └─ TaskCenterView.swift
+│  ├─ TaskCenter/
+│  │  └─ TaskCenterView.swift
+│  └─ EventEditor/
+│     └─ EventEditorView.swift
 ├─ DesignSystem/
 │  └─ KaosCalTheme.swift
 ├─ Resources/
@@ -82,16 +85,17 @@ KaosCal.app
    ├─ ContextStoreTests.swift
    ├─ CalendarEventLayoutTests.swift
    ├─ CalendarAccessTests.swift
+   ├─ CalendarEventEditingTests.swift
    ├─ AppStateTests.swift
    ├─ LocalWorkspaceTests.swift
    └─ FakeCalendarProvider.swift
 ```
 
-`EventBrief`와 `TaskCenter` feature 경계는 Phase 4에서 추가했다. `MoveConfirmation`, `AfterReview`, `Settings`는 해당 phase에서 실제 파일을 추가할 때 확정한다.
+`EventBrief`와 `TaskCenter` feature 경계는 Phase 4, `EventEditor`는 Phase 5에서 추가했다. `MoveConfirmation`, `AfterReview`, `Settings`는 해당 phase에서 실제 파일을 추가할 때 확정한다.
 
 ## 런타임 흐름
 
-아래는 v1 런타임 흐름이다. Phase 4까지 1~7을 구현했다. 8의 일정 쓰기와 change log는 Phase 5~6 범위다.
+아래는 v1 런타임 흐름이다. Phase 5에서 1~8의 비반복 일정 쓰기까지 구현했다. change log는 Phase 6 범위다.
 
 1. `KaosCalApp` 초기화가 `AppBootstrap.makeAppState`를 호출한다.
 2. production에서는 `AppBootstrap`이 Application Support DB를 열고 migration한 단일 `ContextStore`를 만든다. hosted XCTest에서는 production DB open을 건너뛴다.
@@ -100,7 +104,7 @@ KaosCal.app
 5. 권한이 있으면 지정 기간의 이벤트와 캘린더 목록을 가져온다.
 6. fetch한 EventKit 값 snapshot을 `ContextStore.observe`가 강한 식별자로 기존 context에 연결하고 최신 snapshot으로 갱신한 뒤 Day/Week/Agenda에 표시한다.
 7. 사용자가 체크리스트, notes, 개인 작업, 완료 상태를 바꾸면 SQLite만 변경하고 Event Brief와 Task Center가 함께 갱신된다. local mutation은 AppState 명령을 거쳐 성공 뒤 두 projection을 다시 읽는다.
-8. Phase 5~6에서는 사용자가 일정 자체를 바꾸면 EventKit을 변경하고, 확정된 변경 뒤 change log를 SQLite에 남긴다.
+8. 사용자가 지원되는 비반복 일정을 바꾸면 최신 EventKit 원본을 다시 확인하고 변경 필드만 저장한다. 연결된 same-calendar 수정은 기존 context snapshot을 receipt에 다시 묶는다. change log는 Phase 6에서 추가한다.
 
 ## Phase 4 local interaction pipeline
 
@@ -145,12 +149,40 @@ protocol CalendarProviding: AnyObject {
     func requestFullAccess() async throws -> Bool
     func listCalendars() throws -> [CalendarSource]
     func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent]
+    func defaultCalendarIdentifierForNewEvents() -> String?
+    func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent
+    func updateEvent(_ original: DisplayEvent, with draft: CalendarEventDraft) throws -> DisplayEvent
+    func deleteEvent(_ original: DisplayEvent) throws
 }
 ```
 
-Phase 1은 위 read-only 경계와 `EventKitProvider` 하나로 시작한다. Phase 5에서 create/update/delete 명령을 별도 안전 use case로 확장한다. 직접 Google/Microsoft/CalDAV adapter는 만들지 않는다.
+Phase 1은 read-only 경계와 `EventKitProvider` 하나로 시작했고 Phase 5에서 create/update/delete 명령을 확장했다. 직접 Google/Microsoft/CalDAV adapter는 만들지 않는다.
 
 Provider는 long-lived `EKEventStore`를 소유하지만 UI에 `EKEvent`를 전달하지 않는다. source, identifier, 시간, 종일, 반복, 초대, 수정 가능 상태를 값 타입 snapshot으로 만든다. 연속 store change 알림은 AppState에서 250ms 병합하고 다시 fetch한다.
+
+## Phase 5 원본 일정 쓰기 파이프라인
+
+```text
+EventEditorView local draft
+  → AppState permission / meeting / recurrence / local-identity preflight
+  → EventKitProvider strong identifier re-fetch
+  → current supported fields == edit-start snapshot
+  → writable target + changed-field-only save/remove
+  → returned DisplayEvent receipt
+  → linked context: ContextStore transaction rebind
+  → EventKit refetch + Day focus
+```
+
+- `CalendarEventDraft`는 title/calendar/time/all-day/time zone/location/original notes와 편집 시작의 reference time zone을 가진 비영속 값이다.
+- 종일 draft는 배타 종료를 사용한다. floating은 nil time zone, zoned는 IANA identifier이며 `Keep local time`은 DST gap/overlap에서 임의 보정하지 않는다. 편집 중 Mac 기본 time zone이 바뀌면 provider validation 전에 reference-zone civil components를 현재 기본 zone에 재구성해 같은 날짜·벽시각으로 저장한다.
+- 기존 EventKit 객체는 편집 세션에 보관하지 않는다. 같은 store에서 strong identifier를 순서대로 재조회하고 원 calendar의 유일한 비반복 후보만 쓴다.
+- 편집 지원 필드가 외부에서 달라졌으면 stale 오류로 중단한다. zoned는 절대 시점+zone, all-day/floating은 civil components로 비교한다. no-op save는 건너뛰고 실제 변경 필드만 patch해 structured location 등 editor 밖 metadata를 보존한다.
+- attendee가 있는 meeting, read-only, recurrence/detached occurrence는 provider와 AppState 양쪽에서 차단한다.
+- pending local notes 저장 실패와 weak/ambiguous context는 editor 진입 전에 차단한다. 한 번에 하나의 editor session만 허용한다.
+- same-calendar linked update 성공 뒤 `EventMutationContext.linked(contextID)`로 기존 row의 identifier/snapshot만 갱신한다. notes/tasks는 같은 transaction에서 유지되고 unique 충돌은 rollback된다.
+- EventKit과 SQLite는 원자적이지 않다. EventKit 성공 뒤 rebind 실패 시 sheet를 유지하고 부분 성공을 명시한다. linked calendar 이동은 Phase 6, linked 삭제는 Phase 7까지 provider 호출 전에 차단한다.
+
+세부 결정은 [ADR-010](adr/ADR-010-original-event-write-safety.md)을 따른다.
 
 ## Phase 2 표시 파이프라인
 
@@ -194,12 +226,13 @@ KaosCalApp / AppBootstrap
 
 ## Event Brief 경계
 
-Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다. Phase 4는 지연 생성, notes autosave, task CRUD·완료와 Task Center projection을 구현했다. 원본 event move/change log와 orphan lifecycle은 Phase 6~7 범위다.
+Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다. Phase 4는 지연 생성, notes autosave, task CRUD·완료와 Task Center projection을 구현했다. Phase 5는 same-calendar 비반복 원본 수정 뒤 explicit rebind를 추가했으며 change log와 orphan lifecycle은 Phase 6~7 범위다.
 
 - Event Brief 생성: 이벤트를 단순 선택할 때는 만들지 않고, 사용자가 처음 메모나 작업을 저장할 때 local context를 만든다.
 - Event Brief 수정: SQLite에만 쓴다.
-- 일정 이동: EventKit 변경 전 확인하고, 확인 후 change log를 남긴다.
-- 원본 일정 삭제: local context를 즉시 삭제하지 않고 orphaned 상태로 전환한다.
+- same-calendar 시간 변경: Phase 5 editor의 Save를 승인으로 사용하고 기존 context snapshot을 갱신한다. richer 영향 확인과 change log는 Phase 6에서 추가한다.
+- calendar 간 이동: local context가 연결되어 있으면 Phase 6 confirmation 전까지 차단한다.
+- 원본 일정 삭제: local context가 연결되어 있으면 Phase 7 orphan review 전까지 차단한다.
 
 ## Identity resolution
 
@@ -226,7 +259,7 @@ EventKit의 eventIdentifier는 영구 절대값으로 취급하지 않는다. �
 
 - EventKit 실패는 사용자가 이해할 수 있는 캘린더/권한/네트워크/계정 상태 문구로 바꾼다.
 - SQLite open/migration 실패는 데이터 손실 없이 앱 화면을 중단하고 기존 파일 보존·백업/복구 안내를 제공한다. 실제 export/import 복구 도구는 Phase 9 범위다.
-- EventKit 변경과 SQLite change log 기록은 하나의 use case로 관리하고, 한쪽만 성공했을 때 재시도·보정·사용자 안내를 남긴다.
+- EventKit 변경과 SQLite rebind/change log는 한 use case에서 조정하되 같은 transaction이라고 가정하지 않는다. 한쪽만 성공하면 실제 성공 범위와 local 데이터 보존 상태를 명시한다.
 - 일정 삭제와 local context 삭제는 별도 명령으로 분리한다.
 
 ## 열어둘 결정

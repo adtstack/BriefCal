@@ -1,6 +1,12 @@
 import Foundation
 import GRDB
 
+enum EventMutationContext: Equatable {
+    case none
+    case linked(contextID: String)
+    case confirmationRequired(contextIDs: [String])
+}
+
 final class ContextStore {
     let eventContexts: EventContextRepository
     let eventTasks: EventTaskRepository
@@ -90,6 +96,44 @@ final class ContextStore {
                 contextID: contextID,
                 link: link
             )
+        }
+    }
+
+    func mutationContext(
+        for event: DisplayEvent
+    ) throws -> EventMutationContext {
+        try database.read { db in
+            switch try eventContexts.resolve(event: event, in: db) {
+            case let .linked(contextID, _):
+                return .linked(contextID: contextID)
+            case .notFound:
+                return .none
+            case let .candidate(contextIDs, _),
+                 let .ambiguous(contextIDs, _):
+                return .confirmationRequired(contextIDs: contextIDs)
+            }
+        }
+    }
+
+    @discardableResult
+    func rebindUserApprovedMutation(
+        contextID: String,
+        to event: DisplayEvent
+    ) throws -> EventBriefSnapshot {
+        try database.write { db in
+            guard try eventContexts.updateSnapshot(
+                contextID: contextID,
+                event: event,
+                notes: nil,
+                in: db
+            ) != nil,
+            let snapshot = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            return snapshot
         }
     }
 

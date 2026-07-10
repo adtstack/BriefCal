@@ -15,6 +15,17 @@ struct KaosCalApp: App {
         }
         .defaultSize(width: 1_360, height: 840)
         .commands {
+            CommandGroup(replacing: .newItem) {
+                Button("New Event") {
+                    appState.beginCreatingEvent()
+                }
+                .keyboardShortcut("n", modifiers: [.command])
+                .disabled(
+                    !appState.calendarAuthorizationState.canReadEvents
+                        || appState.eventEditorSession != nil
+                        || appState.eventEditorOperationState != .idle
+                )
+            }
             CommandMenu("Navigate") {
                 navigationCommand("Day", section: .day, key: "1")
                 navigationCommand("Week", section: .week, key: "2")

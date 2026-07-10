@@ -130,6 +130,18 @@ After:
 - event source를 누르면 target range를 불러온 뒤 강한 occurrence match만 Day 화면에서 연다. 못 찾으면 task는 유지하고 오류를 표시한다.
 - loading, empty, query failed를 서로 다른 상태로 표시하며 실패에는 Retry를 제공한다.
 
+## Phase 5 원본 일정 Editor
+
+- toolbar plus와 `⌘N`은 580×700 sheet를 열고, 선택 일정 inspector의 `Edit Original Event`도 같은 editor를 사용한다.
+- sheet는 title, writable calendar, location, time/all-day, time zone, **Original event notes** 순서로 배치한다. 원본 notes 아래에는 local Event Brief와 저장 위치가 다르다는 문구를 항상 표시한다.
+- 종일 종료는 사람이 보는 포함 날짜로 표시하고, EventKit 배타 종료라는 설명을 붙인다.
+- floating toggle 또는 IANA time zone 입력이 실제 draft에 적용되기 전에는 Save를 비활성화한다. Apply 뒤 `Keep local time`/`Keep instant`의 두 결과를 confirmation dialog에서 비교한다.
+- DST gap·overlap처럼 local time이 존재하지 않거나 두 번 생기면 임의로 고르지 않고 field 가까이에 오류를 표시한다.
+- local Brief가 연결된 일정은 calendar picker와 delete를 잠그고 각각 Phase 6 safe move, Phase 7 orphan review 이유를 설명한다. 같은 calendar의 title/time/all-day/time zone/location/original notes는 Save로 수정할 수 있다.
+- read-only, attendee meeting/invitation, recurrence/detached occurrence는 inspector에서 편집 버튼 대신 잠금 이유를 표시한다. local Brief 편집은 계속 가능하다.
+- 저장 중에는 progress와 interactive-dismiss 차단을 사용한다. 외부 변경, identity 모호성, EventKit 성공·local rebind 실패는 sheet를 닫지 않고 복구 가능한 오류로 보여 준다.
+- 한 번에 하나의 editor만 허용하고 sheet가 열려 있으면 toolbar와 `⌘N`을 비활성화한다.
+
 ## Source badge
 
 Source badge는 사용자가 이 일정의 출처와 수정 가능 여부를 빠르게 이해하게 해야 한다.
@@ -149,7 +161,7 @@ KaosCal 체크리스트와 메모는 이 Mac에 저장할 수 있습니다.
 
 ## Move confirmation
 
-Move confirmation은 공포를 주는 경고가 아니라 영향 범위 확인이다.
+Phase 6의 richer Move confirmation은 공포를 주는 경고가 아니라 linked calendar 이동·반복 범위·시간 변경 영향과 change log를 확인하는 화면이다. Phase 5의 같은-calendar 비반복 시간 변경은 editor의 `Save Changes`를 직접 승인으로 사용하지만 기존 context를 유지한다.
 
 표시할 것:
 - 기존 시간
@@ -181,7 +193,7 @@ Move confirmation은 공포를 주는 경고가 아니라 영향 범위 확인�
 ## 키보드 우선 작업
 
 초기 단축키 후보:
-- 새 일정
+- 새 일정: `⌘N` 구현
 - 검색
 - 오늘로 이동
 - 이전/다음 기간

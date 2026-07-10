@@ -29,7 +29,34 @@ struct CalendarShellView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .tint(KaosCalTheme.accent)
+        .sheet(item: eventEditorBinding) { session in
+            EventEditorView(appState: appState, session: session)
+        }
+        .alert(
+            "Calendar event change unavailable",
+            isPresented: eventEditorAlertBinding
+        ) {
+            Button("OK") {
+                appState.clearEventEditorError()
+            }
+        } message: {
+            Text(appState.eventEditorError ?? "Unknown calendar event error")
+        }
         .toolbar {
+            ToolbarItem {
+                Button {
+                    appState.beginCreatingEvent()
+                } label: {
+                    Label("New event", systemImage: "plus")
+                }
+                .disabled(
+                    !appState.calendarAuthorizationState.canReadEvents
+                        || appState.eventEditorSession != nil
+                        || appState.eventEditorOperationState != .idle
+                )
+                .accessibilityIdentifier("toolbar.newEvent")
+            }
+
             ToolbarItemGroup {
                 if appState.selectedSection != .tasks {
                     Button {
@@ -118,6 +145,31 @@ struct CalendarShellView: View {
         ) { _ in
             appState.refreshTaskCenter()
         }
+    }
+
+    private var eventEditorBinding: Binding<CalendarEventEditorSession?> {
+        Binding(
+            get: { appState.eventEditorSession },
+            set: { session in
+                if session == nil {
+                    appState.cancelEventEditor()
+                }
+            }
+        )
+    }
+
+    private var eventEditorAlertBinding: Binding<Bool> {
+        Binding(
+            get: {
+                appState.eventEditorSession == nil
+                    && appState.eventEditorError != nil
+            },
+            set: { presented in
+                if !presented {
+                    appState.clearEventEditorError()
+                }
+            }
+        )
     }
 }
 
@@ -463,9 +515,9 @@ private struct AgendaEventRow: View {
                 Image(systemName: "repeat")
                     .help("Recurring event")
             }
-            if event.isReadOnly || event.isInvitation {
+            if event.isReadOnly || event.isInvitation || event.hasAttendees {
                 Image(systemName: "lock")
-                    .help(event.isInvitation ? "Invitation: original editing disabled" : "Read-only event")
+                    .help(originalEditLockHelp)
             }
         }
         .padding(.vertical, 4)
@@ -478,8 +530,22 @@ private struct AgendaEventRow: View {
     }
 
     private var accessibilityText: String {
-        let permission = event.isReadOnly || event.isInvitation ? "read-only" : "editable"
+        let permission = event.isReadOnly
+            || event.isInvitation
+            || event.hasAttendees
+            ? "original editing unavailable"
+            : "editable"
         return "\(event.title), \(timeText), \(event.calendarTitle), \(permission)"
+    }
+
+    private var originalEditLockHelp: String {
+        if event.isInvitation {
+            return "Invitation: original editing stays in Calendar.app"
+        }
+        if event.hasAttendees {
+            return "Meeting with attendees: original editing stays in Calendar.app"
+        }
+        return "Read-only event"
     }
 }
 
@@ -538,9 +604,11 @@ private struct EventInspectorView: View {
                 .padding(.vertical, 4)
                 .background(KaosCalTheme.accentSoft, in: Capsule())
 
-                if event.isInvitation {
+                if event.isInvitation || event.hasAttendees {
                     Label(
-                        "Invitation and RSVP stay in Calendar.app; the local Event Brief remains editable.",
+                        event.isInvitation
+                            ? "Invitation and RSVP stay in Calendar.app; the local Event Brief remains editable."
+                            : "This meeting has attendees. Original changes stay in Calendar.app; the local Event Brief remains editable.",
                         systemImage: "person.crop.circle.badge.exclamationmark"
                     )
                         .font(.caption)
@@ -550,6 +618,20 @@ private struct EventInspectorView: View {
                     Label(timeZoneIdentifier, systemImage: "globe")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+
+                if let restriction = appState.originalEventWriteRestriction(
+                    for: event
+                ) {
+                    Label(restriction, systemImage: "lock")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Button("Edit Original Event") {
+                        appState.beginEditingSelectedEvent()
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("inspector.editOriginal")
                 }
             }
 
@@ -562,6 +644,9 @@ private struct EventInspectorView: View {
     private func originalEventPermissionText(_ event: DisplayEvent) -> String {
         if event.isInvitation {
             return "Invitation · Original in Calendar.app"
+        }
+        if event.hasAttendees {
+            return "Meeting with attendees · Original in Calendar.app"
         }
         if event.isReadOnly {
             return "Calendar event · Read-only"
@@ -579,6 +664,19 @@ private final class PreviewCalendarProvider: CalendarProviding {
     func requestFullAccess() async throws -> Bool { false }
     func listCalendars() throws -> [CalendarSource] { [] }
     func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] { [] }
+    func defaultCalendarIdentifierForNewEvents() -> String? { nil }
+    func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent {
+        throw CalendarEventWriteError.fullAccessRequired
+    }
+    func updateEvent(
+        _ original: DisplayEvent,
+        with draft: CalendarEventDraft
+    ) throws -> DisplayEvent {
+        throw CalendarEventWriteError.fullAccessRequired
+    }
+    func deleteEvent(_ original: DisplayEvent) throws {
+        throw CalendarEventWriteError.fullAccessRequired
+    }
 }
 
 #Preview("Calendar shell") {

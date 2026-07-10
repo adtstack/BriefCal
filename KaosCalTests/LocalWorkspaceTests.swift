@@ -463,7 +463,9 @@ final class LocalWorkspaceTests: XCTestCase {
             occurrenceLocalComponents: nil,
             isDetached: false,
             isReadOnly: isReadOnly,
-            isInvitation: isInvitation
+            isInvitation: isInvitation,
+            hasAttendees: isInvitation,
+            originalNotes: nil
         )
     }
 }

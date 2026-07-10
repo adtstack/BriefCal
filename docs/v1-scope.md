@@ -1,7 +1,7 @@
 # V1 Scope
 
 > 상태: Accepted
-> 마지막 갱신: 2026-07-10
+> 마지막 갱신: 2026-07-11
 > 우선순위: 이 문서는 이전 문서와 충돌할 때 최신 ADR을 따라 해석한다.
 
 ## 한 줄 제품 정의
@@ -21,7 +21,7 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 | Task Center | 이벤트 작업을 모아 보고, 이벤트에 연결되지 않은 가벼운 개인 작업을 추가 | 오늘·예정·완료 목록에서 작업 출처와 연결 일정을 명확히 보여 준다. |
 | 안전성 | read-only 구분, 이동 확인, orphan 보존, 백업/복원 | 원본 일정과 KaosCal 데이터의 삭제·복원이 서로 영향을 주지 않는다. |
 
-현재 구현 단계는 범위 자체와 구분한다. Phase 4에서 Day/Week/Agenda 읽기·표시, 로컬 Event Brief notes·Before/During/After task 편집, Task Center와 personal task CRUD·due 편집까지 구현했고 자동 회귀·Release·서명·fixture 시각 검증을 통과했다. 실제 서명 앱 창 상호작용과 Exchange 실계정 gate는 대기 중이다. 원본 일정 생성·편집·삭제와 시간대 변경은 Phase 5, 반복 변경 범위와 change log는 Phase 6에서 구현·검증한다.
+현재 구현 단계는 범위 자체와 구분한다. Phase 5에서 Day/Week/Agenda, 로컬 Event Brief·Task Center에 더해 attendee가 없는 비반복 writable 원본 일정 생성·same-calendar 수정, local Brief가 없는 일정의 calendar 이동·삭제, 종일·floating/zoned 시간대와 원본 notes 편집을 구현했고 전체 97-test 자동 회귀를 통과했다. 실제 서명 앱 창과 `KAOS-TEST` EventKit/Calendar.app round-trip은 대기 중이므로 Exchange 지원 완료로 선언하지 않는다. 반복 변경 범위·linked calendar 이동·change log는 Phase 6, linked 삭제·orphan review는 Phase 7에서 구현·검증한다.
 
 ## Exchange 지원 경계
 
@@ -32,7 +32,7 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 
 ## 초대 일정 정책
 
-초대받은 일정은 표시하고 로컬 Event Brief와 작업을 붙일 수 있다. 다만 v1에서는 RSVP, 참석자, 주최자, 원본 제목·시간·삭제 변경을 제공하지 않는다. 사용자는 Calendar.app에서 해당 동작을 수행한다.
+초대받은 일정과 사용자가 주최했더라도 참석자가 있는 meeting은 표시하고 로컬 Event Brief와 작업을 붙일 수 있다. 다만 v1에서는 RSVP, 참석자, 주최자, 원본 제목·시간·삭제 변경을 제공하지 않는다. 사용자는 Calendar.app에서 해당 동작을 수행한다.
 
 ## Task Center 정책
 

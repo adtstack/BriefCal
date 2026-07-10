@@ -12,7 +12,8 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 - Phase 2: **구현·자동 검증 완료 / 실계정 UI 검증 중** — Day/Week/Agenda 공통 범위, 실제 시간·종일 배치, 33개 전체 테스트, Release·서명 build, offscreen 렌더 검증 완료
 - Phase 3: **완료** — GRDB v1 migration, 앱 bootstrap, Event Brief/task repository, identity resolver, 파일 재열기·동시 저장, 54-test 전체 회귀, Release·서명 Debug 검증 완료
 - Phase 4: **구현·자동·빌드·서명·fixture 시각 검증 완료 / 수동 gate 대기** — notes autosave, event/personal task CRUD·완료·due, typed Task Center, strong-only 원본 탐색 구현; 전체 75 tests와 Release·서명 Debug·strict codesign 통과
-- Phase 5~10: 대기
+- Phase 5: **구현·자동·Release·ad-hoc 서명 checkpoint / 실제 EventKit·Exchange 수동 gate 대기** — attendee가 없는 비반복 writable 일정 create/update, local Brief 없는 일정 move/delete, all-day·floating/zoned·원본 notes 편집, stale/identity/rebind 보호 구현; 전체 97 tests와 strict codesign 통과
+- Phase 6~10: 대기
 
 ## Phase 표
 
@@ -24,7 +25,7 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 | 3 | Local context DB | GRDB migrations, repositories, tests | Event Brief와 Task Center 데이터가 SQLite에 저장/조회된다. |
 | 4 | Event Brief + Task Center | Before/During/After, personal tasks, inline editing | 일정 작업과 개인 작업을 오늘 목록에서 완료할 수 있다. |
 | 5 | Time-safe event editing | create/update/delete, all-day, timezone | Calendar.app에서 원본 변경이 확인되고 시간 의미가 유지된다. |
-| 6 | Recurrence + change-safe move | recurrence scope UI, move confirmation, change log | 반복 범위와 이동 영향이 명확하며 context가 유지된다. |
+| 6 | Recurrence + change-safe move | recurrence scope UI, linked calendar move/impact confirmation, change log | 반복 범위와 이동 영향이 명확하며 context가 유지된다. |
 | 7 | Lifecycle / After Review | completed/orphaned/after task handling | 종료된 일정의 후속 작업을 처리할 수 있다. |
 | 8 | Multi-calendar clarity | source badge, role, read-only explanation | 일정 출처와 권한이 명확히 표시된다. |
 | 9 | Backup / settings | export/import, reset local data | DB 백업과 복구가 된다. |
@@ -163,13 +164,23 @@ Definition of Done:
 - read-only 일정은 편집 UI 비활성화
 - 종일·시간대 fixture가 Exchange compatibility matrix에서 통과
 
+현재 판정:
+- 구현 완료: toolbar·`⌘N`과 inspector에서 editor sheet를 열고 title, writable calendar, time/all-day, floating/IANA time zone, location, 원본 notes를 편집한다.
+- 쓰기 안전성 구현: full access·writable·비반복·attendee 없는 일정만 허용하고, 같은 store의 강한 identifier로 최신 원본을 다시 찾은 뒤 지원 필드가 외부에서 달라졌으면 중단한다.
+- metadata 보존 구현: no-op은 EventKit save를 생략하고 변경 필드만 patch한다. local Event Brief notes/tasks는 `EKEvent.notes`와 분리한다.
+- 시간 안전성 구현: 종일 UI 포함 종료↔EventKit 배타 종료, timed 자정 종료 변환, 고정 reference time zone, preserve-local/preserve-instant 미리보기, DST gap/overlap 차단을 적용한다.
+- local 연결 보호 구현: pending notes 저장 실패와 weak/ambiguous identity는 editor를 열지 않는다. linked same-calendar 수정은 receipt로 기존 context를 rebind하고 notes/tasks를 보존하며, rebind 실패는 EventKit 부분 성공으로 알린다.
+- 명시적 이월: linked calendar 이동은 Phase 6, linked 삭제·orphan review는 Phase 7, 반복 create/update/delete와 `EKSpan` 선택은 Phase 6이다. attendee가 있는 회의와 초대 원본은 v1에서 Calendar.app 전용이다.
+- 자동·빌드·서명 검증 통과: 전체 **97 tests, 0 failures, 0 unexpected**. create/update/delete AppState 흐름, 제한 정책, stale 오류, linked rebind·사전 차단·부분 성공, transaction rollback, all-day/time-zone/DST 경계를 포함한다. unsigned Release, ad-hoc signed Debug, strict codesign·sandbox·Calendar entitlement·usage description을 확인했고 production DB mtime/size는 테스트 전후 불변이다.
+- 수동 gate 대기: 실제 full access 승인, `KAOS-TEST`의 Exchange/writable 노출, Calendar.app 생성·수정·삭제·종일·시간대 반영, 실제 identifier churn과 서버 정규화. 이 항목 전에는 Exchange 지원 통과로 선언하지 않는다.
+
 ## Phase 6: Recurrence And Change-Safe Move
 
 작업:
 - 반복 occurrence 표시와 기본 recurrence editor
 - `이번 일정` / `이번 이후` 영향 범위 선택
-- 일정 이동 감지
-- Move confirmation UI
+- linked calendar 이동과 반복 범위 감지
+- linked 이동·같은-calendar 시간 변경 영향의 richer confirmation UI
 - 연결 항목 리스트 표시
 - change log 기록
 - undo 최소 구현

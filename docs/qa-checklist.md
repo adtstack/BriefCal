@@ -66,39 +66,42 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ### 4. 새 일정 생성
 
 절차:
-1. KaosCal에서 새 일정을 만든다.
-2. Calendar.app을 연다.
-3. 같은 일정이 보이는지 확인한다.
+1. `⌘N` 또는 toolbar plus로 `KAOS-TEST` 시간 일정을 만든다.
+2. 종일 일정도 포함 종료 날짜로 하나 만든다.
+3. Calendar.app을 열어 두 일정을 확인한다.
+4. 만든 일정의 원본 notes와 별도 Event Brief notes를 각각 저장한다.
 
 기대 결과:
 - 새 일정이 EventKit을 통해 실제 캘린더에 저장된다.
-- KaosCal Event Brief는 local DB에만 저장된다.
+- 원본 notes만 Calendar.app notes에 보이고 KaosCal Event Brief는 local DB에만 저장된다.
 - writable calendar에만 생성할 수 있다.
+- 종일 일정은 UI 포함 종료와 EventKit 배타 종료가 같은 날짜 범위를 뜻한다.
+- editor가 열린 동안 두 번째 `⌘N`이 현재 draft를 교체하지 않는다.
 
-### 5. 일정 이동
+### 5. 같은-calendar 원본 수정
 
 절차:
 1. Event Brief가 있는 일정을 선택한다.
-2. 시간을 변경한다.
-3. Move confirmation을 확인한다.
-4. 변경을 승인한다.
+2. 제목·시간·장소·원본 notes를 수정하고 저장한다.
+3. Calendar.app과 Event Brief를 다시 확인한다.
 
 기대 결과:
-- old time과 new time이 표시된다.
-- 연결된 before/during/after tasks, notes, change history가 함께 유지된다는 설명이 보인다.
-- 승인 후 context_id가 유지된다.
-- event_change_log에 before_json과 after_json이 기록된다.
+- Calendar.app 원본 필드가 바뀌고 local notes/tasks와 context_id는 유지된다.
+- 원본 notes와 local notes가 서로 덮어쓰지 않는다.
+- Calendar.app에서 편집기를 연 뒤 원본을 먼저 바꾸면 KaosCal 저장은 stale 오류로 중단된다.
+- 제목만 바꿨을 때 structured location 등 editor 밖 metadata를 불필요하게 지우지 않는다.
+- Phase 5에는 change log가 아직 생성되지 않는다.
 
-### 6. 이동 취소
+### 6. linked calendar 이동·삭제 차단
 
 절차:
-1. Event Brief가 있는 일정을 이동하려고 한다.
-2. Move confirmation에서 취소한다.
+1. Event Brief가 있는 일정을 다른 writable calendar로 옮기려고 한다.
+2. 같은 editor에서 원본 삭제 control을 확인한다.
 
 기대 결과:
-- EventKit 이벤트가 변경되지 않는다.
-- SQLite change log가 추가되지 않는다.
-- Event Brief 상태가 바뀌지 않는다.
+- calendar picker와 delete가 잠기고 Phase 6 safe move·Phase 7 orphan review 이유가 보인다.
+- EventKit update/remove를 호출하지 않고 Event Brief 상태가 바뀌지 않는다.
+- local Brief가 없는 비반복 일정의 calendar 이동·삭제만 Phase 5에서 허용된다.
 
 ### 7. 읽기 전용 일정
 
@@ -111,7 +114,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 왜 수정할 수 없는지 설명한다.
 - KaosCal local Event Brief는 편집 가능해야 한다.
 
-### 8. 원본 일정 삭제
+### 8. 원본 일정 삭제 후 orphan (Phase 7 수동 gate)
 
 절차:
 1. Event Brief가 있는 일정을 Calendar.app에서 삭제한다.
@@ -173,14 +176,17 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 절차:
 1. DST 시간대의 `KC-E3 TZ` fixture를 연다.
 2. 시간대를 바꾸고 `현지 시각 유지`와 `동일 시점 유지`를 각각 미리 본다.
-3. 승인 후 Calendar.app에서 결과를 확인한다.
+3. spring-forward의 존재하지 않는 시각과 fall-back의 중복 시각도 `현지 시각 유지`로 시도한다.
+4. 승인 가능한 결과는 Calendar.app에서 확인한다.
 
 기대 결과:
 - 두 선택이 다른 결과임을 사용자에게 보여 준다.
 - floating 일정은 고정 시간대로 잘못 저장되지 않는다.
+- 편집 시작 reference time zone은 sheet가 열려 있는 동안 고정된다.
+- DST gap/overlap은 자동으로 한 시간 이동하거나 첫 번째 occurrence를 고르지 않고 명시적 오류로 중단한다.
 - 원본 편집 실패 시 Event Brief나 change log가 잘못 갱신되지 않는다.
 
-### 12. 반복 일정
+### 12. 반복 일정 (Phase 6 수동 gate)
 
 절차:
 1. `KC-E4 Recurring` fixture의 여러 occurrence를 연다.
@@ -213,13 +219,13 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ### 14. 초대 일정
 
 절차:
-1. 외부 주최자가 만든 `KC-E6 Invite` fixture를 연다.
+1. 외부 주최자가 만든 `KC-E6 Invite`와 사용자가 주최했지만 참석자가 있는 테스트 meeting을 연다.
 2. Event Brief와 task를 저장한다.
 3. 원본 편집 control을 확인한다.
 
 기대 결과:
 - local Event Brief는 저장할 수 있다.
-- RSVP, 참석자, 원본 제목·시간·삭제 변경 control은 보이지 않거나 비활성화된다.
+- 두 일정 모두 RSVP, 참석자, 원본 제목·시간·삭제 변경 control은 보이지 않거나 비활성화된다.
 - Exchange에 초대 변경 메일을 유발하지 않는다.
 
 ## 회귀 테스트 규칙
@@ -231,6 +237,9 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 일정 이동 취소는 EventKit과 local DB 모두 변경하지 않는다.
 - orphaned context는 사용자 선택 없이 자동 삭제하지 않는다.
 - EventKit 변경 알림 뒤에는 마지막 loaded interval을 다시 fetch하고 stale event object를 저장하지 않는다.
+- 원본 update/delete는 같은 store에서 다시 찾은 비반복 strong match와 fresh snapshot에만 실행한다.
+- no-op은 EventKit save를 호출하지 않고, 변경 필드만 patch한다.
+- EventKit 성공과 SQLite rebind 실패를 전체 실패로 숨기거나 local data 삭제로 보정하지 않는다.
 - recurrence occurrence를 ID 하나나 UTC timestamp 하나로 잘못 연결하지 않는다.
 - Task Center의 personal task는 EventKit/Exchange에 동기화하지 않는다.
 
@@ -281,15 +290,29 @@ Phase 4에서 구현·자동 회귀 통과한 항목:
 - unsigned Release, ad-hoc signed Debug, strict codesign, app sandbox·Calendar entitlement·usage description
 - in-memory DB·fake provider 1360×840 fixture의 invitation/local badge, Before/During/After·notes와 Overdue/Today/No date·event/personal row 핵심 레이아웃
 
-Phase 4 수동 gate와 이후 후보:
+Phase 5에서 구현·자동 회귀 통과한 항목:
+
+- draft trim/range/time-zone validation, all-day 배타 종료, timed 자정 종료→all-day 경계
+- 편집 시작 reference time zone 고정, 기본 zone 변경 시 all-day/floating civil rebase·semantic stale 비교, preserve-instant/local, DST gap/overlap 차단
+- provider default Exchange calendar 생성과 receipt Day focus
+- linked same-calendar update 뒤 context ID·notes·tasks 보존 rebind
+- linked calendar 이동·삭제의 provider 호출 전 차단과 unlinked 이동·삭제 성공
+- read-only, attendee meeting/invitation, recurrence 원본 editor 차단
+- 외부 변경 오류에서 editor session 유지, active editor 중복 방지, 권한 회수 시 editor 제거
+- pending local notes 저장 실패 시 원본 editor 차단
+- EventKit 성공·local rebind 충돌 부분 성공 안내와 두 context transaction rollback
+- rebind unique 충돌·missing context에서 local notes/tasks/link 보존
+- 전체 **97 tests, 0 failures, 0 unexpected**, production DB mtime/size 불변
+
+Phase 5 수동 gate와 이후 후보:
 
 - 실제 SwiftUI 창에서 focus loss·delete confirmation·popover·VoiceOver 상호작용
 - app 종료·재실행과 실제 `KAOS-TEST` event-linked navigation 수동 흐름
+- 실제 `KAOS-TEST` create/update/delete, all-day, floating/zoned, Calendar.app round-trip
 - event task fixed/relative due 편집 UI와 notification/reminder 정책
 - ChangeLogRepository append/query
-- MoveEventUseCase confirmation과 context_id 보존
+- linked calendar Move confirmation·반복 영향 범위·change log와 context_id 보존
 - missing/orphaned lifecycle 전환과 relink UI
-- time-zone change preview semantics
 - backup/export/import/reset과 손상 DB 복구
 
 ## Beta gate

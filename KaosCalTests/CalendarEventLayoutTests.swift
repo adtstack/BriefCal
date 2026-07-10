@@ -712,7 +712,9 @@ final class CalendarEventLayoutTests: XCTestCase {
             occurrenceLocalComponents: nil,
             isDetached: false,
             isReadOnly: false,
-            isInvitation: false
+            isInvitation: false,
+            hasAttendees: false,
+            originalNotes: nil
         )
     }
 }
