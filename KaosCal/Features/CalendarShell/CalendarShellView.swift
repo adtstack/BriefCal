@@ -7,6 +7,16 @@ struct CalendarShellView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
+        Group {
+            if case let .failed(message) = appState.localContextStoreState {
+                LocalContextStoreFailureView(message: message)
+            } else {
+                calendarShell
+            }
+        }
+    }
+
+    private var calendarShell: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView(appState: appState)
                 .navigationSplitViewColumnWidth(min: 210, ideal: 240, max: 300)
@@ -69,6 +79,28 @@ struct CalendarShellView: View {
                 await appState.loadCalendarStatus()
             }
         }
+    }
+}
+
+private struct LocalContextStoreFailureView: View {
+    let message: String
+
+    var body: some View {
+        ContentUnavailableView {
+            Label(
+                "Local data needs recovery",
+                systemImage: "externaldrive.badge.exclamationmark"
+            )
+        } description: {
+            Text(
+                "KaosCal stopped before loading or changing local data. "
+                    + "The existing database was preserved. Quit the app, "
+                    + "back up the KaosCal folder in Application Support, "
+                    + "then review the error before retrying.\n\n\(message)"
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(32)
     }
 }
 
@@ -207,7 +239,10 @@ private struct WorkspaceView: View {
     @ViewBuilder
     private var content: some View {
         if appState.selectedSection == .tasks {
-            TaskCenterPlaceholderView(filter: $appState.selectedTaskFilter)
+            TaskCenterPlaceholderView(
+                filter: $appState.selectedTaskFilter,
+                storeState: appState.localContextStoreState
+            )
         } else {
             switch appState.calendarContentState {
             case .disconnected:
@@ -233,7 +268,10 @@ private struct WorkspaceView: View {
         case .agenda:
             AgendaView(appState: appState)
         case .tasks:
-            TaskCenterPlaceholderView(filter: $appState.selectedTaskFilter)
+            TaskCenterPlaceholderView(
+                filter: $appState.selectedTaskFilter,
+                storeState: appState.localContextStoreState
+            )
         }
     }
 }
@@ -390,6 +428,7 @@ private struct AgendaEventRow: View {
 
 private struct TaskCenterPlaceholderView: View {
     @Binding var filter: TaskFilter
+    let storeState: LocalContextStoreState
 
     var body: some View {
         VStack(spacing: 0) {
@@ -404,11 +443,20 @@ private struct TaskCenterPlaceholderView: View {
 
             Divider()
 
-            ContentUnavailableView(
-                "No \(filter.title.lowercased()) tasks",
-                systemImage: "checklist",
-                description: Text("Event tasks and personal tasks will be stored locally on this Mac.")
-            )
+            switch storeState {
+            case let .failed(message):
+                ContentUnavailableView(
+                    "Local task storage unavailable",
+                    systemImage: "externaldrive.badge.exclamationmark",
+                    description: Text(message)
+                )
+            case .ready, .unavailable:
+                ContentUnavailableView(
+                    "No \(filter.title.lowercased()) tasks",
+                    systemImage: "checklist",
+                    description: Text("Event tasks and personal tasks are stored locally on this Mac.")
+                )
+            }
         }
     }
 }

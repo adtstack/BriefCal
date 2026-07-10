@@ -559,6 +559,39 @@ final class CalendarEventLayoutTests: XCTestCase {
         )
         XCTAssertNotEqual(firstOccurrence, secondOccurrence)
 
+        let localOccurrence = LocalDateTimeComponents(
+            date: original,
+            calendar: testCalendar
+        )
+        let sameLocalOccurrenceAfterTimeZoneChange = DisplayEventIdentity.make(
+            calendarIdentifier: "calendar",
+            externalIdentifier: "series",
+            calendarItemIdentifier: nil,
+            eventIdentifier: nil,
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 6, 16),
+            occurrenceLocalComponents: localOccurrence,
+            startDate: date(2026, 7, 6, 16),
+            endDate: date(2026, 7, 6, 17),
+            title: "series"
+        )
+        let originalLocalOccurrence = DisplayEventIdentity.make(
+            calendarIdentifier: "calendar",
+            externalIdentifier: "series",
+            calendarItemIdentifier: nil,
+            eventIdentifier: nil,
+            isRecurring: true,
+            occurrenceDate: original,
+            occurrenceLocalComponents: localOccurrence,
+            startDate: moved,
+            endDate: date(2026, 7, 6, 12),
+            title: "series"
+        )
+        XCTAssertEqual(
+            originalLocalOccurrence,
+            sameLocalOccurrenceAfterTimeZoneChange
+        )
+
         let otherCalendar = DisplayEventIdentity.make(
             calendarIdentifier: "other-calendar",
             externalIdentifier: "series",
@@ -676,6 +709,7 @@ final class CalendarEventLayoutTests: XCTestCase {
             timeSemantics: timeSemantics,
             isRecurring: false,
             occurrenceDate: nil,
+            occurrenceLocalComponents: nil,
             isDetached: false,
             isReadOnly: false,
             isInvitation: false

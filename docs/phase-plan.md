@@ -10,7 +10,9 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 - Phase 0: **완료** — 2026-07-10, build/test/ad-hoc signing/window 생성 검증
 - Phase 1: **실계정 검증 중** — 코드·15개 자동 테스트·ad-hoc 서명 검증 완료, full access 사용자 승인 및 `KAOS-TEST` 확인 대기
 - Phase 2: **구현·자동 검증 완료 / 실계정 UI 검증 중** — Day/Week/Agenda 공통 범위, 실제 시간·종일 배치, 33개 전체 테스트, Release·서명 build, offscreen 렌더 검증 완료
-- Phase 3~10: 대기
+- Phase 3: **완료** — GRDB v1 migration, 앱 bootstrap, Event Brief/task repository, identity resolver, 파일 재열기·동시 저장, 54-test 전체 회귀, Release·서명 Debug 검증 완료
+- Phase 4: **진행 중** — Event Brief와 Task Center 실제 편집·완료 UX
+- Phase 5~10: 대기
 
 ## Phase 표
 
@@ -107,6 +109,17 @@ Definition of Done:
 - Personal task와 event task가 Task Center query에 함께 표시
 - 원본 이벤트 notes에 아무것도 쓰지 않음
 - Repository tests 통과
+
+현재 판정:
+- 구현 완료: 앱 시작 시 Application Support DB open/migration, 실패 시 in-memory 대체 없이 전역 복구 안내
+- schema 완료: `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`와 FK/CHECK/identity unique index
+- 저장 완료: 첫 메모·event task에서 context/link 지연 생성, personal/event task CRUD·완료·기한, Task Center 통합 query
+- 식별 완료: 강한 ID 관찰 시 snapshot 갱신, weak snapshot/fingerprint는 후보만 반환, zoned instant와 all-day/floating local occurrence 분리
+- 안전성 검증 완료: 동시 첫 저장 단일 transaction, UTC millisecond TEXT Date 계약, 파일 재열기와 raw schema constraint 회귀 테스트, hosted XCTest live DB 차단
+- 자동 gate 통과: **54 tests, 0 failures**, unsigned Release build, ad-hoc signed Debug build와 strict codesign·entitlement·Info.plist 검증
+- 격리 gate 통과: 전체 테스트 전후 direct/sandbox Application Support의 기존 zero-row DB mtime이 바뀌지 않아 test host가 운영 DB를 열지 않음을 확인
+- UI 이월: 실제 Event Brief 편집과 Task Center 목록·완료 상호작용은 Phase 4 범위
+- 수동 검증 이월: 실제 UI를 통한 앱 종료/재실행 유지와 `KAOS-TEST`의 identifier churn·detached recurrence
 
 ## Phase 4: Event Brief UX
 

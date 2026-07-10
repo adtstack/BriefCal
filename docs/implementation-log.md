@@ -146,6 +146,52 @@
 - 계획 변경: 실제 calendar color snapshot은 source 구분을 위해 Phase 2로 앞당겼다. calendar role·사용자 override·Viewer 설명은 Phase 8에 유지한다.
 - 남은 위험: Exchange backend unknown, 실제 TCC 승인 미확인, KC-E1~KC-E4와 외부 변경 실계정 검증, Viewer calendar `blocked`, 실제 창의 VoiceOver/키보드/scroll 수동 QA.
 
+## 2026-07-10 — Phase 3 Local Context DB 구현 및 안전성 gate
+
+- 관련 ADR: ADR-003, ADR-004, ADR-005, ADR-006, ADR-008
+- dependency checkpoint:
+  - GRDB.swift `7.10.0` exact pin과 `Package.resolved`를 별도 commit `8ed589c`로 고정
+  - resolved file만 사용하는 build에서 package resolution 확인
+- 변경 파일:
+  - `KaosCal/ContextStore`: `AppDatabase`, immutable `v1_context_store` migration, record/domain model, `ContextStore`, event/personal/task repositories, Task Center query, fingerprint
+  - `KaosCalApp`, `AppState`, `CalendarShellView`: production DB bootstrap, EventKit fetch batch observe, DB 실패 전역 중단·복구 안내
+  - `CalendarModels`, `EventKitProvider`: all-day/floating recurrence local occurrence snapshot과 UI identity
+  - `ContextStoreTests`, `CalendarAccessTests`, `CalendarEventLayoutTests`, `AppStateTests`: persistence·identity·bootstrap 회귀
+  - ADR-008과 architecture/data model/phase/QA/setup/backup 문서
+- 구현:
+  - Application Support의 `kaoscal.sqlite`를 `DatabaseQueue`로 열고 migration한다. 실패 시 in-memory로 대체하지 않고 기존 파일을 보존한다.
+  - v1은 `event_contexts`, `event_links`, `event_tasks`, `personal_tasks` 네 테이블만 만든다. change log/role/settings는 후속 additive migration으로 이월한다.
+  - 단순 선택·빈 notes는 row를 만들지 않고, 첫 notes 또는 event task에서 context+link를 원자적으로 만든다.
+  - resolve부터 create/update까지 하나의 write transaction으로 묶고 identifier+occurrence unique index로 동시 첫 저장 중복을 막는다.
+  - strong identifier 관찰만 title/time/source/identifier/last-seen snapshot을 갱신한다. exact snapshot과 normalized SHA-256 fingerprint는 자동 연결하지 않는 후보로 남긴다.
+  - zoned 반복은 absolute occurrence key, all-day/floating 반복은 local civil occurrence key를 사용한다. detached는 이동된 start가 아니라 원 occurrence anchor를 보존한다.
+  - `Date`는 명시적 `.deferredToDate` UTC millisecond TEXT로 고정한다.
+  - event task의 none/fixed/relative due와 5년 offset 상한, personal task, Today/Upcoming/Completed 통합 query를 구현한다.
+  - hosted XCTest는 `XCTestConfigurationFilePath`를 감지해 production Application Support DB를 열지 않는다.
+- 자동 검증 이력:
+  - 직전 안정본 전체 회귀: **52 tests, 0 failures**
+  - 최신 ContextStore targeted 재실행: **18 tests, 0 failures**
+  - calendar/access/layout/context combined 실행은 47개 중 file-reopen fixture의 weak exact-candidate 충돌 1건을 찾아 수정했고, 해당 ContextStore 전체 18개 재실행으로 수정 통과를 확인
+  - migration negative FK/CHECK, 동시 첫 저장, 관찰-only move, all-day/floating 시간대·detached, fingerprint fixture, raw Date TEXT, 일반 Date binding, 파일 DB reopen을 포함
+- 최종 자동 gate:
+  - test-host live DB 차단과 빈 external series fallback을 포함한 최신 전체 회귀: **54 tests, 0 failures, 0 unexpected**, `TEST SUCCEEDED`
+  - pinned `Package.resolved`만 사용한 unsigned Release build: `BUILD SUCCEEDED`
+  - ad-hoc signed Debug build: `BUILD SUCCEEDED`
+  - `codesign --verify --deep --strict`: pass
+  - signed entitlement: app sandbox, Calendar access, Debug의 get-task-allow만 포함
+  - built Info.plist: bundle `com.adtstack.kaoscal`, macOS 14.0 minimum, full calendar access usage description 확인
+  - 전체 회귀 xcresult: `Test-KaosCal-2026.07.10_22-15-04-+0900.xcresult`
+- 테스트 격리 사건:
+  - 격리 수정 전 hosted XCTest가 direct/sandbox Application Support에 zero-row schema DB를 생성한 사실을 확인했다.
+  - 두 DB는 사용자 영역 파일이므로 삭제하지 않았고, 감사 시 네 테이블 row count는 모두 0이었다.
+  - 기록한 mtime은 direct `2026-07-10 19:18:24 +0900`, sandbox `2026-07-10 19:20:43 +0900`이며 격리 수정 뒤 최신 54-test 전체 회귀 전후에 모두 불변이었다.
+- 미검증/이월:
+  - Phase 4 Event Brief/Task Center 실제 UI CRUD와 앱 종료·재실행 수동 흐름
+  - 실제 `KAOS-TEST` Exchange identifier churn·detached occurrence
+  - missing/orphan lifecycle, change log, backup/export/import/reset
+  - full access와 Exchange/writable 실계정 gate는 기존과 같이 대기
+- 결과: Phase 3 코드·자동 검증 checkpoint 완료. 실제 UI를 통한 저장·재실행 확인은 Phase 4 수동 gate로 유지하고 Phase 4 구현을 시작한다.
+
 ## 다음 항목 템플릿
 
 ```markdown

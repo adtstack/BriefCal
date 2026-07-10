@@ -20,3 +20,4 @@ ADR은 제품·기술·데이터 안전성에 영향을 주는 결정을 변경 
 | [ADR-005](ADR-005-decision-and-change-recording.md) | Accepted | 결정·변경 기록 운영 규칙 |
 | [ADR-006](ADR-006-native-project-build-baseline.md) | Accepted | 네이티브 프로젝트·빌드·보안 기준 |
 | [ADR-007](ADR-007-calendar-layout-and-display-time.md) | Accepted | 캘린더 배치와 표시 시간 의미 |
+| [ADR-008](ADR-008-local-context-store-and-event-identity.md) | Accepted | 로컬 Context 저장소와 이벤트 연결 안전성 |

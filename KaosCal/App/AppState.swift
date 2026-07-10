@@ -55,6 +55,12 @@ enum CalendarContentState: Equatable {
     case failed(String)
 }
 
+enum LocalContextStoreState: Equatable {
+    case unavailable
+    case ready
+    case failed(String)
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var selectedSection: WorkspaceSection? = .week
@@ -65,8 +71,10 @@ final class AppState: ObservableObject {
     @Published private(set) var calendarAuthorizationState: CalendarAuthorizationState
     @Published private(set) var calendarSources: [CalendarSource] = []
     @Published private(set) var events: [DisplayEvent] = []
+    @Published private(set) var localContextStoreState: LocalContextStoreState
 
     let calendar: Calendar
+    let contextStore: ContextStore?
     private let now: () -> Date
     private let calendarProvider: CalendarProviding
     private var storeRefreshTask: Task<Void, Never>?
@@ -76,12 +84,16 @@ final class AppState: ObservableObject {
     init(
         calendar: Calendar = .autoupdatingCurrent,
         now: @escaping () -> Date = Date.init,
-        calendarProvider: CalendarProviding? = nil
+        calendarProvider: CalendarProviding? = nil,
+        contextStore: ContextStore? = nil,
+        localContextStoreState: LocalContextStoreState = .unavailable
     ) {
         let calendarProvider = calendarProvider ?? EventKitProvider()
         self.calendar = calendar
         self.now = now
         self.calendarProvider = calendarProvider
+        self.contextStore = contextStore
+        self.localContextStoreState = localContextStoreState
         calendarAuthorizationState = calendarProvider.authorizationState
         focusedDate = calendar.startOfDay(for: now())
 
@@ -267,6 +279,7 @@ final class AppState: ObservableObject {
                 ?? initialFetchInterval()
             let sources = try calendarProvider.listCalendars()
             let fetchedEvents = try calendarProvider.fetchEvents(in: interval)
+            observeLocalContexts(fetchedEvents)
             calendarSources = sources
             events = fetchedEvents
             loadedEventInterval = interval
@@ -291,6 +304,16 @@ final class AppState: ObservableObject {
             }
             guard let self else { return }
             await self.refreshCalendarData(in: self.loadedEventInterval)
+        }
+    }
+
+    private func observeLocalContexts(_ events: [DisplayEvent]) {
+        guard let contextStore else { return }
+        do {
+            _ = try contextStore.observe(events: events)
+            localContextStoreState = .ready
+        } catch {
+            localContextStoreState = .failed(Self.message(for: error))
         }
     }
 

@@ -186,7 +186,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 기대 결과:
 - occurrence별 Brief와 task가 섞이지 않는다.
-- detached occurrence가 별도 후보로 처리된다.
+- detached occurrence는 원래 occurrence anchor의 기존 context에 유지되고 다른 occurrence와 섞이지 않는다.
 - 지원하지 않는 복잡한 서버 rule은 Calendar.app으로 안내하고 원본 rule을 훼손하지 않는다.
 
 ### 13. Task Center
@@ -238,21 +238,31 @@ Phase 2에서 구현·통과한 항목:
 - UI occurrence ID의 이동 안정성·occurrence/calendar 구분·anonymous fallback
 - loaded range 확장 조회, selection 정리, stale pending 조회 취소
 
-Phase 3 이후 후보:
+Phase 3에서 구현·통과한 항목:
 
-- EventContextRepository CRUD
-- EventTaskRepository ordering
-- EventTask completion persistence
+- `v1_context_store` migration, foreign key, CHECK, identity unique/index 계약
+- 선택·빈 notes의 zero-row 보장과 첫 notes/event task의 context+link transaction 생성
+- 동시 첫 notes/task 저장의 단일 context 보장
+- EventContext brief 조회, EventTask CRUD·ordering·completion·fixed/relative due
+- PersonalTask CRUD와 Today/Upcoming/Completed query
+- event task와 personal task의 Task Center 통합 read
+- normalized versioned fingerprint 일관성과 weak candidate 자동 연결 차단
+- 강한 identifier 관찰 시 moved snapshot/due 갱신과 notes/task 보존
+- zoned occurrence 분리와 all-day/floating civil occurrence·detached resolution
+- 표시 time zone에서 all-day/floating relative due 재구성
+- UTC millisecond TEXT Date raw 형식, 일반 Date binding, file DB reopen round-trip
+- 완료·기한·local component·반복 identity의 파일 재열기 유지
+- AppState fetch→ContextStore batch observe 연동
+- hosted XCTest가 live Application Support DB를 열지 않는 bootstrap 격리
+
+Phase 4 이후 후보:
+
+- Event Brief/Task Center UI CRUD와 완료 상호작용
 - ChangeLogRepository append/query
-- fingerprint normalization consistency
-- EventIdentityResolver fallback order
-- MoveEventUseCase confirmation required
-- MoveEventUseCase context_id preservation
-- Orphaned context transition
-- PersonalTaskRepository CRUD/query
-- all-day/floating/zoned time normalization
-- recurrence occurrence identity and detached-event resolution
+- MoveEventUseCase confirmation과 context_id 보존
+- missing/orphaned lifecycle 전환과 relink UI
 - time-zone change preview semantics
+- backup/export/import/reset과 손상 DB 복구
 
 ## Beta gate
 

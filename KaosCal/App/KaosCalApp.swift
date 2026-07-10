@@ -2,7 +2,11 @@ import SwiftUI
 
 @main
 struct KaosCalApp: App {
-    @StateObject private var appState = AppState()
+    @StateObject private var appState: AppState
+
+    init() {
+        _appState = StateObject(wrappedValue: AppBootstrap.makeAppState())
+    }
 
     var body: some Scene {
         WindowGroup("KaosCal") {
@@ -34,5 +38,35 @@ struct KaosCalApp: App {
             appState.select(section)
         }
         .keyboardShortcut(key, modifiers: [.command])
+    }
+}
+
+@MainActor
+enum AppBootstrap {
+    static func makeAppState(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        openDatabase: () throws -> AppDatabase = {
+            try AppDatabase.openDefault()
+        }
+    ) -> AppState {
+        if environment["XCTestConfigurationFilePath"] != nil {
+            return AppState(localContextStoreState: .unavailable)
+        }
+
+        do {
+            let contextStore = ContextStore(
+                database: try openDatabase()
+            )
+            return AppState(
+                contextStore: contextStore,
+                localContextStoreState: .ready
+            )
+        } catch {
+            return AppState(
+                localContextStoreState: .failed(
+                    error.localizedDescription
+                )
+            )
+        }
     }
 }

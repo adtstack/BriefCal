@@ -1,0 +1,1246 @@
+import Foundation
+import GRDB
+import XCTest
+@testable import KaosCal
+
+final class ContextStoreTests: XCTestCase {
+    func testMigrationIsAppliedAndForeignKeysAreEnabled() throws {
+        let database = try AppDatabase.inMemory()
+
+        XCTAssertEqual(
+            try database.appliedMigrations(),
+            ["v1_context_store"]
+        )
+        XCTAssertTrue(try database.foreignKeysEnabled())
+    }
+
+    func testMigrationRejectsInvalidIdentityDueAndCompletionRows() throws {
+        let database = try AppDatabase.inMemory()
+
+        func insertContext(_ id: String) throws {
+            try database.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO event_contexts (
+                            id, title_snapshot, lifecycle_status, notes,
+                            created_at, updated_at
+                        ) VALUES (
+                            ?, 'Fixture', 'scheduled', '',
+                            '2026-07-10 08:00:00.000',
+                            '2026-07-10 08:00:00.000'
+                        )
+                        """,
+                    arguments: [id]
+                )
+            }
+        }
+
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(sql: """
+                    INSERT INTO event_tasks (
+                        id, context_id, section, title, completed,
+                        sort_order, due_kind, created_at, updated_at
+                    ) VALUES (
+                        'dangling', 'missing', 'before', 'Dangling', 0,
+                        0, 'none', '2026-07-10 08:00:00.000',
+                        '2026-07-10 08:00:00.000'
+                    )
+                    """)
+            }
+        )
+
+        try insertContext("all-day-mismatch")
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(sql: """
+                    INSERT INTO event_links (
+                        id, context_id, calendar_identifier, source_title,
+                        calendar_title_snapshot, title_snapshot,
+                        start_snapshot, end_snapshot, is_all_day,
+                        is_recurring, time_semantics, time_zone_identifier,
+                        occurrence_identity_key, is_detached, fingerprint,
+                        link_status, last_seen_at, created_at, updated_at
+                    ) VALUES (
+                        'bad-all-day-link', 'all-day-mismatch', 'calendar',
+                        'Work', 'KAOS-TEST', 'Fixture',
+                        '2026-07-10 08:00:00.000',
+                        '2026-07-10 09:00:00.000', 1, 0, 'zoned', 'UTC',
+                        'single:v1', 0, 'fingerprint', 'active',
+                        '2026-07-10 08:00:00.000',
+                        '2026-07-10 08:00:00.000',
+                        '2026-07-10 08:00:00.000'
+                    )
+                    """)
+            }
+        )
+
+        try insertContext("bad-occurrence")
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(sql: """
+                    INSERT INTO event_links (
+                        id, context_id, calendar_identifier, source_title,
+                        calendar_title_snapshot, title_snapshot,
+                        start_snapshot, end_snapshot, is_all_day,
+                        is_recurring, time_semantics, time_zone_identifier,
+                        occurrence_date, occurrence_identity_key,
+                        is_detached, fingerprint, link_status,
+                        last_seen_at, created_at, updated_at
+                    ) VALUES (
+                        'bad-occurrence-link', 'bad-occurrence', 'calendar',
+                        'Work', 'KAOS-TEST', 'Fixture',
+                        '2026-07-10 08:00:00.000',
+                        '2026-07-10 09:00:00.000', 0, 0, 'zoned', 'UTC',
+                        '2026-07-10 08:00:00.000', 'instant:v1:1',
+                        0, 'fingerprint-2', 'active',
+                        '2026-07-10 08:00:00.000',
+                        '2026-07-10 08:00:00.000',
+                        '2026-07-10 08:00:00.000'
+                    )
+                    """)
+            }
+        )
+
+        try insertContext("task-context")
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(sql: """
+                    INSERT INTO event_tasks (
+                        id, context_id, section, title, completed,
+                        sort_order, due_kind, relative_anchor,
+                        offset_minutes, created_at, updated_at
+                    ) VALUES (
+                        'too-far', 'task-context', 'before', 'Too far', 0,
+                        0, 'relative', 'before_start', 2628001,
+                        '2026-07-10 08:00:00.000',
+                        '2026-07-10 08:00:00.000'
+                    )
+                    """)
+            }
+        )
+        XCTAssertThrowsError(
+            try database.write { db in
+                try db.execute(sql: """
+                    INSERT INTO personal_tasks (
+                        id, title, notes, completed, sort_order,
+                        created_at, updated_at, completed_at
+                    ) VALUES (
+                        'bad-completion', 'Done?', '', 1, 0,
+                        '2026-07-10 08:00:00.000',
+                        '2026-07-10 08:00:00.000', NULL
+                    )
+                    """)
+            }
+        )
+
+        let indexNames = try database.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                    SELECT name FROM sqlite_master
+                    WHERE type = 'index' AND tbl_name = 'event_links'
+                    """
+            )
+        }
+        XCTAssertTrue(
+            indexNames.contains("event_links_unique_event_occurrence")
+        )
+        XCTAssertTrue(
+            indexNames.contains("event_links_series_occurrence")
+        )
+    }
+
+    func testSelectionAndEmptyNotesDoNotCreateContext() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(id: "event")
+
+        XCTAssertEqual(try harness.store.resolve(event: event), .notFound)
+        XCTAssertNil(try harness.store.saveNotes(for: event, notes: "  "))
+        XCTAssertEqual(try harness.store.eventContexts.count(), 0)
+    }
+
+    func testFirstNotesCreateContextAndLinkTogether() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(id: "event")
+
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: event, notes: "Bring the brief")
+        )
+        let brief = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        XCTAssertEqual(brief.context.notes, "Bring the brief")
+        XCTAssertEqual(brief.link.eventIdentifier, "event-id-event")
+        XCTAssertEqual(brief.link.calendarTitleSnapshot, "KAOS-TEST")
+        XCTAssertTrue(brief.tasks.isEmpty)
+        XCTAssertEqual(
+            try harness.store.resolve(event: event),
+            .linked(contextID: context.id, basis: .eventIdentifier)
+        )
+    }
+
+    func testFirstEventTaskCreatesContextLinkAndTaskAtomically() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(
+            id: "event",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 10)
+        )
+
+        let task = try harness.store.addEventTask(
+            for: event,
+            section: .before,
+            title: "Prepare slides",
+            sortOrder: 0,
+            due: .relative(anchor: .beforeStart, offsetMinutes: 30)
+        )
+        let contextID = try linkedContextID(
+            harness.store.resolve(event: event)
+        )
+        let brief = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: contextID)
+        )
+        let eventRange = brief.link.effectiveDateRange(calendar: testCalendar)
+
+        XCTAssertEqual(try harness.store.eventContexts.count(), 1)
+        XCTAssertEqual(try harness.store.eventTasks.count(), 1)
+        XCTAssertEqual(
+            task.effectiveDueDate(
+                eventStart: eventRange.start,
+                eventEnd: eventRange.end
+            ),
+            date(2026, 7, 10, 8, 30)
+        )
+    }
+
+    func testFailedLinkInsertRollsBackNewContext() throws {
+        let database = try AppDatabase.inMemory()
+        let firstIDs = IDSequence(["context-1", "shared-link", "task-1"])
+        let firstStore = ContextStore(
+            database: database,
+            now: { self.date(2026, 7, 10, 8) },
+            makeID: firstIDs.next
+        )
+        _ = try firstStore.addEventTask(
+            for: makeEvent(id: "first"),
+            section: .before,
+            title: "First",
+            sortOrder: 0
+        )
+
+        let secondIDs = IDSequence(["context-2", "shared-link", "task-2"])
+        let secondStore = ContextStore(
+            database: database,
+            now: { self.date(2026, 7, 10, 9) },
+            makeID: secondIDs.next
+        )
+
+        XCTAssertThrowsError(
+            try secondStore.addEventTask(
+                for: makeEvent(id: "second"),
+                section: .before,
+                title: "Second",
+                sortOrder: 0
+            )
+        )
+        XCTAssertEqual(try secondStore.eventContexts.count(), 1)
+        XCTAssertEqual(try secondStore.eventTasks.count(), 1)
+        XCTAssertEqual(
+            try secondStore.resolve(event: makeEvent(id: "second")),
+            .candidate(
+                contextIDs: ["context-1"],
+                basis: .exactSnapshot
+            )
+        )
+    }
+
+    func testConcurrentFirstNoteAndTaskShareOneContext() throws {
+        let database = try AppDatabase.inMemory()
+        let noteIDs = IDSequence(["note-context", "note-link"])
+        let taskIDs = IDSequence(["task-context", "task-link", "task"])
+        let noteStore = ContextStore(
+            database: database,
+            now: { self.date(2026, 7, 10, 8) },
+            makeID: noteIDs.next
+        )
+        let taskStore = ContextStore(
+            database: database,
+            now: { self.date(2026, 7, 10, 8) },
+            makeID: taskIDs.next
+        )
+        let event = makeEvent(id: "concurrent")
+        let errorLock = NSLock()
+        var errors: [Error] = []
+
+        DispatchQueue.concurrentPerform(iterations: 2) { index in
+            do {
+                if index == 0 {
+                    _ = try noteStore.saveNotes(
+                        for: event,
+                        notes: "Concurrent notes"
+                    )
+                } else {
+                    _ = try taskStore.addEventTask(
+                        for: event,
+                        section: .before,
+                        title: "Concurrent task",
+                        sortOrder: 0
+                    )
+                }
+            } catch {
+                errorLock.lock()
+                errors.append(error)
+                errorLock.unlock()
+            }
+        }
+
+        XCTAssertTrue(errors.isEmpty, "Unexpected errors: \(errors)")
+        XCTAssertEqual(try noteStore.eventContexts.count(), 1)
+        XCTAssertEqual(try noteStore.eventTasks.count(), 1)
+        let contextID = try linkedContextID(noteStore.resolve(event: event))
+        let brief = try XCTUnwrap(
+            noteStore.eventContexts.fetchBrief(contextID: contextID)
+        )
+        XCTAssertEqual(brief.context.notes, "Concurrent notes")
+        XCTAssertEqual(brief.tasks.map(\.title), ["Concurrent task"])
+    }
+
+    func testEventTaskOrderingUpdateCompletionAndDueValidation() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(
+            id: "ordered",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 10)
+        )
+        let during = try harness.store.addEventTask(
+            for: event,
+            section: .during,
+            title: "During",
+            sortOrder: 0
+        )
+        let after = try harness.store.addEventTask(
+            for: event,
+            section: .after,
+            title: "After",
+            sortOrder: 0,
+            due: .relative(anchor: .afterEnd, offsetMinutes: 15)
+        )
+        let before = try harness.store.addEventTask(
+            for: event,
+            section: .before,
+            title: "Before",
+            sortOrder: 0
+        )
+        let contextID = try linkedContextID(
+            harness.store.resolve(event: event)
+        )
+
+        XCTAssertEqual(
+            try harness.store.eventTasks.fetch(contextID: contextID).map(\.id),
+            [before.id, during.id, after.id]
+        )
+        let updated = try XCTUnwrap(
+            harness.store.eventTasks.update(
+                id: during.id,
+                section: .before,
+                title: "During moved",
+                sortOrder: 1,
+                due: .fixed(date(2026, 7, 10, 8, 45))
+            )
+        )
+        XCTAssertEqual(updated.due, .fixed(date(2026, 7, 10, 8, 45)))
+        let completed = try XCTUnwrap(
+            harness.store.eventTasks.setCompleted(
+                id: after.id,
+                isCompleted: true
+            )
+        )
+        XCTAssertTrue(completed.isCompleted)
+        XCTAssertNotNil(completed.completedAt)
+
+        XCTAssertThrowsError(
+            try harness.store.eventTasks.create(
+                contextID: contextID,
+                section: .before,
+                title: "Invalid",
+                sortOrder: 2,
+                due: .relative(anchor: .atStart, offsetMinutes: 5)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .invalidRelativeDue
+            )
+        }
+        XCTAssertThrowsError(
+            try harness.store.eventTasks.create(
+                contextID: contextID,
+                section: .before,
+                title: "Too far away",
+                sortOrder: 3,
+                due: .relative(
+                    anchor: .beforeStart,
+                    offsetMinutes:
+                        EventTaskDuePolicy.maximumOffsetMinutes + 1
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .invalidRelativeDue
+            )
+        }
+    }
+
+    func testDeletingContextCascadesLinkAndEventTasks() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(id: "cascade")
+        _ = try harness.store.addEventTask(
+            for: event,
+            section: .after,
+            title: "Follow up",
+            sortOrder: 0
+        )
+        let contextID = try linkedContextID(
+            harness.store.resolve(event: event)
+        )
+
+        try harness.store.eventContexts.delete(contextID: contextID)
+
+        XCTAssertNil(
+            try harness.store.eventContexts.fetchBrief(contextID: contextID)
+        )
+        XCTAssertEqual(try harness.store.eventTasks.count(), 0)
+        XCTAssertEqual(try harness.store.resolve(event: event), .notFound)
+    }
+
+    func testPersonalTaskCRUDAndLists() throws {
+        let harness = try makeHarness()
+        let undated = try harness.store.personalTasks.create(
+            title: "Inbox",
+            sortOrder: 2
+        )
+        let today = try harness.store.personalTasks.create(
+            title: "Today",
+            dueAt: date(2026, 7, 10, 18),
+            sortOrder: 1
+        )
+        let upcoming = try harness.store.personalTasks.create(
+            title: "Upcoming",
+            dueAt: date(2026, 7, 11),
+            sortOrder: 0
+        )
+
+        XCTAssertEqual(
+            try harness.store.personalTasks.fetch(
+                list: .today,
+                now: harness.now,
+                calendar: testCalendar
+            ).map(\.id),
+            [today.id, undated.id]
+        )
+        XCTAssertEqual(
+            try harness.store.personalTasks.fetch(
+                list: .upcoming,
+                now: harness.now,
+                calendar: testCalendar
+            ).map(\.id),
+            [upcoming.id]
+        )
+
+        _ = try harness.store.personalTasks.update(
+            id: undated.id,
+            title: "Inbox edited",
+            notes: "local only",
+            dueAt: nil,
+            sortOrder: 3
+        )
+        _ = try harness.store.personalTasks.setCompleted(
+            id: today.id,
+            isCompleted: true
+        )
+        XCTAssertEqual(
+            try harness.store.personalTasks.fetch(
+                list: .completed,
+                now: harness.now,
+                calendar: testCalendar
+            ).map(\.id),
+            [today.id]
+        )
+
+        try harness.store.personalTasks.delete(id: upcoming.id)
+        XCTAssertNil(try harness.store.personalTasks.fetch(id: upcoming.id))
+    }
+
+    func testTaskCenterCombinesEventAndPersonalTasksAtDayBoundary() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(
+            id: "center",
+            start: date(2026, 7, 10, 15),
+            end: date(2026, 7, 10, 16)
+        )
+        let eventTask = try harness.store.addEventTask(
+            for: event,
+            section: .before,
+            title: "Event preparation",
+            sortOrder: 0
+        )
+        let personalToday = try harness.store.personalTasks.create(
+            title: "Personal today",
+            sortOrder: 1
+        )
+        let personalUpcoming = try harness.store.personalTasks.create(
+            title: "Personal upcoming",
+            dueAt: date(2026, 7, 11),
+            sortOrder: 0
+        )
+
+        let today = try harness.store.taskCenter.fetch(
+            list: .today,
+            now: harness.now,
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            Set(today.map(\.id)),
+            Set(["event:\(eventTask.id)", "personal:\(personalToday.id)"])
+        )
+        guard case let .event(
+            _, eventTitle, calendarTitle, sourceTitle
+        ) = try XCTUnwrap(today.first { $0.id == "event:\(eventTask.id)" }).source else {
+            return XCTFail("Expected event task source")
+        }
+        XCTAssertEqual(eventTitle, event.title)
+        XCTAssertEqual(calendarTitle, "KAOS-TEST")
+        XCTAssertEqual(sourceTitle, "Work")
+
+        XCTAssertEqual(
+            try harness.store.taskCenter.fetch(
+                list: .upcoming,
+                now: harness.now,
+                calendar: testCalendar
+            ).map(\.id),
+            ["personal:\(personalUpcoming.id)"]
+        )
+    }
+
+    func testTaskCenterUsesLocalTimeSemanticsForFloatingAndAllDayDueDates() throws {
+        let harness = try makeHarness()
+        var seoulCalendar = testCalendar
+        seoulCalendar.timeZone = TimeZone(identifier: "Asia/Seoul")!
+
+        let floatingStart = LocalDateTimeComponents(
+            date: date(2026, 7, 11, 9),
+            calendar: testCalendar
+        )
+        let floatingEnd = LocalDateTimeComponents(
+            date: date(2026, 7, 11, 10),
+            calendar: testCalendar
+        )
+        let floatingEvent = makeEvent(
+            id: "floating",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 10),
+            timeSemantics: .floating(
+                start: floatingStart,
+                end: floatingEnd
+            )
+        )
+        let floatingTask = try harness.store.addEventTask(
+            for: floatingEvent,
+            section: .before,
+            title: "Floating preparation",
+            sortOrder: 0,
+            due: .relative(anchor: .beforeStart, offsetMinutes: 30)
+        )
+
+        let allDayStart = LocalDateTimeComponents(
+            date: date(2026, 7, 11),
+            calendar: testCalendar
+        )
+        let allDayEnd = LocalDateTimeComponents(
+            date: date(2026, 7, 12),
+            calendar: testCalendar
+        )
+        let allDayEvent = makeEvent(
+            id: "all-day",
+            start: date(2026, 7, 11),
+            end: date(2026, 7, 12).addingTimeInterval(-1),
+            isAllDay: true,
+            timeSemantics: .allDay(
+                start: allDayStart,
+                endExclusive: allDayEnd
+            )
+        )
+        let allDayTask = try harness.store.addEventTask(
+            for: allDayEvent,
+            section: .after,
+            title: "All-day follow-up",
+            sortOrder: 0,
+            due: .relative(anchor: .atEnd, offsetMinutes: 0)
+        )
+
+        let upcoming = try harness.store.taskCenter.fetch(
+            list: .upcoming,
+            now: harness.now,
+            calendar: seoulCalendar
+        )
+        let itemsByID = Dictionary(uniqueKeysWithValues: upcoming.map {
+            ($0.id, $0)
+        })
+        let expectedFloatingDue = seoulCalendar.date(
+            from: DateComponents(
+                year: 2026,
+                month: 7,
+                day: 11,
+                hour: 8,
+                minute: 30
+            )
+        )
+        let expectedAllDayDue = seoulCalendar.date(
+            from: DateComponents(
+                year: 2026,
+                month: 7,
+                day: 12
+            )
+        )
+
+        XCTAssertEqual(
+            itemsByID["event:\(floatingTask.id)"]?.dueAt,
+            expectedFloatingDue
+        )
+        XCTAssertEqual(
+            itemsByID["event:\(allDayTask.id)"]?.dueAt,
+            expectedAllDayDue
+        )
+    }
+
+    func testObservingLinkedMoveRefreshesSnapshotWithoutLosingLocalData() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(
+            id: "moving",
+            externalIdentifier: "stable-external"
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: original, notes: "Original notes")
+        )
+        let task = try harness.store.addEventTask(
+            for: original,
+            section: .during,
+            title: "Keep this task",
+            sortOrder: 0
+        )
+        let moved = makeEvent(
+            id: "moving-refreshed",
+            title: "Renamed meeting",
+            location: "Room B",
+            start: date(2026, 7, 10, 14),
+            end: date(2026, 7, 10, 15),
+            externalIdentifier: "stable-external"
+        )
+
+        XCTAssertEqual(
+            try harness.store.resolve(event: moved),
+            .linked(
+                contextID: context.id,
+                basis: .externalIdentifierAndOccurrence
+            )
+        )
+        let brief = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        XCTAssertEqual(brief.context.titleSnapshot, "Renamed meeting")
+        XCTAssertEqual(brief.context.startSnapshot, date(2026, 7, 10, 14))
+        XCTAssertEqual(brief.context.endSnapshot, date(2026, 7, 10, 15))
+        XCTAssertEqual(brief.context.notes, "Original notes")
+        XCTAssertEqual(brief.link.titleSnapshot, "Renamed meeting")
+        XCTAssertEqual(brief.link.locationSnapshot, "Room B")
+        XCTAssertEqual(brief.link.startSnapshot, date(2026, 7, 10, 14))
+        XCTAssertEqual(
+            brief.link.eventIdentifier,
+            "event-id-moving-refreshed"
+        )
+        XCTAssertEqual(brief.tasks.map(\.id), [task.id])
+        let todayItems = try harness.store.taskCenter.fetch(
+            list: .today,
+            now: harness.now,
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            todayItems.first { $0.id == "event:\(task.id)" }?.dueAt,
+            date(2026, 7, 10, 14)
+        )
+    }
+
+    func testRecurringOccurrencesResolveSeparatelyAndDetachedMoveStaysLinked() throws {
+        let harness = try makeHarness()
+        let firstOccurrence = makeEvent(
+            id: "occurrence-1",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 10),
+            externalIdentifier: "series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9)
+        )
+        let secondOccurrence = makeEvent(
+            id: "occurrence-2",
+            start: date(2026, 7, 17, 9),
+            end: date(2026, 7, 17, 10),
+            externalIdentifier: "series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 17, 9)
+        )
+        let firstContext = try XCTUnwrap(
+            harness.store.saveNotes(for: firstOccurrence, notes: "First")
+        )
+        let secondContext = try XCTUnwrap(
+            harness.store.saveNotes(for: secondOccurrence, notes: "Second")
+        )
+
+        XCTAssertNotEqual(firstContext.id, secondContext.id)
+        XCTAssertEqual(
+            try linkedContextID(harness.store.resolve(event: firstOccurrence)),
+            firstContext.id
+        )
+        XCTAssertEqual(
+            try linkedContextID(harness.store.resolve(event: secondOccurrence)),
+            secondContext.id
+        )
+
+        let detachedMoved = makeEvent(
+            id: "occurrence-moved",
+            start: date(2026, 7, 10, 13),
+            end: date(2026, 7, 10, 14),
+            externalIdentifier: "series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9),
+            isDetached: true
+        )
+        XCTAssertEqual(
+            try linkedContextID(harness.store.resolve(event: detachedMoved)),
+            firstContext.id
+        )
+    }
+
+    func testFloatingOccurrenceUsesCivilAnchorAcrossTimeZoneAndDetachedMove() throws {
+        let harness = try makeHarness()
+        let occurrenceStart = localComponents(2026, 7, 10, 9)
+        let occurrenceEnd = localComponents(2026, 7, 10, 10)
+        let original = makeEvent(
+            id: "floating-occurrence",
+            start: date(2026, 7, 10),
+            end: date(2026, 7, 10, 1),
+            externalIdentifier: "floating-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10),
+            occurrenceLocalComponents: occurrenceStart,
+            timeSemantics: .floating(
+                start: occurrenceStart,
+                end: occurrenceEnd
+            )
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: original, notes: "Civil anchor")
+        )
+        let sameCivilTimeInAnotherZone = makeEvent(
+            id: "floating-occurrence",
+            start: date(2026, 7, 10, 16),
+            end: date(2026, 7, 10, 17),
+            externalIdentifier: "floating-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 16),
+            occurrenceLocalComponents: occurrenceStart,
+            timeSemantics: .floating(
+                start: occurrenceStart,
+                end: occurrenceEnd
+            )
+        )
+
+        XCTAssertEqual(
+            try linkedContextID(
+                harness.store.resolve(event: sameCivilTimeInAnotherZone)
+            ),
+            context.id
+        )
+
+        let detachedStart = localComponents(2026, 7, 10, 13)
+        let detachedEnd = localComponents(2026, 7, 10, 14)
+        let detached = makeEvent(
+            id: "floating-detached",
+            start: date(2026, 7, 10, 20),
+            end: date(2026, 7, 10, 21),
+            externalIdentifier: "floating-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 16),
+            occurrenceLocalComponents: occurrenceStart,
+            isDetached: true,
+            timeSemantics: .floating(
+                start: detachedStart,
+                end: detachedEnd
+            )
+        )
+        XCTAssertEqual(
+            try linkedContextID(harness.store.resolve(event: detached)),
+            context.id
+        )
+
+        let nextOccurrenceStart = localComponents(2026, 7, 17, 9)
+        let nextOccurrenceEnd = localComponents(2026, 7, 17, 10)
+        let nextOccurrence = makeEvent(
+            id: "floating-occurrence",
+            start: date(2026, 7, 17),
+            end: date(2026, 7, 17, 1),
+            externalIdentifier: "floating-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 17),
+            occurrenceLocalComponents: nextOccurrenceStart,
+            timeSemantics: .floating(
+                start: nextOccurrenceStart,
+                end: nextOccurrenceEnd
+            )
+        )
+        XCTAssertEqual(
+            try harness.store.resolve(event: nextOccurrence),
+            .notFound
+        )
+    }
+
+    func testAllDayOccurrenceUsesCivilAnchorAcrossRawDateChange() throws {
+        let harness = try makeHarness()
+        let start = localComponents(2026, 7, 10)
+        let end = localComponents(2026, 7, 11)
+        let first = makeEvent(
+            id: "all-day-occurrence",
+            start: date(2026, 7, 9, 15),
+            end: date(2026, 7, 10, 15).addingTimeInterval(-1),
+            externalIdentifier: "all-day-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 9, 15),
+            occurrenceLocalComponents: start,
+            isAllDay: true,
+            timeSemantics: .allDay(start: start, endExclusive: end)
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: first, notes: "All-day civil")
+        )
+        let sameCivilDate = makeEvent(
+            id: "all-day-occurrence",
+            start: date(2026, 7, 10, 7),
+            end: date(2026, 7, 11, 7).addingTimeInterval(-1),
+            externalIdentifier: "all-day-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 7),
+            occurrenceLocalComponents: start,
+            isAllDay: true,
+            timeSemantics: .allDay(start: start, endExclusive: end)
+        )
+
+        XCTAssertNotEqual(first.occurrenceDate, sameCivilDate.occurrenceDate)
+        XCTAssertEqual(
+            try linkedContextID(harness.store.resolve(event: sameCivilDate)),
+            context.id
+        )
+    }
+
+    func testFingerprintIsNormalizedAndNeverAutoLinks() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(
+            id: "fingerprint",
+            title: "Téam   Sync",
+            location: "Room Ａ"
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: original, notes: "Keep")
+        )
+        let changedIdentifiers = makeEvent(
+            id: "different",
+            title: " team sync ",
+            location: "room a",
+            includeIdentifiers: false
+        )
+
+        let originalFingerprint = EventIdentityFingerprint.make(event: original)
+        let changedFingerprint = EventIdentityFingerprint.make(
+            event: changedIdentifiers
+        )
+        XCTAssertEqual(originalFingerprint, changedFingerprint)
+        XCTAssertEqual(
+            originalFingerprint,
+            "v1:f1a3dcf23724448190fa8ce0a40fdad3d877bde91067e5f0b180f902c39d428a"
+        )
+        XCTAssertTrue(originalFingerprint.hasPrefix("v1:"))
+        XCTAssertEqual(originalFingerprint.count, 67)
+        XCTAssertEqual(
+            try harness.store.resolve(event: changedIdentifiers),
+            .candidate(contextIDs: [context.id], basis: .fingerprint)
+        )
+        XCTAssertThrowsError(
+            try harness.store.saveNotes(
+                for: changedIdentifiers,
+                notes: "Must confirm"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .identityConfirmationRequired([context.id])
+            )
+        }
+    }
+
+    func testSeriesIdentitySkipsEmptyIdentifiers() throws {
+        let fallbackEvent = makeEvent(
+            id: "series-fallback",
+            externalIdentifier: "",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9)
+        )
+        let fallbackSnapshot = try EventLinkSnapshot(event: fallbackEvent)
+
+        XCTAssertEqual(
+            fallbackSnapshot.recurrenceSeriesIdentifier,
+            "item-id-series-fallback"
+        )
+        XCTAssertNotNil(fallbackSnapshot.seriesFingerprint)
+
+        let noSeriesIdentifier = makeEvent(
+            id: "series-missing",
+            externalIdentifier: "",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9),
+            includeIdentifiers: false
+        )
+        let missingSnapshot = try EventLinkSnapshot(
+            event: noSeriesIdentifier
+        )
+
+        XCTAssertNil(missingSnapshot.recurrenceSeriesIdentifier)
+        XCTAssertNil(missingSnapshot.seriesFingerprint)
+    }
+
+    func testFileBackedDatabaseReopensWithAllPhaseThreeData() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("KaosCal-ContextStore-\(UUID().uuidString)")
+        let databaseURL = directory.appendingPathComponent("kaoscal.sqlite")
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let event = makeEvent(id: "persistent")
+        let floatingStart = localComponents(2026, 7, 11, 9)
+        let floatingEnd = localComponents(2026, 7, 11, 10)
+        let floatingEvent = makeEvent(
+            id: "persistent-floating",
+            title: "Persistent floating event",
+            timeSemantics: .floating(
+                start: floatingStart,
+                end: floatingEnd
+            )
+        )
+        let allDayStart = localComponents(2026, 7, 12)
+        let allDayEnd = localComponents(2026, 7, 13)
+        let allDayEvent = makeEvent(
+            id: "persistent-all-day",
+            start: date(2026, 7, 12),
+            end: date(2026, 7, 13).addingTimeInterval(-1),
+            externalIdentifier: "persistent-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 12),
+            occurrenceLocalComponents: allDayStart,
+            isAllDay: true,
+            timeSemantics: .allDay(
+                start: allDayStart,
+                endExclusive: allDayEnd
+            )
+        )
+        var contextID = ""
+        var eventTaskID = ""
+        var floatingContextID = ""
+        var floatingTaskID = ""
+        var allDayContextID = ""
+        var personalTaskID = ""
+
+        do {
+            let database = try AppDatabase.open(at: databaseURL)
+            let IDs = IDSequence([
+                "context", "link", "event-task", "personal-task"
+            ])
+            let store = ContextStore(
+                database: database,
+                now: { self.date(2026, 7, 10, 12) },
+                makeID: IDs.next
+            )
+            let context = try XCTUnwrap(
+                store.saveNotes(for: event, notes: "Persistent notes")
+            )
+            let eventTask = try store.addEventTask(
+                for: event,
+                section: .after,
+                title: "Persistent event task",
+                sortOrder: 0,
+                due: .relative(anchor: .afterEnd, offsetMinutes: 45)
+            )
+            _ = try store.eventTasks.setCompleted(
+                id: eventTask.id,
+                isCompleted: true
+            )
+            let floatingContext = try XCTUnwrap(
+                store.saveNotes(
+                    for: floatingEvent,
+                    notes: "Floating notes"
+                )
+            )
+            let floatingTask = try store.addEventTask(
+                for: floatingEvent,
+                section: .before,
+                title: "Persistent fixed task",
+                sortOrder: 0,
+                due: .fixed(date(2026, 7, 11, 8, 30))
+            )
+            let allDayContext = try XCTUnwrap(
+                store.saveNotes(
+                    for: allDayEvent,
+                    notes: "All-day recurring notes"
+                )
+            )
+            let personalTask = try store.personalTasks.create(
+                title: "Persistent personal task",
+                dueAt: date(2026, 7, 10, 18)
+            )
+            _ = try store.personalTasks.setCompleted(
+                id: personalTask.id,
+                isCompleted: true
+            )
+            contextID = context.id
+            eventTaskID = eventTask.id
+            floatingContextID = floatingContext.id
+            floatingTaskID = floatingTask.id
+            allDayContextID = allDayContext.id
+            personalTaskID = personalTask.id
+        }
+
+        do {
+            let database = try AppDatabase.open(at: databaseURL)
+            let store = ContextStore(database: database)
+            let brief = try XCTUnwrap(
+                store.eventContexts.fetchBrief(contextID: contextID)
+            )
+            let floatingBrief = try XCTUnwrap(
+                store.eventContexts.fetchBrief(contextID: floatingContextID)
+            )
+            let allDayBrief = try XCTUnwrap(
+                store.eventContexts.fetchBrief(contextID: allDayContextID)
+            )
+
+            XCTAssertEqual(
+                try database.appliedMigrations(),
+                ["v1_context_store"]
+            )
+            XCTAssertEqual(brief.context.notes, "Persistent notes")
+            XCTAssertEqual(brief.tasks.map(\.id), [eventTaskID])
+            XCTAssertTrue(try XCTUnwrap(brief.tasks.first).isCompleted)
+            XCTAssertEqual(
+                try XCTUnwrap(brief.tasks.first).due,
+                .relative(anchor: .afterEnd, offsetMinutes: 45)
+            )
+            XCTAssertEqual(
+                floatingBrief.tasks.map(\.id),
+                [floatingTaskID]
+            )
+            XCTAssertEqual(
+                try XCTUnwrap(floatingBrief.tasks.first).due,
+                .fixed(date(2026, 7, 11, 8, 30))
+            )
+            XCTAssertEqual(floatingBrief.link.timeSemantics, .floating)
+            XCTAssertNotNil(floatingBrief.link.startLocalComponents)
+            XCTAssertEqual(allDayBrief.link.timeSemantics, .allDay)
+            XCTAssertTrue(allDayBrief.link.isRecurring)
+            XCTAssertNotNil(allDayBrief.link.occurrenceLocalComponents)
+            XCTAssertTrue(
+                allDayBrief.link.occurrenceIdentityKey
+                    .hasPrefix("local:v1:")
+            )
+            XCTAssertEqual(
+                try store.personalTasks.fetch(id: personalTaskID)?.title,
+                "Persistent personal task"
+            )
+            XCTAssertTrue(
+                try XCTUnwrap(
+                    store.personalTasks.fetch(id: personalTaskID)
+                ).isCompleted
+            )
+            XCTAssertEqual(
+                try linkedContextID(store.resolve(event: event)),
+                contextID
+            )
+            let storage = try database.read { db in
+                try XCTUnwrap(Row.fetchOne(db, sql: """
+                    SELECT
+                        typeof(created_at) AS created_type,
+                        created_at AS created_value
+                    FROM event_contexts
+                    WHERE id = ?
+                    """, arguments: [contextID]))
+            }
+            XCTAssertEqual(storage["created_type"] as String?, "text")
+            XCTAssertEqual(
+                storage["created_value"] as String?,
+                "2026-07-10 12:00:00.000"
+            )
+            let matchingCreationDates = try database.read { db in
+                try EventContext
+                    .filter(Column("created_at") == date(2026, 7, 10, 12))
+                    .fetchCount(db)
+            }
+            XCTAssertEqual(matchingCreationDates, 3)
+            let completedItems = try store.taskCenter.fetch(
+                list: .completed,
+                now: date(2026, 7, 10, 12),
+                calendar: testCalendar
+            )
+            XCTAssertEqual(
+                Set(completedItems.map(\.id)),
+                Set([
+                    "event:\(eventTaskID)",
+                    "personal:\(personalTaskID)"
+                ])
+            )
+        }
+    }
+
+    private struct Harness {
+        let store: ContextStore
+        let now: Date
+    }
+
+    private func makeHarness() throws -> Harness {
+        let now = date(2026, 7, 10, 12)
+        let IDs = IDSequence((1...100).map { "id-\($0)" })
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { now },
+            makeID: IDs.next
+        )
+        return Harness(store: store, now: now)
+    }
+
+    private func linkedContextID(
+        _ resolution: EventContextResolution
+    ) throws -> String {
+        guard case let .linked(contextID, _) = resolution else {
+            throw TestError.expectedLinkedContext
+        }
+        return contextID
+    }
+
+    private enum TestError: Error {
+        case expectedLinkedContext
+    }
+
+    private var testCalendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.firstWeekday = 2
+        return calendar
+    }
+
+    private func date(
+        _ year: Int,
+        _ month: Int,
+        _ day: Int,
+        _ hour: Int = 0,
+        _ minute: Int = 0
+    ) -> Date {
+        testCalendar.date(
+            from: DateComponents(
+                year: year,
+                month: month,
+                day: day,
+                hour: hour,
+                minute: minute
+            )
+        )!
+    }
+
+    private func localComponents(
+        _ year: Int,
+        _ month: Int,
+        _ day: Int,
+        _ hour: Int = 0,
+        _ minute: Int = 0
+    ) -> LocalDateTimeComponents {
+        LocalDateTimeComponents(
+            date: date(year, month, day, hour, minute),
+            calendar: testCalendar
+        )
+    }
+
+    private func makeEvent(
+        id: String,
+        title: String = "Team Sync",
+        location: String? = "Room A",
+        start: Date? = nil,
+        end: Date? = nil,
+        externalIdentifier: String? = nil,
+        isRecurring: Bool = false,
+        occurrenceDate: Date? = nil,
+        occurrenceLocalComponents: LocalDateTimeComponents? = nil,
+        isDetached: Bool = false,
+        includeIdentifiers: Bool = true,
+        isAllDay: Bool = false,
+        timeSemantics: EventTimeSemantics? = nil
+    ) -> DisplayEvent {
+        let start = start ?? date(2026, 7, 10, 9)
+        let end = end ?? date(2026, 7, 10, 10)
+        let timeSemantics = timeSemantics
+            ?? .zoned(timeZoneIdentifier: "UTC")
+        let timeZoneIdentifier: String?
+        switch timeSemantics {
+        case let .zoned(identifier):
+            timeZoneIdentifier = identifier
+        case .allDay, .floating:
+            timeZoneIdentifier = nil
+        }
+        return DisplayEvent(
+            id: id,
+            eventIdentifier: includeIdentifiers ? "event-id-\(id)" : nil,
+            calendarItemIdentifier: includeIdentifiers ? "item-id-\(id)" : nil,
+            calendarItemExternalIdentifier: externalIdentifier,
+            calendarIdentifier: "calendar",
+            calendarTitle: "KAOS-TEST",
+            sourceTitle: "Work",
+            accountType: .exchange,
+            calendarColor: nil,
+            title: title,
+            location: location,
+            startDate: start,
+            endDate: end,
+            isAllDay: isAllDay,
+            timeZoneIdentifier: timeZoneIdentifier,
+            timeSemantics: timeSemantics,
+            isRecurring: isRecurring,
+            occurrenceDate: occurrenceDate,
+            occurrenceLocalComponents: occurrenceLocalComponents,
+            isDetached: isDetached,
+            isReadOnly: false,
+            isInvitation: false
+        )
+    }
+}
+
+private final class IDSequence {
+    private var values: [String]
+    private var fallback = 0
+
+    init(_ values: [String]) {
+        self.values = values
+    }
+
+    func next() -> String {
+        if !values.isEmpty {
+            return values.removeFirst()
+        }
+        fallback += 1
+        return "fallback-\(fallback)"
+    }
+}

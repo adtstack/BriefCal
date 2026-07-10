@@ -122,6 +122,7 @@ enum DisplayEventIdentity {
         eventIdentifier: String?,
         isRecurring: Bool,
         occurrenceDate: Date?,
+        occurrenceLocalComponents: LocalDateTimeComponents? = nil,
         startDate: Date,
         endDate: Date,
         title: String
@@ -144,6 +145,18 @@ enum DisplayEventIdentity {
 
         let base = "\(calendarIdentifier)#\(itemIdentity)"
         guard isRecurring else { return base }
+        if let occurrenceLocalComponents {
+            let localAnchor = [
+                String(describing: occurrenceLocalComponents.calendarIdentifier),
+                String(format: "%04d", occurrenceLocalComponents.year),
+                String(format: "%02d", occurrenceLocalComponents.month),
+                String(format: "%02d", occurrenceLocalComponents.day),
+                String(format: "%02d", occurrenceLocalComponents.hour),
+                String(format: "%02d", occurrenceLocalComponents.minute),
+                String(format: "%02d", occurrenceLocalComponents.second)
+            ].joined(separator: ":")
+            return "\(base)#occurrence-local:\(localAnchor)"
+        }
         let occurrenceAnchor = occurrenceDate ?? startDate
         return "\(base)#occurrence:\(occurrenceAnchor.timeIntervalSinceReferenceDate)"
     }
@@ -168,6 +181,7 @@ struct DisplayEvent: Equatable, Identifiable {
     let timeSemantics: EventTimeSemantics
     let isRecurring: Bool
     let occurrenceDate: Date?
+    let occurrenceLocalComponents: LocalDateTimeComponents?
     let isDetached: Bool
     let isReadOnly: Bool
     let isInvitation: Bool

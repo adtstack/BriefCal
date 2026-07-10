@@ -96,6 +96,12 @@ final class EventKitProvider: CalendarProviding {
         let isRecurring = event.hasRecurrenceRules
             || event.occurrenceDate != nil
             || event.isDetached
+        let timeSemantics = makeTimeSemantics(event)
+        let occurrenceLocalComponents = makeOccurrenceLocalComponents(
+            event,
+            isRecurring: isRecurring,
+            timeSemantics: timeSemantics
+        )
         let stableID = DisplayEventIdentity.make(
             calendarIdentifier: event.calendar.calendarIdentifier,
             externalIdentifier: event.calendarItemExternalIdentifier,
@@ -103,11 +109,11 @@ final class EventKitProvider: CalendarProviding {
             eventIdentifier: event.eventIdentifier,
             isRecurring: isRecurring,
             occurrenceDate: event.occurrenceDate,
+            occurrenceLocalComponents: occurrenceLocalComponents,
             startDate: event.startDate,
             endDate: event.endDate,
             title: title
         )
-        let timeSemantics = makeTimeSemantics(event)
 
         return DisplayEvent(
             id: stableID,
@@ -128,6 +134,7 @@ final class EventKitProvider: CalendarProviding {
             timeSemantics: timeSemantics,
             isRecurring: isRecurring,
             occurrenceDate: event.occurrenceDate,
+            occurrenceLocalComponents: occurrenceLocalComponents,
             isDetached: event.isDetached,
             isReadOnly: !event.calendar.allowsContentModifications,
             isInvitation: event.organizer.map { !$0.isCurrentUser } ?? false
@@ -135,8 +142,7 @@ final class EventKitProvider: CalendarProviding {
     }
 
     private func makeTimeSemantics(_ event: EKEvent) -> EventTimeSemantics {
-        var semanticCalendar = Calendar(identifier: .gregorian)
-        semanticCalendar.timeZone = event.timeZone ?? .autoupdatingCurrent
+        let semanticCalendar = semanticCalendar(for: event)
 
         if event.isAllDay {
             let range = CalendarEventDateFormatting.normalizedAllDayDateRange(
@@ -169,6 +175,32 @@ final class EventKitProvider: CalendarProviding {
             return .zoned(timeZoneIdentifier: identifier)
         }
         return .floating(start: start, end: end)
+    }
+
+    private func makeOccurrenceLocalComponents(
+        _ event: EKEvent,
+        isRecurring: Bool,
+        timeSemantics: EventTimeSemantics
+    ) -> LocalDateTimeComponents? {
+        guard isRecurring else { return nil }
+        switch timeSemantics {
+        case .zoned:
+            return nil
+        case let .allDay(start, _), let .floating(start, _):
+            guard let occurrenceDate = event.occurrenceDate else {
+                return start
+            }
+            return LocalDateTimeComponents(
+                date: occurrenceDate,
+                calendar: semanticCalendar(for: event)
+            )
+        }
+    }
+
+    private func semanticCalendar(for event: EKEvent) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = event.timeZone ?? .autoupdatingCurrent
+        return calendar
     }
 
     private func colorSnapshot(for calendar: EKCalendar) -> CalendarColor? {

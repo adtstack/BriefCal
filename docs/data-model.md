@@ -12,31 +12,33 @@ KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 ## 저장 위치
 
-직접 배포 빌드:
+현재 App Sandbox 빌드(`com.adtstack.kaoscal`):
+
+```text
+~/Library/Containers/com.adtstack.kaoscal/Data/Library/Application Support/KaosCal/kaoscal.sqlite
+```
+
+샌드박스를 사용하지 않는 내부 진단 빌드에서만:
 
 ```text
 ~/Library/Application Support/KaosCal/kaoscal.sqlite
 ```
 
-Mac App Store sandbox 빌드:
+경로는 하드코딩하지 않고 `FileManager.applicationSupportDirectory`에서 계산한다.
 
-```text
-~/Library/Containers/com.yourcompany.KaosCal/Data/Library/Application Support/KaosCal/kaoscal.sqlite
-```
+## 표시 모델과 영속 모델
 
-## Phase 2 메모리 표시 모델
-
-Phase 2에는 SQLite가 아직 없으며 아래 값은 EventKit 객체를 UI와 분리하기 위한 메모리 snapshot이다.
+Phase 3는 EventKit 객체를 UI 값 snapshot으로 분리하고, 필요한 연결·맥락만 SQLite에 영속화한다.
 
 | 값 | 역할 | 영속 모델과의 차이 |
 | --- | --- | --- |
 | `DisplayEvent` | title, source, calendar color, raw date, read-only, invitation, recurrence를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음 |
-| `EventTimeSemantics` | `allDay`, `floating`, `zoned` 구분 | Phase 3 `event_links.time_semantics` 설계 입력 |
-| `LocalDateTimeComponents` | 원 calendar identifier와 civil components 보존 | all-day/floating 표시 재구성용이며 DB schema 확정이 아님 |
-| `DisplayEventIdentity` | SwiftUI selection과 occurrence별 card identity | `external → calendar item → event` 우선순위이며 영속 relink resolver와 목적이 다름 |
+| `EventTimeSemantics` | `allDay`, `floating`, `zoned` 구분 | `event_links.time_semantics`와 local component snapshot으로 변환 |
+| `LocalDateTimeComponents` | 원 calendar identifier와 civil components 보존 | all-day/floating 표시·due·반복 occurrence 재구성에 사용 |
+| `DisplayEventIdentity` | SwiftUI selection과 occurrence별 card identity | `external → calendar item → event` 우선순위, local occurrence anchor 사용; 영속 resolver와 목적이 다름 |
 | `CalendarEventLayout` | visible period의 timed/all-day placement | 파생값이므로 저장하지 않음 |
 
-영속 Event Brief 연결은 아래 `Identity resolution 순서`를 그대로 따르며 Phase 3에서 별도 repository와 resolver로 구현한다. Phase 2 UI ID가 같거나 달라졌다는 사실만으로 local context를 자동 연결·삭제하지 않는다.
+영속 Event Brief 연결은 아래 `Identity resolution 순서`로 구현되어 있다. UI ID가 같거나 달라졌다는 사실만으로 local context를 자동 연결·삭제하지 않는다.
 
 ## Historical draft: Schema v0
 
@@ -121,9 +123,18 @@ create table app_settings (
 );
 ```
 
-## V1 baseline to implement
+## 구현된 V1 baseline
 
-첫 GRDB migration은 아래 요구사항을 반영한다. 아직 실행된 DB가 없으므로 schema v0를 그대로 구현하지 않는다.
+첫 GRDB migration `v1_context_store`는 아래 네 테이블만 만든다.
+
+| 테이블 | 현재 책임 |
+| --- | --- |
+| `event_contexts` | Event Brief title/time snapshot, lifecycle, local notes |
+| `event_links` | EventKit identifiers, source/time/recurrence snapshot, identity 후보 |
+| `event_tasks` | Before/During/After, ordering, completion, fixed/relative due |
+| `personal_tasks` | 독립 개인 할 일, due, ordering, completion |
+
+모든 `Date` column은 GRDB `.deferredToDate`를 명시해 UTC millisecond TEXT로 저장한다. foreign key를 항상 켜고, context 삭제는 link와 event task에만 cascade한다.
 
 ### Event context lifecycle
 
@@ -141,16 +152,20 @@ create table app_settings (
 | `time_semantics` | `zoned`, `floating`, `all_day` 구분 |
 | `time_zone_identifier` | 고정 시간대 의미 보존, floating은 null |
 | `start_local_components`, `end_local_components` | 종일·floating 일정의 안정적인 비교 |
-| `recurrence_master_identifier` | 반복 series 후보 연결 |
+| `recurrence_series_identifier` | 반복 series 후보 연결. EventKit이 master 객체를 보장한다는 의미를 쓰지 않음 |
 | `occurrence_date` | occurrence별 Event Brief 연결 |
+| `occurrence_local_components` | all-day/floating의 원래 civil occurrence 보존 |
+| `occurrence_identity_key` | non-recurring, zoned instant, local occurrence를 구분하는 canonical key |
 | `is_detached` | 단일 occurrence 예외 여부 |
 | `series_fingerprint` | recurrence 후보를 보조 비교 |
 
-식별자와 snapshot 검색에 필요한 인덱스는 migration에서 함께 만든다. 동일한 fingerprint만으로 자동 relink하지 않는다.
+식별자+occurrence unique index와 향후 SQL lookup용 index를 migration에서 함께 만든다. Phase 3 resolver는 작은 로컬 link 집합을 한 consistent read로 가져와 Swift에서 우선순위를 판정하며, 동일한 fingerprint만으로 자동 relink하지 않는다.
 
 ### Task Center fields
 
 - `event_tasks`에는 `due_kind`, `relative_anchor`, `offset_minutes`, `fixed_due_at`을 둔다. 기존의 모호한 `due_offset_minutes`만으로 일정을 이동시키지 않는다.
+- relative offset은 0~2,628,000분으로 제한한다. `at_start`와 `at_end`는 offset 0만 허용한다.
+- all-day/floating의 relative due는 저장된 local components를 조회 calendar에서 재구성한다. fixed due는 절대 시점이다.
 - `personal_tasks` 테이블을 별도로 둔다. `id`, `title`, `notes`, `due_at`, `completed`, `sort_order`, `created_at`, `updated_at`, `completed_at`을 최소 필드로 사용한다.
 - personal task는 EventKit/Exchange에 동기화하지 않는다.
 
@@ -172,7 +187,7 @@ create table app_settings (
 - `during`
 - `after`
 
-`event_change_log.change_type`:
+계획된 `event_change_log.change_type`(Phase 6):
 - `created`
 - `moved`
 - `cancelled`
@@ -185,75 +200,21 @@ create table app_settings (
 - `relative`
 - `fixed`
 
-## Swift domain model 초안
+## Swift domain model
 
-```swift
-struct EventBrief: Identifiable, Codable, Equatable {
-    let id: UUID
-    var titleSnapshot: String
-    var startSnapshot: Date?
-    var endSnapshot: Date?
-    var lifecycleStatus: EventLifecycleStatus
-    var notes: String
-    var tasks: [EventTask]
-    var link: EventLink?
-}
+실제 record는 String ID를 사용하는 `EventContext`, `EventLink`, `EventTask`, `PersonalTask`다. `EventBriefSnapshot`은 context+link+tasks 조회 결과이며 별도 테이블이 아니다. `TaskCenterItem`도 event/personal record를 합친 파생값이라 저장하지 않는다.
 
-enum EventTaskSection: String, Codable, CaseIterable {
-    case before
-    case during
-    case after
-}
-
-struct EventTask: Identifiable, Codable, Equatable {
-    let id: UUID
-    var section: EventTaskSection
-    var title: String
-    var isCompleted: Bool
-    var sortOrder: Int
-    var due: TaskDue?
-}
-
-enum EventLifecycleStatus: String, Codable {
-    case scheduled
-    case cancelled
-    case completed
-    case orphaned
-}
-
-enum TaskDue: Codable, Equatable {
-    case relative(anchor: RelativeAnchor, offsetMinutes: Int)
-    case fixed(Date)
-}
-
-enum RelativeAnchor: String, Codable {
-    case beforeStart
-    case atStart
-    case atEnd
-    case afterEnd
-}
-
-struct PersonalTask: Identifiable, Codable, Equatable {
-    let id: UUID
-    var title: String
-    var notes: String
-    var dueAt: Date?
-    var isCompleted: Bool
-    var sortOrder: Int
-}
-```
+첫 non-empty notes 또는 event task가 context와 link를 함께 만든다. 단순 선택과 빈 notes는 row를 만들지 않는다. 첫 저장의 resolve/create와 linked snapshot 갱신은 하나의 write transaction에서 수행한다.
 
 ## Identity fingerprint
 
 Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 보안용 hash가 아니라 안정적인 비교 키로 취급한다.
 
-입력 후보:
-- normalized title
-- normalized location
-- start date bucket
-- end date bucket
-- calendar identifier
+입력:
+- normalized calendar identifier, title, location
+- `zoned`: millisecond absolute start/end
+- `all_day`, `floating`: calendar identifier를 포함한 civil start/end components
 
 주의:
 - 사용자가 제목이나 시간을 바꾸면 fingerprint가 달라질 수 있다.
@@ -265,17 +226,28 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 1. 저장된 `event_identifier`로 직접 lookup
 2. 저장된 `calendar_item_identifier`로 lookup
 3. `calendar_item_external_identifier`와 `calendar_identifier` 조합으로 후보 검색
-4. recurrence master identifier + occurrence date + calendar identifier 매칭
+4. recurrence series identifier + occurrence identity key + calendar identifier 매칭
 5. calendar identifier, time range, title/location snapshot으로 후보 좁히기
 6. fingerprint 후보 검색
-7. 복구 실패 시 `event_links.link_status = orphaned`, `event_contexts.lifecycle_status = orphaned`
+7. 현재는 `notFound`를 반환한다. missing/orphaned lifecycle 전환은 Phase 6~7에서 구현한다.
+
+1~4의 강한 연결만 EventKit fetch 관찰 시 title/time/source/identifier/`last_seen_at` snapshot을 자동 갱신한다. 5~6은 `candidate` 또는 `ambiguous`로 반환해 사용자 확인 전에는 쓰지 않는다.
 
 ## Repository 책임
 
+`AppDatabase`:
+- `DatabaseQueue` open과 `v1_context_store` migration
+- foreign key 활성화
+- production Application Support, test in-memory/temporary-file 경계
+
 `EventContextRepository`:
-- context 생성, 조회, 갱신
-- status 전환
+- context/link/brief 조회와 snapshot 갱신 primitive
 - context와 link를 함께 가져오는 query
+
+`ContextStore`:
+- identity resolution과 첫 context/link 생성의 transaction 경계
+- EventKit fetch 관찰 시 강한 link snapshot refresh
+- weak candidate의 자동 연결 차단
 
 `EventTaskRepository`:
 - task 생성, 수정, 삭제
@@ -287,17 +259,24 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - personal task 생성, 수정, 삭제
 - 오늘/예정/완료 목록 query
 
-`ChangeLogRepository`:
+`TaskCenterRepository`:
+- event task와 personal task를 한 DB read에서 결합
+- `Today`: 미완료이며 내일 시작 전 due 또는 due 없음. overdue를 포함
+- `Upcoming`: 미완료이며 내일 시작 이후 due
+- `Completed`: event/personal 완료 항목을 완료 시각 역순으로 결합
+
+계획된 `ChangeLogRepository`(Phase 6):
 - change log append
 - context별 최신 변경 조회
 - move before/after payload 저장
 
-`CalendarRoleRepository`:
+계획된 `CalendarRoleRepository`(Phase 8):
 - calendar identifier별 role 저장
 - 사용자 표시 이름, 색상 override, visible 상태 관리
 
 ## Migration 원칙
 
+- `v1_context_store`는 Phase 3에서 적용·검증된 immutable baseline이다.
 - migration은 한 번 적용되면 수정하지 않는다.
 - schema 변경은 새 migration으로 추가한다.
 - destructive migration은 v1에서 금지한다.

@@ -1,5 +1,8 @@
 # Backup And Restore
 
+> 상태: Phase 9 계획 — export/import/reset과 실제 손상 DB 복구는 아직 미구현
+> 현재 구현: Phase 3 DB open/migration 실패 시 기존 파일을 보존하고 앱을 중단하는 안내 화면만 제공
+
 ## 목표
 
 KaosCal은 local-first 앱이므로 사용자의 Event Brief와 Task Center 데이터는 이 Mac의 SQLite DB에 있다.
@@ -8,7 +11,7 @@ KaosCal은 local-first 앱이므로 사용자의 Event Brief와 Task Center 데�
 ## 원칙
 
 - 원본 캘린더 이벤트는 backup에 포함하지 않는다.
-- Event Brief, event task, personal task, 변경 기록 등 KaosCal local data만 backup한다.
+- Event Brief, event task, personal task와 이후 추가될 변경 기록 등 KaosCal local data만 backup한다.
 - Export는 사용자가 읽을 수 있는 zip 파일로 만든다.
 - Import는 기존 DB를 경고 없이 덮어쓰지 않는다.
 - schema version이 맞지 않으면 안전하게 중단한다.

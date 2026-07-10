@@ -102,6 +102,44 @@ final class CalendarAccessTests: XCTestCase {
         XCTAssertEqual(provider.fetchCallCount, 2)
     }
 
+    func testFetchedEventsRefreshInjectedLocalContextStore() async throws {
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        let original = makeEvent(
+            startDate: Date(timeIntervalSince1970: 1_700_003_600),
+            endDate: Date(timeIntervalSince1970: 1_700_007_200),
+            isAllDay: false
+        )
+        let moved = makeEvent(
+            startDate: Date(timeIntervalSince1970: 1_700_010_800),
+            endDate: Date(timeIntervalSince1970: 1_700_014_400),
+            isAllDay: false
+        )
+        provider.events = [moved]
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(
+            store.saveNotes(for: original, notes: "Keep local notes")
+        )
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let state = AppState(
+            calendar: calendar,
+            now: { Date(timeIntervalSince1970: 1_700_000_000) },
+            calendarProvider: provider,
+            contextStore: store,
+            localContextStoreState: .ready
+        )
+
+        await state.loadCalendarStatus()
+
+        let brief = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(state.localContextStoreState, .ready)
+        XCTAssertEqual(brief.context.notes, "Keep local notes")
+        XCTAssertEqual(brief.context.startSnapshot, moved.startDate)
+        XCTAssertEqual(brief.context.endSnapshot, moved.endDate)
+    }
+
     func testAllDayExclusiveEndBecomesInclusiveDisplayDate() {
         let state = makeState(provider: FakeCalendarProvider())
         let start = Date(timeIntervalSince1970: 1_720_569_600)
@@ -227,6 +265,7 @@ final class CalendarAccessTests: XCTestCase {
             timeSemantics: timeSemantics,
             isRecurring: false,
             occurrenceDate: nil,
+            occurrenceLocalComponents: nil,
             isDetached: false,
             isReadOnly: false,
             isInvitation: false

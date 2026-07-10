@@ -21,7 +21,7 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 | Task Center | 이벤트 작업을 모아 보고, 이벤트에 연결되지 않은 가벼운 개인 작업을 추가 | 오늘·예정·완료 목록에서 작업 출처와 연결 일정을 명확히 보여 준다. |
 | 안전성 | read-only 구분, 이동 확인, orphan 보존, 백업/복원 | 원본 일정과 KaosCal 데이터의 삭제·복원이 서로 영향을 주지 않는다. |
 
-현재 구현 단계는 범위 자체와 구분한다. Phase 2까지는 Day/Week/Agenda의 읽기·표시와 선택만 구현되어 있고, Task Center 저장은 Phase 3~4, 원본 일정 생성·편집·삭제와 시간대 변경은 Phase 5, 반복 변경 범위는 Phase 6에서 구현·검증한다.
+현재 구현 단계는 범위 자체와 구분한다. Phase 3까지 Day/Week/Agenda 읽기·표시와 로컬 Event Brief/event task/personal task 저장·조회 기반이 구현되어 있다. Event Brief와 Task Center의 실제 편집 UI는 Phase 4, 원본 일정 생성·편집·삭제와 시간대 변경은 Phase 5, 반복 변경 범위와 change log는 Phase 6에서 구현·검증한다.
 
 ## Exchange 지원 경계
 

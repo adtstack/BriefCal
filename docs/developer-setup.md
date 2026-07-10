@@ -1,6 +1,6 @@
 # Developer And Test Setup
 
-> 상태: Phase 2 코드·자동·오프스크린 시각 검증 완료 / 실계정 권한·UI 검증 진행 중
+> 상태: Phase 3 Local Context DB 자동 검증 완료 / Phase 4 UX와 실계정 권한·UI 검증 진행 중
 > 마지막 갱신: 2026-07-10
 
 KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에서 결정하고 기록한다. 사용자가 우선 준비할 것은 개발·실계정 검증에 필요한 아래 항목뿐이다.
@@ -32,9 +32,11 @@ KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에
 
 ## 지금 사용자가 할 일
 
-현재 개발 진행을 위해 사용자가 바로 해야 할 일은 최신 서명 KaosCal 창에서 **macOS full calendar access 요청을 한 번 허용하는 것**뿐이다. 이후 `KAOS-TEST`가 sidebar에서 `Exchange`, 캘린더 고유 색상, 수정 가능 상태로 보이고 Day/Week/Agenda에 같은 일정이 표시되는지 프로젝트가 확인한다.
+현재 개발 진행을 위해 사용자가 바로 준비할 추가 비밀정보는 없다. 최신 서명 KaosCal 창에서 아직 하지 않았다면 **macOS full calendar access 요청을 한 번 허용하는 것**만 필요하다. 이후 `KAOS-TEST`가 sidebar에서 `Exchange`, 캘린더 고유 색상, 수정 가능 상태로 보이고 Day/Week/Agenda에 같은 일정이 표시되는지 확인한다.
 
-Exchange Online인지 온프레미스인지 알 수 있는 관리자 정보가 나중에 확보되면 호환성 기록에 추가하지만, 지금 개발을 막지는 않는다. 공유 read-only Exchange 캘린더는 아직 없어 그 항목의 실계정 판정만 `blocked`다. Phase 3 개발은 계속하되, Phase 8 호환성 게이트를 닫기 전에는 준비해야 한다.
+Exchange 로그인 정보는 환경변수로 만들지 않는다. password, MFA, tenant/client secret, OAuth token은 앱·저장소·대화에 제공하지 않는다. macOS Internet Accounts의 기존 로그인과 Calendar 동기화 상태가 유일한 계정 준비다. Phase 3의 SQLite DB와 migration은 앱이 자동으로 준비한다.
+
+Exchange Online인지 온프레미스인지 알 수 있는 관리자 정보가 나중에 확보되면 호환성 기록에 추가하지만, 지금 개발을 막지는 않는다. 공유 read-only Exchange 캘린더는 아직 없어 그 항목의 실계정 판정만 `blocked`다. Phase 4 개발은 계속하되, Phase 8 호환성 게이트를 닫기 전에는 준비해야 한다.
 
 ## 나중에 필요한 것
 

@@ -22,7 +22,7 @@ Exchange 우선 지원 범위는 macOS Calendar에 구성된 Exchange Online cal
 ## 결정 2: KaosCal 고유 데이터는 EventKit에 저장하지 않는다
 
 EventKit 이벤트에는 원본 일정 데이터만 저장한다.
-Before/During/After 체크리스트, KaosCal notes, change log, Event Brief 상태는 SQLite에 저장한다.
+Before/During/After 체크리스트, KaosCal notes, Event Brief 상태는 SQLite에 저장한다. change log는 Phase 6에서 같은 로컬 저장소에 추가한다.
 
 금지:
 - 체크리스트를 `EKEvent.notes`에 serialize
@@ -83,7 +83,7 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 
 `EKEventStoreChanged`를 받으면 기존 event object를 stale로 취급하고 마지막으로 성공한 loaded interval을 다시 fetch한다. 알림은 어떤 일정이 바뀌었는지 알려 주지 않는다. 연속 알림은 250ms 동안 병합해 같은 범위를 불필요하게 반복 조회하지 않는다.
 
-상태 전환:
+목표 상태 전환(Phase 6~7, 현재 미구현):
 - 한 번 찾지 못하면 `missing`
 - 복구 후보가 없고 충분한 재확인 후 `orphaned`
 - 사용자가 직접 삭제를 승인해야 local context 삭제
@@ -102,7 +102,9 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - title/start/end/location snapshot
 - fingerprint
 - is_all_day, time_semantics, time_zone_identifier
-- recurrence master identifier, occurrence date, is_detached
+- recurrence series identifier, occurrence date, occurrence identity key, occurrence local components, is_detached
+
+구현된 영속 resolver는 zoned 반복 occurrence를 절대 시점 키로, all-day/floating occurrence를 canonical civil-components 키로 구분한다. 강한 identifier match만 자동 연결·snapshot 갱신하고 exact snapshot/fingerprint는 사용자 확인 후보로만 반환한다. 세부 계약은 [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md)을 따른다.
 
 ## Phase 1 체크리스트
 
@@ -129,4 +131,4 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - 날짜가 바뀌는 시간 일정은 시작과 종료 양쪽 날짜를 표시한다.
 - calendar color는 `EKCalendar.cgColor`를 sRGB 값 snapshot으로 바꾸고 rail에만 사용한다.
 - all-day/floating local components에는 원래 calendar identifier를 보존한다. 표시 달력이 Buddhist/Japanese 등이어도 재구성 날짜가 이동하지 않게 하고, 표시 time zone만 적용한다.
-- UI occurrence identity는 calendar identifier + 가능한 EventKit item identifier + 반복 occurrence anchor 조합이다. 영속 Event Brief 복구는 결정 7의 별도 resolver를 따른다.
+- UI occurrence identity는 calendar identifier + 가능한 EventKit item identifier + 반복 occurrence anchor 조합이다. all-day/floating은 raw UTC `Date` 대신 local occurrence anchor를 사용한다. 영속 Event Brief 복구는 결정 7의 별도 resolver를 따른다.

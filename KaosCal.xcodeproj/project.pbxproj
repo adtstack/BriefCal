@@ -23,6 +23,16 @@
 		A1000000000000000000000E /* CalendarEventLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* CalendarEventLayoutTests.swift */; };
 		A1000000000000000000000F /* CalendarTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* CalendarTimelineView.swift */; };
 		B10000000000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* GRDB */; };
+		C10000000000000000000001 /* AppDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* AppDatabase.swift */; };
+		C10000000000000000000002 /* DatabaseMigrations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* DatabaseMigrations.swift */; };
+		C10000000000000000000003 /* ContextModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000003 /* ContextModels.swift */; };
+		C10000000000000000000004 /* EventIdentityFingerprint.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000004 /* EventIdentityFingerprint.swift */; };
+		C10000000000000000000005 /* EventContextRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000005 /* EventContextRepository.swift */; };
+		C10000000000000000000006 /* EventTaskRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000006 /* EventTaskRepository.swift */; };
+		C10000000000000000000007 /* PersonalTaskRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000007 /* PersonalTaskRepository.swift */; };
+		C10000000000000000000008 /* TaskCenterRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000008 /* TaskCenterRepository.swift */; };
+		C10000000000000000000009 /* ContextStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000009 /* ContextStore.swift */; };
+		C1000000000000000000000A /* ContextStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000A /* ContextStoreTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,6 +65,16 @@
 		A20000000000000000000011 /* CalendarEventLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventLayout.swift; sourceTree = "<group>"; };
 		A20000000000000000000012 /* CalendarEventLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventLayoutTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000013 /* CalendarTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimelineView.swift; sourceTree = "<group>"; };
+		C20000000000000000000001 /* AppDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDatabase.swift; sourceTree = "<group>"; };
+		C20000000000000000000002 /* DatabaseMigrations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseMigrations.swift; sourceTree = "<group>"; };
+		C20000000000000000000003 /* ContextModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextModels.swift; sourceTree = "<group>"; };
+		C20000000000000000000004 /* EventIdentityFingerprint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventIdentityFingerprint.swift; sourceTree = "<group>"; };
+		C20000000000000000000005 /* EventContextRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventContextRepository.swift; sourceTree = "<group>"; };
+		C20000000000000000000006 /* EventTaskRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventTaskRepository.swift; sourceTree = "<group>"; };
+		C20000000000000000000007 /* PersonalTaskRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonalTaskRepository.swift; sourceTree = "<group>"; };
+		C20000000000000000000008 /* TaskCenterRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskCenterRepository.swift; sourceTree = "<group>"; };
+		C20000000000000000000009 /* ContextStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextStore.swift; sourceTree = "<group>"; };
+		C2000000000000000000000A /* ContextStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextStoreTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -90,6 +110,7 @@
 			children = (
 				A70000000000000000000003 /* App */,
 				A7000000000000000000000A /* CalendarKit */,
+				C70000000000000000000001 /* ContextStore */,
 				A70000000000000000000004 /* Features */,
 				A70000000000000000000006 /* DesignSystem */,
 				A70000000000000000000007 /* Resources */,
@@ -147,6 +168,7 @@
 				A20000000000000000000009 /* AppStateTests.swift */,
 				A2000000000000000000000F /* CalendarAccessTests.swift */,
 				A20000000000000000000012 /* CalendarEventLayoutTests.swift */,
+				C2000000000000000000000A /* ContextStoreTests.swift */,
 				A2000000000000000000000E /* FakeCalendarProvider.swift */,
 			);
 			path = KaosCalTests;
@@ -171,6 +193,22 @@
 				A2000000000000000000000D /* EventKitProvider.swift */,
 			);
 			path = CalendarKit;
+			sourceTree = "<group>";
+		};
+		C70000000000000000000001 /* ContextStore */ = {
+			isa = PBXGroup;
+			children = (
+				C20000000000000000000001 /* AppDatabase.swift */,
+				C20000000000000000000002 /* DatabaseMigrations.swift */,
+				C20000000000000000000003 /* ContextModels.swift */,
+				C20000000000000000000009 /* ContextStore.swift */,
+				C20000000000000000000005 /* EventContextRepository.swift */,
+				C20000000000000000000004 /* EventIdentityFingerprint.swift */,
+				C20000000000000000000006 /* EventTaskRepository.swift */,
+				C20000000000000000000007 /* PersonalTaskRepository.swift */,
+				C20000000000000000000008 /* TaskCenterRepository.swift */,
+			);
+			path = ContextStore;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -279,6 +317,15 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000002 /* AppState.swift in Sources */,
+				C10000000000000000000001 /* AppDatabase.swift in Sources */,
+				C10000000000000000000002 /* DatabaseMigrations.swift in Sources */,
+				C10000000000000000000003 /* ContextModels.swift in Sources */,
+				C10000000000000000000009 /* ContextStore.swift in Sources */,
+				C10000000000000000000005 /* EventContextRepository.swift in Sources */,
+				C10000000000000000000004 /* EventIdentityFingerprint.swift in Sources */,
+				C10000000000000000000006 /* EventTaskRepository.swift in Sources */,
+				C10000000000000000000007 /* PersonalTaskRepository.swift in Sources */,
+				C10000000000000000000008 /* TaskCenterRepository.swift in Sources */,
 				A1000000000000000000000C /* CalendarEventDateFormatting.swift in Sources */,
 				A1000000000000000000000D /* CalendarEventLayout.swift in Sources */,
 				A10000000000000000000008 /* CalendarProvider.swift in Sources */,
@@ -298,6 +345,7 @@
 				A10000000000000000000006 /* AppStateTests.swift in Sources */,
 				A1000000000000000000000B /* CalendarAccessTests.swift in Sources */,
 				A1000000000000000000000E /* CalendarEventLayoutTests.swift in Sources */,
+				C1000000000000000000000A /* ContextStoreTests.swift in Sources */,
 				A1000000000000000000000A /* FakeCalendarProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -1,6 +1,6 @@
 # Exchange Compatibility
 
-> 상태: Phase 2 자동·서명·offscreen 표시 검증 완료 / 실계정 검증 진행 중
+> 상태: Phase 3 local identity/persistence 및 54-test 전체 회귀 완료 / Phase 4 UX와 실계정 검증 진행 중
 > 제품 대상: macOS Calendar에 구성된 Exchange Online
 > 현재 테스트 환경: Exchange backend 종류 미확인, 수정 가능한 `KAOS-TEST` calendar
 > 마지막 갱신: 2026-07-10
@@ -11,7 +11,7 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 
 | 기능 | 현재 테스트 환경 | 상태 | 증거 |
 | --- | --- | --- | --- |
-| full calendar access | 설명·요청·거부 복구 구현, 실계정 승인 결과 미확인 | 수동 대기 | 전체 33개 unit test, 최신 signed app 실행 |
+| full calendar access | 설명·요청·거부 복구 구현, 실계정 승인 결과 미확인 | 수동 대기 | Phase 2의 33-test·signed app 실행; 최신 54-test와 Phase 3 signed build/codesign 통과 |
 | Exchange source·calendar 식별 | `EKSourceType.exchange`·calendar color mapping 구현, 실계정 미확인 | 수동 대기 | `KAOS-TEST` sidebar/color 확인 필요 |
 | editable calendar 확인 | `KAOS-TEST` | 사용자 확인 | 수정 가능하다고 확인 |
 | read-only 구분 | `allowsContentModifications` mapping·unit state 구현 | blocked | Viewer calendar 미준비, Phase 8 전 해소 |
@@ -20,6 +20,7 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 | 시간대/DST 표시 | wall-clock 배치, fall-back overlap, floating/non-Gregorian unit 통과 | 실계정 대기 | KC-E3 |
 | 시간대 편집 | 미구현 | Phase 5 | KC-E3 |
 | 반복 occurrence 조회 | occurrence·detached·repeat snapshot과 UI identity unit 통과 | 실계정 대기 | KC-E4 |
+| 반복 Event Brief 연결 | zoned instant, all-day/floating civil occurrence, detached local anchor unit 통과 | 실계정 대기 | 실제 KC-E4 identifier 변화 필요 |
 | 이번 일정·이번 이후 반복 변경 | 미검증 | 대기 | KC-E4 |
 | 외부 변경 알림 후 재조회 | 마지막 loaded interval 250ms 병합 재조회 unit 통과 | 실계정 대기 | Calendar.app/Outlook 변경 |
 | 권한 철회 후 데이터 제거 | calendar/event/selection 제거 unit 통과 | 실계정 대기 | System Settings 권한 철회 |

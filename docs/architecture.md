@@ -39,9 +39,9 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 
 원칙: KaosCal 고유 데이터는 `EKEvent.notes`에 쓰지 않는다.
 
-## 목표 모듈 구조
+## 현재 모듈 구조
 
-아래 tree는 v1 목표 구조다. Phase 2 현재 구현은 `App`, `CalendarKit`, `Features/CalendarShell`, `DesignSystem`, hosted unit tests이며, 나머지는 각 phase에서 추가한다.
+아래 tree는 Phase 3 완료 시점에 저장소에 실제로 존재하는 구조다.
 
 ```text
 KaosCal.app
@@ -55,48 +55,47 @@ KaosCal.app
 │  ├─ CalendarEventDateFormatting.swift
 │  └─ CalendarEventLayout.swift
 ├─ ContextStore/
-│  ├─ Database.swift
-│  ├─ Migrations.swift
+│  ├─ AppDatabase.swift
+│  ├─ DatabaseMigrations.swift
+│  ├─ ContextModels.swift
+│  ├─ ContextStore.swift
 │  ├─ EventContextRepository.swift
 │  ├─ EventTaskRepository.swift
 │  ├─ PersonalTaskRepository.swift
-│  └─ ChangeLogRepository.swift
+│  ├─ TaskCenterRepository.swift
+│  └─ EventIdentityFingerprint.swift
 ├─ Features/
-│  ├─ Onboarding/
-│  ├─ CalendarShell/
-│  ├─ WeekView/
-│  ├─ DayView/
-│  ├─ AgendaView/
-│  ├─ EventBrief/
-│  ├─ TaskCenter/
-│  ├─ MoveConfirmation/
-│  ├─ AfterReview/
-│  └─ Settings/
+│  └─ CalendarShell/
+│     ├─ CalendarShellView.swift
+│     └─ CalendarTimelineView.swift
 ├─ DesignSystem/
-│  ├─ Colors.swift
-│  ├─ Typography.swift
-│  ├─ EventCard.swift
-│  └─ KeyboardShortcuts.swift
-└─ Tests/
-   ├─ ContextStoreTests/
-   ├─ EventIdentityTests/
-   └─ ViewModelTests/
+│  └─ KaosCalTheme.swift
+├─ Resources/
+│  ├─ Assets.xcassets
+│  ├─ Info.plist
+│  └─ KaosCal.entitlements
+└─ KaosCalTests/
+   ├─ ContextStoreTests.swift
+   ├─ CalendarEventLayoutTests.swift
+   ├─ CalendarAccessTests.swift
+   ├─ AppStateTests.swift
+   └─ FakeCalendarProvider.swift
 ```
+
+`EventBrief`, `TaskCenter`, `MoveConfirmation`, `AfterReview`, `Settings`의 별도 feature 경계는 해당 phase에서 실제 파일을 추가할 때 확정한다. Phase 3에서는 Event Brief와 Task Center의 저장소·query만 `ContextStore`에 있고 실제 편집 화면은 없다.
 
 ## 런타임 흐름
 
-아래는 목표 런타임 흐름이다. Phase 2에서는 1~3과 CalendarShell의 Day/Week/Agenda 읽기·표시를 구현했고 ContextStore 연결은 Phase 3부터 활성화한다.
+아래는 v1 런타임 흐름이다. Phase 3까지 1~6의 저장·관찰 기반과 CalendarShell의 Day/Week/Agenda 읽기·표시를 구현했다. 7의 실제 편집 UI는 Phase 4, 8의 일정 쓰기와 change log는 Phase 5~6 범위다.
 
-1. 앱 시작 시 AppState가 권한 상태와 로컬 DB 상태를 로드한다.
-2. CalendarProvider가 EventKit 권한 상태를 확인한다.
-3. 권한이 있으면 지정 기간의 이벤트와 캘린더 목록을 가져온다.
-4. ContextStore가 로컬 Event Brief 데이터를 로드한다.
-5. EventIdentityResolver가 원본 이벤트와 로컬 context를 연결한다.
-6. CalendarShell과 Task Center가 Calendar event + KaosCal context + 개인 작업을 함께 표시한다.
-7. 사용자가 체크리스트, notes, 개인 작업, 상태를 바꾸면 SQLite만 변경한다.
-8. 사용자가 일정 자체를 바꾸면 EventKit을 변경하고 change log를 SQLite에 남긴다.
-
-위 구조에서 `App`, `CalendarKit`, `CalendarShell`, `DesignSystem`은 Phase 2까지 구현되어 있다. `ContextStore`와 나머지 feature 폴더는 해당 phase에서 추가한다.
+1. `KaosCalApp` 초기화가 `AppBootstrap.makeAppState`를 호출한다.
+2. production에서는 `AppBootstrap`이 Application Support DB를 열고 migration한 단일 `ContextStore`를 만든다. hosted XCTest에서는 production DB open을 건너뛴다.
+3. `AppBootstrap`이 DB 상태와 `ContextStore`를 주입해 `AppState`를 만든다. DB open/migration 실패 시 전역 복구 안내 상태로 시작한다.
+4. `CalendarShell`의 시작 task가 `AppState.loadCalendarStatus`를 호출하고 `CalendarProvider`가 EventKit 권한 상태를 확인한다.
+5. 권한이 있으면 지정 기간의 이벤트와 캘린더 목록을 가져온다.
+6. fetch한 EventKit 값 snapshot을 `ContextStore.observe`가 강한 식별자로 기존 context에 연결하고 최신 snapshot으로 갱신한 뒤 Day/Week/Agenda에 표시한다.
+7. Phase 4에서는 사용자가 체크리스트, notes, 개인 작업, 완료 상태를 바꾸면 SQLite만 변경하고 Event Brief와 Task Center가 함께 갱신된다.
+8. Phase 5~6에서는 사용자가 일정 자체를 바꾸면 EventKit을 변경하고, 확정된 변경 뒤 change log를 SQLite에 남긴다.
 
 ## CalendarProvider 경계
 
@@ -133,13 +132,32 @@ EventKitProvider
 - pending 범위 조회는 다음 navigation 전에 취소해 오래된 결과가 현재 화면을 덮지 않게 한다. `EKEventStoreChanged`는 마지막 loaded interval을 250ms 병합 재조회한다.
 - `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
 - `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
-- UI용 `DisplayEventIdentity`는 SwiftUI 선택 안정성을 위한 값이다. Phase 3의 영속 Event Brief `EventIdentityResolver`와 같은 ID 또는 같은 우선순위를 보장하지 않는다.
+- UI용 `DisplayEventIdentity`는 SwiftUI 선택 안정성을 위한 값이다. all-day/floating 반복은 local occurrence anchor를 써 시스템 시간대 변경에도 같은 civil occurrence ID를 유지한다. 영속 resolver와 같은 ID 또는 같은 우선순위를 보장하지 않는다.
 
 세부 배치 결정은 [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md)을 따른다.
 
+## Phase 3 로컬 저장 파이프라인
+
+```text
+KaosCalApp / AppBootstrap
+  → AppDatabase(DatabaseQueue + v1 migration)
+  → ContextStore transaction boundary
+  → EventContext/EventTask/PersonalTask repositories
+  → TaskCenterRepository combined read
+```
+
+- `v1_context_store`는 `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`만 만든다. change log, calendar role, settings는 후속 additive migration이다.
+- 테스트 host는 `XCTestConfigurationFilePath`를 감지해 default Application Support DB를 열지 않는다. repository test는 in-memory 또는 임시 파일 DB만 사용한다.
+- 앱 시작 DB open/migration 실패는 in-memory fallback 없이 전역 복구 화면으로 전환한다. 기존 DB를 삭제하거나 덮어쓰지 않는다.
+- 첫 non-empty notes 또는 event task 저장만 context+link를 만들며, resolve부터 insert/update까지 하나의 write transaction이다.
+- EventKit fetch 관찰은 강한 ID로 이미 연결된 record만 갱신한다. exact snapshot과 versioned fingerprint는 확인이 필요한 후보다.
+- 반복 identity는 zoned absolute occurrence와 all-day/floating civil occurrence를 분리한다. identifier+occurrence unique index가 동시 중복 생성을 막는다.
+- all-day/floating relative task due는 저장된 local components를 조회 calendar에서 재구성한다. personal task와 event task는 한 consistent read에서 Today/Upcoming/Completed item으로 합친다.
+- 날짜는 UTC millisecond TEXT 계약을 명시한다. details와 선택 근거는 [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md)을 따른다.
+
 ## Event Brief 경계
 
-Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다.
+Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다. 아래는 v1 목표 정책이며, Phase 3은 지연 생성·SQLite 수정 primitive와 조회만 구현했다. 실제 편집 UI는 Phase 4, move/change log와 orphan lifecycle은 Phase 6~7 범위다.
 
 - Event Brief 생성: 이벤트를 단순 선택할 때는 만들지 않고, 사용자가 처음 메모나 작업을 저장할 때 local context를 만든다.
 - Event Brief 수정: SQLite에만 쓴다.
@@ -154,10 +172,12 @@ EventKit의 eventIdentifier는 영구 절대값으로 취급하지 않는다. �
 1. `eventIdentifier` 직접 매칭
 2. `calendarItemIdentifier` 매칭
 3. `calendarItemExternalIdentifier` + calendar identifier 매칭
-4. recurrence master + occurrence date + calendar identifier 매칭
+4. recurrence series + occurrence identity key + calendar identifier 매칭
 5. calendar identifier + 시간 범위 + title/location snapshot 매칭
 6. title/start/end/location 기반 fingerprint 후보
-7. 실패 시 orphaned context로 유지
+7. 실패 시 `notFound`로 유지
+
+1~4만 strong match로 자동 연결하고 관찰 snapshot을 갱신한다. 5~6은 candidate/ambiguous이며 자동 relink하지 않는다. `missing`/`orphaned` 상태 전환과 사용자 relink UI는 Phase 6~7 범위다.
 
 ## 권한과 read-only 상태
 
@@ -168,7 +188,7 @@ EventKit의 eventIdentifier는 영구 절대값으로 취급하지 않는다. �
 ## 오류 처리 원칙
 
 - EventKit 실패는 사용자가 이해할 수 있는 캘린더/권한/네트워크/계정 상태 문구로 바꾼다.
-- SQLite migration 실패는 데이터 손실 없이 앱을 중단하고 백업/복구 안내를 제공한다.
+- SQLite open/migration 실패는 데이터 손실 없이 앱 화면을 중단하고 기존 파일 보존·백업/복구 안내를 제공한다. 실제 export/import 복구 도구는 Phase 9 범위다.
 - EventKit 변경과 SQLite change log 기록은 하나의 use case로 관리하고, 한쪽만 성공했을 때 재시도·보정·사용자 안내를 남긴다.
 - 일정 삭제와 local context 삭제는 별도 명령으로 분리한다.
 

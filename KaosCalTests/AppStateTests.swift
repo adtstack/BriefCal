@@ -3,6 +3,25 @@ import XCTest
 
 @MainActor
 final class AppStateTests: XCTestCase {
+    func testHostedTestBootstrapNeverOpensDefaultDatabase() {
+        var didOpenDatabase = false
+        let environment = ProcessInfo.processInfo.environment
+
+        XCTAssertNotNil(environment["XCTestConfigurationFilePath"])
+
+        let state = AppBootstrap.makeAppState(
+            environment: environment,
+            openDatabase: {
+                didOpenDatabase = true
+                return try AppDatabase.inMemory()
+            }
+        )
+
+        XCTAssertFalse(didOpenDatabase)
+        XCTAssertNil(state.contextStore)
+        XCTAssertEqual(state.localContextStoreState, .unavailable)
+    }
+
     func testDefaultsToWeekAtStartOfToday() {
         let baseline = Date(timeIntervalSince1970: 1_700_000_000)
         var calendar = Calendar(identifier: .gregorian)
