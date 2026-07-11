@@ -38,9 +38,17 @@ struct EventBriefView: View {
             case .confirmationRequired:
                 identityBlockedContent
             case .empty:
-                editableContent(tasks: [])
+                editableContent(
+                    tasks: [],
+                    lifecycleStatus: inferredLifecycleStatus,
+                    hasStoredBrief: false
+                )
             case let .loaded(snapshot):
-                editableContent(tasks: snapshot.tasks)
+                editableContent(
+                    tasks: snapshot.tasks,
+                    lifecycleStatus: snapshot.context.lifecycleStatus,
+                    hasStoredBrief: true
+                )
             }
         }
         .onDisappear {
@@ -76,8 +84,16 @@ struct EventBriefView: View {
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    private func editableContent(tasks: [EventTask]) -> some View {
+    private func editableContent(
+        tasks: [EventTask],
+        lifecycleStatus: EventLifecycleStatus,
+        hasStoredBrief: Bool
+    ) -> some View {
         VStack(alignment: .leading, spacing: 18) {
+            if lifecycleStatus == .completed {
+                endedEventBanner(hasStoredBrief: hasStoredBrief)
+            }
+
             ForEach(EventTaskSection.allCases, id: \.self) { section in
                 EventTaskSectionView(
                     appState: appState,
@@ -91,6 +107,43 @@ struct EventBriefView: View {
 
             notesEditor
         }
+    }
+
+    private var inferredLifecycleStatus: EventLifecycleStatus {
+        let eventEnd = CalendarEventDateFormatting.effectiveDateRange(
+            for: event,
+            calendar: appState.calendar
+        ).end
+        return appState.taskReferenceDate >= eventEnd
+            ? .completed
+            : .scheduled
+    }
+
+    private func endedEventBanner(hasStoredBrief: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("Event ended", systemImage: "calendar.badge.clock")
+                .font(.headline)
+            Text(hasStoredBrief ? storedBriefEndedCopy : emptyBriefEndedCopy)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            KaosCalTheme.accentSoft.opacity(0.55),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+        .accessibilityIdentifier("eventBrief.eventEnded")
+    }
+
+    private var storedBriefEndedCopy: String {
+        "This Event Brief stays on this Mac. Unfinished After tasks remain "
+            + "in Today or Upcoming. They are also collected in After Review."
+    }
+
+    private var emptyBriefEndedCopy: String {
+        "Add an After task or note to create a local Event Brief. "
+            + "Follow-up tasks are collected in After Review."
     }
 
     private var notesEditor: some View {

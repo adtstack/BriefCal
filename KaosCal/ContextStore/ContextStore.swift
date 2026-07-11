@@ -88,6 +88,20 @@ final class ContextStore {
         }
     }
 
+    @discardableResult
+    func refreshTemporalLifecycle(
+        at date: Date,
+        calendar: Calendar
+    ) throws -> [String] {
+        try database.write { db in
+            try eventContexts.reconcileTemporalLifecycle(
+                at: date,
+                calendar: calendar,
+                in: db
+            )
+        }
+    }
+
     func loadBrief(for event: DisplayEvent) throws -> EventBriefLoadResult {
         try database.write { db in
             switch try eventContexts.resolve(event: event, in: db) {

@@ -86,10 +86,16 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 
 `EKEventStoreChanged`를 받으면 기존 event object를 stale로 취급하고 마지막으로 성공한 loaded interval을 다시 fetch한다. 알림은 어떤 일정이 바뀌었는지 알려 주지 않는다. 연속 알림은 250ms 동안 병합해 같은 범위를 불필요하게 반복 조회하지 않는다.
 
-목표 상태 전환(Phase 6~7, 현재 미구현):
-- 한 번 찾지 못하면 `missing`
-- 복구 후보가 없고 충분한 재확인 후 `orphaned`
-- 사용자가 직접 삭제를 승인해야 local context 삭제
+Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active occurrence의 유효 종료를 기준으로 scheduled/completed를 갱신하고, cancelled/orphaned는 덮어쓰지 않는다.
+
+Phase 7B의 부재 확인 계약:
+- 일반 구간 fetch에서 한 번 찾지 못한 결과는 상태 전이 근거로 쓰지 않는다.
+- occurrence-aware strong identifier 전용 lookup의 첫 `notFound`만 `missing`으로 기록할 수 있다.
+- 이미 missing인 항목을 사용자가 명시적으로 다시 확인했고 lookup도 `notFound`일 때 orphan 보관 확인을 제공한다.
+- weak/ambiguous, 권한 오류, provider 오류, 동기화 지연은 orphan 근거가 아니다.
+- 사용자가 직접 승인해야 orphan 보관·재연결·local context 삭제가 일어나며, local 삭제는 EventKit 삭제와 분리한다.
+
+세부 경계는 [ADR-012](adr/ADR-012-lifecycle-after-review-and-orphan-confirmation.md)를 따른다.
 
 ## 결정 7: EventKit ID는 영구 ID가 아니다
 
@@ -145,7 +151,7 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - 원본 notes는 명시적 editor field로만 `EKEvent.notes`에 쓰고 local Event Brief notes/tasks와 분리한다.
 - 종일 종료는 배타 자정이다. draft가 포착한 reference time zone을 사용하고, 저장 시 기본 zone이 달라졌으면 all-day/floating wall components를 현재 zone에 rebase해 civil 값을 유지한다.
 - time zone 변경은 preserve-local/preserve-instant를 구분하고 DST gap/overlap의 모호한 local time은 자동 보정하지 않는다.
-- linked same-calendar update·calendar 이동·안전한 `thisEvent`는 EventKit receipt로 기존 context snapshot을 rebind한다. linked `futureEvents`와 linked 삭제는 각각 multi-context reconciliation과 Phase 7 orphan review 전까지 차단한다.
+- linked same-calendar update·calendar 이동·안전한 `thisEvent`는 EventKit receipt로 기존 context snapshot을 rebind한다. linked `futureEvents`와 linked 삭제는 각각 multi-context reconciliation과 Phase 7C orphan review 전까지 차단한다.
 - EventKit 성공 뒤 SQLite rebind 실패는 부분 성공으로 알리고 local 데이터를 삭제하지 않는다.
 
 전체 계약은 [ADR-010](adr/ADR-010-original-event-write-safety.md)을 따른다. 실제 Exchange save/remove 통과 여부는 [Exchange Compatibility](exchange-compatibility.md)에서만 판정한다.
@@ -163,7 +169,7 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - 반복 write, calendar move, 기존 일정의 시간 의미 변경은 immutable impact preview를 보여 주고 사용자가 Confirm한 뒤에만 provider를 호출한다. linked context가 있으면 유지할 local 항목을 함께 보여 준다. Cancel·validation 실패·no-op에는 EventKit write와 local log가 없다.
 - confirm 뒤에도 현재 full access, source/target writable, strong identity, fresh supported-field snapshot을 다시 검사한다.
 - linked `thisEvent` move는 선택 context 하나를 receipt에 rebind한다. Phase 6의 첫 안전 범위는 series split 뒤 여러 context를 재연결하는 기능을 제공하지 않으므로 linked `futureEvents`를 전부 write 전에 차단한다. 나중에 열더라도 영향받는 local context 전부를 열거하고 각 context를 강하게 재연결할 수 있어야 하며 weak·ambiguous·missing이 하나라도 있으면 계속 차단한다.
-- linked delete는 Phase 7 orphan review까지 계속 차단한다. local Brief가 없는 반복 원본만 Phase 6 scoped delete 후보가 될 수 있다.
+- linked delete는 Phase 7C orphan review까지 계속 차단한다. local Brief가 없는 반복 원본만 Phase 6 scoped delete 후보가 될 수 있다.
 - linked write 성공 뒤 context rebind와 `event_change_log` append는 하나의 SQLite transaction이다. EventKit과 이 local transaction은 원자적이지 않으므로 EventKit만 성공한 부분 성공을 숨기거나 자동 rollback하지 않는다.
 - EventKit save 후 identifier churn으로 post-save occurrence를 강하게 재탐색하지 못하면 `CalendarEventMutationPartialSuccess`로 전파한다. UI는 editor/review를 닫고 refresh하며 동일 명령을 재시도하지 말고 Calendar.app에서 확인하도록 안내한다. local rebind·log·Undo는 수행하지 않고 Event Brief를 보존한다.
 - change log scope는 `single`, `this_event`, `future_events`를 구분한다. 실패·취소·단순 관찰은 기록하지 않는다.

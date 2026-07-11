@@ -27,48 +27,75 @@ final class TaskCenterRepository {
             let eventItems: [TaskCenterItem] = try EventTask
                 .fetchAll(db)
                 .compactMap { task -> TaskCenterItem? in
-                guard let context = contexts[task.contextID],
-                      let link = links[task.contextID] else {
-                    return nil
-                }
-                let eventRange = link.effectiveDateRange(calendar: calendar)
-                return TaskCenterItem(
-                    id: .eventTask(
-                        taskID: task.id,
-                        contextID: context.id
-                    ),
-                    title: task.title,
-                    isCompleted: task.isCompleted,
-                    dueAt: task.effectiveDueDate(
-                        eventStart: eventRange.start,
-                        eventEnd: eventRange.end
-                    ),
-                    completedAt: task.completedAt,
-                    sortOrder: task.sortOrder,
-                    source: .event(
-                        contextID: context.id,
-                        section: task.section,
-                        eventTitle: context.titleSnapshot,
-                        calendarTitle: link.calendarTitleSnapshot,
-                        sourceTitle: link.sourceTitle,
-                        eventStart: eventRange.start,
-                        eventEnd: eventRange.end,
-                        isAllDay: link.isAllDay
+                    guard let context = contexts[task.contextID],
+                          let link = links[task.contextID] else {
+                        return nil
+                    }
+                    let lifecycleStatus = Self.projectedLifecycleStatus(
+                        context: context,
+                        link: link,
+                        at: currentDate,
+                        calendar: calendar
                     )
-                )
-            }
-            let personalItems: [TaskCenterItem] = try PersonalTask
-                .fetchAll(db)
-                .map { task in
-                TaskCenterItem(
-                    id: .personalTask(taskID: task.id),
-                    title: task.title,
-                    isCompleted: task.isCompleted,
-                    dueAt: task.dueAt,
-                    completedAt: task.completedAt,
-                    sortOrder: task.sortOrder,
-                    source: .personal
-                )
+                    switch list {
+                    case .today, .upcoming:
+                        if lifecycleStatus == .completed,
+                           task.section != .after {
+                            return nil
+                        }
+                    case .afterReview:
+                        guard lifecycleStatus == .completed,
+                              task.section == .after else {
+                            return nil
+                        }
+                    case .completed:
+                        break
+                    }
+                    let eventRange = link.effectiveDateRange(
+                        calendar: calendar
+                    )
+                    return TaskCenterItem(
+                        id: .eventTask(
+                            taskID: task.id,
+                            contextID: context.id
+                        ),
+                        title: task.title,
+                        isCompleted: task.isCompleted,
+                        dueAt: task.effectiveDueDate(
+                            eventStart: eventRange.start,
+                            eventEnd: eventRange.end
+                        ),
+                        completedAt: task.completedAt,
+                        sortOrder: task.sortOrder,
+                        source: .event(
+                            contextID: context.id,
+                            section: task.section,
+                            eventTitle: context.titleSnapshot,
+                            calendarTitle: link.calendarTitleSnapshot,
+                            sourceTitle: link.sourceTitle,
+                            eventStart: eventRange.start,
+                            eventEnd: eventRange.end,
+                            isAllDay: link.isAllDay
+                        )
+                    )
+                }
+            let personalItems: [TaskCenterItem]
+            if list == .afterReview {
+                personalItems = []
+            } else {
+                personalItems = try PersonalTask
+                    .fetchAll(db)
+                    .map { task in
+                        TaskCenterItem(
+                            id: .personalTask(taskID: task.id),
+                            title: task.title,
+                            isCompleted: task.isCompleted,
+                            dueAt: task.dueAt,
+                            completedAt: task.completedAt,
+                            sortOrder: task.sortOrder,
+                            source: .personal
+                        )
+                    }
             }
             return eventItems + personalItems
         }
@@ -88,6 +115,9 @@ final class TaskCenterRepository {
             return items.filter {
                 !$0.isCompleted && ($0.dueAt.map { $0 >= tomorrow } ?? false)
             }.sorted(by: Self.openItemOrder)
+        case .afterReview:
+            return items.filter { !$0.isCompleted }
+                .sorted(by: Self.openItemOrder)
         case .completed:
             return items.filter { $0.isCompleted }
                 .sorted(by: Self.completedItemOrder)
@@ -116,5 +146,21 @@ final class TaskCenterRepository {
                 > (rhs.completedAt ?? .distantPast)
         }
         return lhs.id < rhs.id
+    }
+
+    private static func projectedLifecycleStatus(
+        context: EventContext,
+        link: EventLink,
+        at date: Date,
+        calendar: Calendar
+    ) -> EventLifecycleStatus {
+        guard context.lifecycleStatus == .scheduled
+                || context.lifecycleStatus == .completed,
+              link.linkStatus == .active else {
+            return context.lifecycleStatus
+        }
+        return date >= link.effectiveDateRange(calendar: calendar).end
+            ? .completed
+            : .scheduled
     }
 }

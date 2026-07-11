@@ -152,6 +152,9 @@ Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immuta
 - `event_contexts.status`는 `lifecycle_status`로 명확히 한다: `scheduled`, `completed`, `cancelled`, `orphaned`.
 - `moved`는 현재 상태가 아니라 `event_change_log.change_type = moved`로만 남긴다.
 - Event Brief는 일정 선택만으로 만들지 않고, 첫 메모·event task 저장에서 지연 생성한다.
+- Phase 7A는 active link의 저장된 유효 종료를 현재 표시 calendar에서 재구성해 `now >= end`이면 `completed`, 아니면 `scheduled`로 reconciliation한다. zoned는 절대 시점, 종일은 배타 종료일, floating은 civil components를 사용한다.
+- 자동 시간 전이는 scheduled/completed 사이에서만 일어나고 cancelled/orphaned와 non-active link는 덮어쓰지 않는다. 관찰 파생 완료는 change log가 아니며 일정이 미래로 이동하면 scheduled로 돌아갈 수 있다.
+- 일반 EventKit 구간 fetch에서 보이지 않는 사실만으로 missing/orphaned/cancelled를 자동 판정하지 않는다. 전용 strong lookup과 사용자 재확인 경계는 [ADR-012](adr/ADR-012-lifecycle-after-review-and-orphan-confirmation.md)를 따른다.
 
 ### Event link temporal and recurrence fields
 
@@ -334,9 +337,12 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 `TaskCenterRepository`:
 - event task와 personal task를 한 DB read에서 결합
 - typed backing task identity와 event section/effective range projection
-- `Today`: 미완료이며 내일 시작 전 due 또는 due 없음. overdue를 포함
-- `Upcoming`: 미완료이며 내일 시작 이후 due
+- `Today`: 미완료이며 내일 시작 전 due 또는 due 없음. overdue를 포함하되 completed context는 After section만 포함
+- `Upcoming`: 미완료이며 내일 시작 이후 due. completed context는 After section만 포함
+- `After Review`: completed context의 미완료 After만 포함하고 personal task는 제외
 - `Completed`: event/personal 완료 항목을 완료 시각 역순으로 결합
+
+`ContextStore.refreshTemporalLifecycle`은 Task Center refresh 전에 같은 DB에서 active context 상태를 갱신한다. `TaskCenterRepository`도 전달받은 `now`와 calendar로 같은 lifecycle을 projection 시점에 계산해, direct read나 clock/time-zone 경계에서도 stale Before/During 작업을 노출하지 않는다. 어떤 경로도 숨긴 작업 row를 삭제하거나 완료 처리하지 않는다.
 
 구현된 Phase 6 change-log 책임(`ContextStore`):
 - `mutationImpact(contextID:recentHistoryLimit:)`용 연결 task 수와 최근 history 조회

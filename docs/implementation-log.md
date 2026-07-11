@@ -498,6 +498,37 @@
   - Exchange fixture write를 다시 만들지 않았다. 실계정 비반복 CRUD 증거는 직전 CDHash `63ded03a9d704976c4ba45340f2748eda9892382` run `20260711-1626-B7D2`에 귀속하고, 최종 artifact의 build/자동 gate와 구분한다.
 - 결과: live에서 발견한 recurrence membership 수정에 deterministic test와 legacy Brief upgrade 경로를 더했고, 최종 서명 산출물과 운영 DB 격리 gate를 통과했다. Calendar.app·all-day·실제 recurrence/future split·calendar move의 남은 live 판정은 변하지 않는다.
 
+## 2026-07-11 — Phase 7A lifecycle·After Review와 post-write focus 안전성
+
+- 관련 ADR: ADR-003, ADR-008, ADR-011, ADR-012
+- 완성도 재평가:
+  - 요청 핵심 범위는 Day/Week/Agenda, all-day·time-zone·recurrence 모델, Exchange 우선 EventKit 경계, Event Brief와 Task Center까지 연결됐다.
+  - 이번 단계의 주요 미구현은 Phase 7B/C missing·orphan·relink·linked delete, mini month, backup/settings, app icon, 남은 Exchange/Calendar.app live matrix와 Developer ID/notarization이다.
+  - 현재 구현을 막는 사용자 입력은 없다. read-only Exchange fixture, Apple Developer Team과 clean-machine beta는 해당 gate를 열 때 별도 요청한다.
+- lifecycle·Task Center 구현:
+  - active link의 occurrence별 유효 종료에서 `scheduled ↔ completed`를 파생한다. `now == end`가 완료 경계이며 zoned instant, all-day exclusive end, floating civil components를 각각 보존한다.
+  - cancelled/orphaned context와 non-active link는 시간 reconciliation이 덮어쓰지 않고, 미래로 이동한 active 일정은 scheduled로 돌아갈 수 있다. 관찰 파생 전이는 change log를 만들지 않는다.
+  - 완료 일정의 Before/During open row는 삭제·자동 완료하지 않고 Today/Upcoming projection에서만 숨긴다. 미완료 After는 기존 목록과 새 `After Review`에 남고 Completed는 모든 section의 완료 이력을 유지한다.
+  - Event Brief는 종료된 일정임을 명시하고 새 note/task를 처음 저장한 경우에도 completed 상태가 유지된다.
+- post-write focus 회귀 수정:
+  - 반복 occurrence들이 series identifier를 공유할 때 앞선 sibling을 잘못 focus할 수 있던 fallback을 제거했다.
+  - 전체 snapshot에서 exact display ID를 먼저 찾고, 반복 fallback은 동일 calendar와 instant/civil occurrence anchor를 요구한다. nonrecurring strong-ID fallback은 유지한다.
+  - zoned, all-day, floating occurrence와 nonrecurring fallback 회귀를 추가했다.
+- 자동 검증:
+  - 전체 **145 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**.
+  - skip은 read-only calendar가 필요한 명시적 수동 EventKit gate 하나다.
+  - result bundle: `/private/tmp/KaosCalPhase7AFull.xcresult`.
+  - direct DB `1783704658|126976`, sandbox DB `1783700481|126976`, 양쪽 SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 WAL/SHM 부재가 전체 test 및 exact Release bootstrap 전후 동일했다.
+- Release와 bootstrap 검증:
+  - artifact: `/private/tmp/KaosCalPhase7ARelease/Build/Products/Release/KaosCal.app`.
+  - CDHash: `abfb685b03f1ff919f83a955e5b819e3c6b57df6`.
+  - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` ad-hoc Release, hardened runtime, `codesign --verify --deep --strict`: **pass**.
+  - entitlement는 app sandbox와 Calendar access만 포함하고 `get-task-allow`는 없다. XCTest plug-in·link 없음, full-access usage description 확인.
+  - exact Release가 onscreen 1360×840 창을 생성하는 것을 CoreGraphics로 확인했고, 읽기 전용 `Tasks` 메뉴 전환 뒤 앱을 종료해 남은 프로세스가 0임을 확인했다.
+  - 비활성 앱의 System Events는 창 수를 0으로 잘못 보고했으나 CoreGraphics window list와 AppKit 로그는 동일 창을 확인했다. 자동화 프로세스에 Screen Recording 권한이 없어 픽셀 캡처는 검은 화면이었으므로 시각 레이아웃 pass로 과장하지 않는다.
+  - 이 checkpoint에서는 EventKit/Exchange write를 실행하지 않았다. live 비반복 CRUD 증거는 artifact CDHash `63ded03a9d704976c4ba45340f2748eda9892382`, run `20260711-1626-B7D2`에 계속 귀속한다.
+- 결과: Phase 7A 코드·전체 자동·운영 DB 격리·Release·bootstrap checkpoint를 통과했다. Phase 7B/C의 삭제 판정은 일반 fetch 부재가 아니라 전용 strong lookup과 사용자 재확인을 구현한 뒤에만 연다.
+
 ## 다음 항목 템플릿
 
 ```markdown

@@ -3,6 +3,7 @@
 > 상태: Accepted
 > 날짜: 2026-07-10
 > 관계: ADR-002, ADR-004, ADR-008을 구체화하며 대체하지 않음
+> Phase 7A 확장: ADR-012가 completed context projection과 After Review를 추가함
 
 ## 배경
 

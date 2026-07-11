@@ -24,3 +24,4 @@ ADR은 제품·기술·데이터 안전성에 영향을 주는 결정을 변경 
 | [ADR-009](ADR-009-event-brief-and-task-center-interactions.md) | Accepted | Event Brief와 Task Center 상호작용 안전성 |
 | [ADR-010](ADR-010-original-event-write-safety.md) | Accepted | 원본 일정 쓰기와 로컬 Context 안전 경계 |
 | [ADR-011](ADR-011-recurrence-move-change-log-and-session-undo.md) | Accepted | 반복 범위·안전한 이동·변경 기록과 세션 Undo |
+| [ADR-012](ADR-012-lifecycle-after-review-and-orphan-confirmation.md) | Accepted | 시간 생명주기·After Review·orphan 확인 경계 |

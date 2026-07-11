@@ -250,6 +250,43 @@ final class LocalWorkspaceTests: XCTestCase {
         XCTAssertEqual(nextDay.map(\.title), ["Tomorrow becomes today"])
     }
 
+    func testTaskCenterRefreshUpdatesSelectedBriefAtEventEnd() async throws {
+        var current = date(2026, 7, 10, 9)
+        let event = makeEvent(
+            id: "clock-crossing",
+            start: date(2026, 7, 10, 9)
+        )
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { current }
+        )
+        _ = try store.saveNotes(for: event, notes: "Keep after end")
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.events = [event]
+        let state = AppState(
+            calendar: testCalendar,
+            now: { current },
+            calendarProvider: provider,
+            contextStore: store,
+            localContextStoreState: .ready
+        )
+        await state.loadCalendarStatus()
+        state.selectEvent(event.id)
+        guard case let .loaded(beforeEnd) = state.eventBriefState else {
+            return XCTFail("Expected selected Event Brief")
+        }
+        XCTAssertEqual(beforeEnd.context.lifecycleStatus, .scheduled)
+
+        current = date(2026, 7, 10, 10)
+        state.refreshTaskCenter()
+
+        guard case let .loaded(afterEnd) = state.eventBriefState else {
+            return XCTFail("Expected refreshed Event Brief")
+        }
+        XCTAssertEqual(afterEnd.context.lifecycleStatus, .completed)
+        XCTAssertEqual(state.selectedEventNotes, "Keep after end")
+    }
+
     func testEventTaskRenameThenCompletionPreservesTitle() async throws {
         let event = makeEvent(id: "rename", start: date(2026, 7, 10, 15))
         let store = ContextStore(database: try AppDatabase.inMemory())
@@ -368,6 +405,87 @@ final class LocalWorkspaceTests: XCTestCase {
         XCTAssertEqual(state.selectedEventID, target.id)
         XCTAssertEqual(state.events, [target])
         XCTAssertTrue(try XCTUnwrap(provider.lastFetchInterval).contains(target.startDate))
+    }
+
+    func testEndedEventLoadsAfterReviewAndOnlyProjectsFollowUp() async throws {
+        let ended = makeEvent(
+            id: "ended-review",
+            start: date(2026, 7, 10, 9)
+        )
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { self.date(2026, 7, 10, 12) }
+        )
+        let before = try store.appendEventTask(
+            for: ended,
+            section: .before,
+            title: "Prepare"
+        )
+        let after = try store.appendEventTask(
+            for: ended,
+            section: .after,
+            title: "Send follow-up"
+        )
+        let personal = try store.personalTasks.create(title: "Personal")
+        let state = makeState(events: [ended], store: store)
+
+        await state.loadCalendarStatus()
+        state.selectEvent(ended.id)
+
+        guard case let .loaded(brief) = state.eventBriefState else {
+            return XCTFail("Expected loaded Event Brief")
+        }
+        XCTAssertEqual(brief.context.lifecycleStatus, .completed)
+        guard case let .loaded(today) = state.taskCenterState else {
+            return XCTFail("Expected Today items")
+        }
+        XCTAssertEqual(
+            Set(today.map(\.id)),
+            Set([
+                .eventTask(taskID: after.id, contextID: after.contextID),
+                .personalTask(taskID: personal.id)
+            ])
+        )
+        XCTAssertFalse(today.contains {
+            $0.id == .eventTask(
+                taskID: before.id,
+                contextID: before.contextID
+            )
+        })
+
+        state.selectTaskFilter(.afterReview)
+
+        XCTAssertEqual(state.selectedTaskFilter, .afterReview)
+        guard case let .loaded(reviewItems) = state.taskCenterState else {
+            return XCTFail("Expected After Review items")
+        }
+        XCTAssertEqual(reviewItems.map(\.id), [
+            .eventTask(taskID: after.id, contextID: after.contextID)
+        ])
+    }
+
+    func testFirstNoteOnEndedEmptyBriefKeepsCompletedLifecycle() async throws {
+        let ended = makeEvent(
+            id: "ended-first-note",
+            start: date(2026, 7, 10, 9)
+        )
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { self.date(2026, 7, 10, 12) }
+        )
+        let state = makeState(events: [ended], store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(ended.id)
+        XCTAssertEqual(state.eventBriefState, .empty)
+
+        state.updateSelectedEventNotes("First note after the event")
+        state.flushPendingEventNotes()
+
+        guard case let .loaded(brief) = state.eventBriefState else {
+            return XCTFail("Expected saved Event Brief")
+        }
+        XCTAssertEqual(brief.context.lifecycleStatus, .completed)
+        XCTAssertEqual(brief.context.notes, "First note after the event")
     }
 
     func testInvitationStillAllowsLocalBriefEditing() async throws {

@@ -33,6 +33,7 @@ enum WorkspaceSection: String, CaseIterable, Hashable, Identifiable {
 enum TaskFilter: String, CaseIterable, Hashable, Identifiable {
     case today
     case upcoming
+    case afterReview
     case completed
 
     var id: Self { self }
@@ -41,6 +42,7 @@ enum TaskFilter: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .today: "Today"
         case .upcoming: "Upcoming"
+        case .afterReview: "After Review"
         case .completed: "Completed"
         }
     }
@@ -1351,17 +1353,27 @@ final class AppState: ObservableObject {
         }
         taskCenterState = .loading
         do {
+            let referenceDate = now()
+            let changedContextIDs = try contextStore.refreshTemporalLifecycle(
+                at: referenceDate,
+                calendar: calendar
+            )
             let list: TaskCenterList = switch selectedTaskFilter {
             case .today: .today
             case .upcoming: .upcoming
+            case .afterReview: .afterReview
             case .completed: .completed
             }
             let items = try contextStore.taskCenter.fetch(
                 list: list,
-                now: now(),
+                now: referenceDate,
                 calendar: calendar
             )
             taskCenterState = .loaded(items)
+            if case let .loaded(snapshot) = eventBriefState,
+               changedContextIDs.contains(snapshot.context.id) {
+                refreshSelectedBriefPreservingDraft()
+            }
         } catch {
             taskCenterState = .failed(Self.message(for: error))
         }
@@ -1384,6 +1396,10 @@ final class AppState: ObservableObject {
         }
 
         do {
+            _ = try contextStore.refreshTemporalLifecycle(
+                at: now(),
+                calendar: calendar
+            )
             let result = try contextStore.loadBrief(for: event)
             applyBriefLoadResult(result, eventID: event.id)
         } catch {
@@ -1440,6 +1456,10 @@ final class AppState: ObservableObject {
         notesSaveState = .saving
         do {
             _ = try contextStore.saveNotes(for: event, notes: draft)
+            _ = try contextStore.refreshTemporalLifecycle(
+                at: now(),
+                calendar: calendar
+            )
             failedNotesDrafts.removeValue(forKey: event.id)
             let result = try contextStore.loadBrief(for: event)
             applyBriefLoadResult(result, eventID: event.id)
@@ -1598,25 +1618,9 @@ final class AppState: ObservableObject {
         )
         focusedDate = startDay
         selectedSection = .day
-        let writtenEvent = events.first { candidate in
-            if candidate.id == event.id { return true }
-            if let identifier = event.eventIdentifier,
-               !identifier.isEmpty,
-               candidate.eventIdentifier == identifier {
-                return true
-            }
-            if let identifier = event.calendarItemIdentifier,
-               !identifier.isEmpty,
-               candidate.calendarItemIdentifier == identifier {
-                return true
-            }
-            if let identifier = event.calendarItemExternalIdentifier,
-               !identifier.isEmpty {
-                return candidate.calendarIdentifier == event.calendarIdentifier
-                    && candidate.calendarItemExternalIdentifier == identifier
-                    && candidate.startDate == event.startDate
-            }
-            return false
+        let exactWrittenEvent = events.first { $0.id == event.id }
+        let writtenEvent = exactWrittenEvent ?? events.first { candidate in
+            Self.isPostWriteFallback(candidate, matching: event)
         }
         selectEvent(writtenEvent?.id)
     }
@@ -1687,5 +1691,68 @@ final class AppState: ObservableObject {
             return true
         }
         return false
+    }
+
+    private static func isPostWriteFallback(
+        _ candidate: DisplayEvent,
+        matching writtenEvent: DisplayEvent
+    ) -> Bool {
+        guard candidate.isRecurring == writtenEvent.isRecurring,
+              eventsShareStrongIdentity(candidate, writtenEvent) else {
+            return false
+        }
+        guard writtenEvent.isRecurring else {
+            return true
+        }
+        guard candidate.calendarIdentifier
+                == writtenEvent.calendarIdentifier else {
+            return false
+        }
+        return recurringOccurrenceMatches(candidate, writtenEvent)
+    }
+
+    private static func recurringOccurrenceMatches(
+        _ candidate: DisplayEvent,
+        _ writtenEvent: DisplayEvent
+    ) -> Bool {
+        switch writtenEvent.timeSemantics {
+        case .zoned:
+            guard case .zoned = candidate.timeSemantics else {
+                return false
+            }
+            let candidateAnchor = candidate.occurrenceDate
+                ?? candidate.startDate
+            let writtenAnchor = writtenEvent.occurrenceDate
+                ?? writtenEvent.startDate
+            return abs(
+                candidateAnchor.timeIntervalSince(writtenAnchor)
+            ) < 0.001
+        case .allDay:
+            guard case .allDay = candidate.timeSemantics else {
+                return false
+            }
+            return localOccurrenceAnchor(candidate)
+                == localOccurrenceAnchor(writtenEvent)
+        case .floating:
+            guard case .floating = candidate.timeSemantics else {
+                return false
+            }
+            return localOccurrenceAnchor(candidate)
+                == localOccurrenceAnchor(writtenEvent)
+        }
+    }
+
+    private static func localOccurrenceAnchor(
+        _ event: DisplayEvent
+    ) -> LocalDateTimeComponents? {
+        if let occurrenceLocalComponents = event.occurrenceLocalComponents {
+            return occurrenceLocalComponents
+        }
+        switch event.timeSemantics {
+        case let .allDay(start, _), let .floating(start, _):
+            return start
+        case .zoned:
+            return nil
+        }
     }
 }

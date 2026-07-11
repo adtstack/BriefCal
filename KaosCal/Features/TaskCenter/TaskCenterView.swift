@@ -23,20 +23,24 @@ struct TaskCenterView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Task views")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("Local on this Mac")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Picker("Task filter", selection: filterBinding) {
                     ForEach(TaskFilter.allCases) { item in
                         Text(item.title).tag(item)
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 420)
-
-                Spacer()
-
-                Text("Local on this Mac")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .frame(maxWidth: 540)
             }
             .padding(16)
 
@@ -110,7 +114,8 @@ struct TaskCenterView: View {
     private func loadedContent(_ items: [TaskCenterItem]) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
-                if appState.selectedTaskFilter != .completed {
+                if appState.selectedTaskFilter == .today
+                    || appState.selectedTaskFilter == .upcoming {
                     PersonalTaskComposer(
                         appState: appState,
                         filter: appState.selectedTaskFilter,
@@ -169,6 +174,14 @@ struct TaskCenterView: View {
                 systemImage: "calendar.badge.checkmark",
                 description: Text("Add a personal task with a future date.")
             )
+        case .afterReview:
+            ContentUnavailableView(
+                "No follow-up to review",
+                systemImage: "checkmark.circle",
+                description: Text(
+                    "Unfinished After tasks from ended events appear here."
+                )
+            )
         case .completed:
             ContentUnavailableView(
                 "No completed tasks yet",
@@ -209,6 +222,11 @@ struct TaskCenterView: View {
                 if lhsDate != rhsDate { return lhsDate < rhsDate }
                 return lhs.title < rhs.title
             }
+        case .afterReview:
+            return [TaskCenterGroup(
+                title: "Follow-up from ended events",
+                items: items
+            )]
         case .completed:
             return [TaskCenterGroup(title: "Recently completed", items: items)]
         }

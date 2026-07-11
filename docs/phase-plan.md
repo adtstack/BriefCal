@@ -13,8 +13,9 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 - Phase 3: **완료** — GRDB v1 migration, 앱 bootstrap, Event Brief/task repository, identity resolver, 파일 재열기·동시 저장, 54-test 전체 회귀, Release·서명 Debug 검증 완료
 - Phase 4: **구현·자동·빌드·서명·fixture 시각 검증 완료 / 수동 gate 대기** — notes autosave, event/personal task CRUD·완료·due, typed Task Center, strong-only 원본 탐색 구현; 전체 75 tests와 Release·서명 Debug·strict codesign 통과
 - Phase 5: **구현·자동·Release checkpoint / 비반복 EventKit live CRUD 부분 통과** — attendee가 없는 비반복 writable 일정 create/update/delete를 `KAOS-TEST`에서 수행하고 앱 재실행·server fetch·exact cleanup까지 확인. Calendar.app 시각 round-trip, all-day·floating/zoned live gate는 대기
-- Phase 6: **구현·자동·Release checkpoint / 반복·이동 live gate 대기** — 명시적 반복 범위, 확인 뒤 write, linked safe move, additive change log, 좁은 session Undo와 안전 차단 경계를 구현했다. 121-test 구현 checkpoint와 122-test read-only gate를 보존하며 현재 suite는 132 tests 중 1 intentional opt-in skip, 0 failures다. 비반복 recurrence 오판 버그를 live gate에서 발견·수정하고 legacy Brief의 좁은 자동 정상화도 추가했으며, live 반복 scope·future split·calendar move는 대기
-- Phase 7~10: 대기
+- Phase 6: **구현·자동·Release checkpoint / 반복·이동 live gate 대기** — 명시적 반복 범위, 확인 뒤 write, linked safe move, additive change log, 좁은 session Undo와 안전 차단 경계를 구현했다. 비반복 recurrence 오판 버그를 live gate에서 발견·수정하고 legacy Brief의 좁은 자동 정상화도 추가했으며, live 반복 scope·future split·calendar move는 대기
+- Phase 7: **7A 구현·전체 자동·Release checkpoint 완료 / 7B~7C 대기** — active occurrence의 종료 시각에서 scheduled/completed를 파생하고 After Review와 후속 작업 projection을 구현했다. post-write occurrence focus 안전성까지 보강한 현재 suite는 145 tests 중 1 intentional opt-in skip, 0 failures다. missing/orphan/relink와 linked delete review는 전용 provider lookup 전까지 대기
+- Phase 8~10: 대기
 
 ## Phase 표
 
@@ -173,7 +174,7 @@ Definition of Done:
 - metadata 보존 구현: no-op은 EventKit save를 생략하고 변경 필드만 patch한다. local Event Brief notes/tasks는 `EKEvent.notes`와 분리한다.
 - 시간 안전성 구현: 종일 UI 포함 종료↔EventKit 배타 종료, timed 자정 종료 변환, 고정 reference time zone, preserve-local/preserve-instant 미리보기, DST gap/overlap 차단을 적용한다.
 - local 연결 보호 구현: pending notes 저장 실패와 weak/ambiguous identity는 editor를 열지 않는다. linked same-calendar 수정은 receipt로 기존 context를 rebind하고 notes/tasks를 보존하며, rebind 실패는 EventKit 부분 성공으로 알린다.
-- 명시적 이월: linked calendar 이동은 Phase 6, linked 삭제·orphan review는 Phase 7, 반복 create/update/delete와 `EKSpan` 선택은 Phase 6이다. attendee가 있는 회의와 초대 원본은 v1에서 Calendar.app 전용이다.
+- 명시적 이월: linked calendar 이동은 Phase 6, missing/orphan review와 linked 삭제는 Phase 7B~7C, 반복 create/update/delete와 `EKSpan` 선택은 Phase 6이다. attendee가 있는 회의와 초대 원본은 v1에서 Calendar.app 전용이다.
 - 자동·빌드·서명 검증 통과: 전체 **97 tests, 0 failures, 0 unexpected**. create/update/delete AppState 흐름, 제한 정책, stale 오류, linked rebind·사전 차단·부분 성공, transaction rollback, all-day/time-zone/DST 경계를 포함한다. unsigned Release, ad-hoc signed Debug, strict codesign·sandbox·Calendar entitlement·usage description을 확인했고 production DB mtime/size는 테스트 전후 불변이다.
 - live 비반복 gate 부분 통과: 2026-07-11 run `20260711-1626-B7D2`에서 recurrence-fix signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)의 full access와 `KAOS-TEST`·`일정` writable Exchange 표시를 확인했다. `KAOS-TEST` fixture는 EventKit create, 앱 재실행·refetch, scope 없는 단일 update, 단일 delete를 통과했고 Outlook 서버에서도 처음과 수정 뒤 모두 `singleInstance`·recurrence 없음이었다. 최종 source/destination residue는 `0/0`이며 운영 Context DB도 변하지 않았다.
 - 수동 gate 잔여: Calendar.app에서의 시각 create/update/delete round-trip, all-day, floating/zoned 시간대, calendar move와 identifier churn은 대기다. 이 항목 전에는 Exchange Online 전체 지원 통과로 선언하지 않는다.
@@ -202,10 +203,10 @@ Definition of Done:
 - [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md)로 범위와 실패 경계를 확정했다.
 - 반복 write와 linked move는 scope·before/after·유지될 local context를 보여 준 뒤 Confirm해야 하며, Cancel은 provider call·local rebind·log append를 수행하지 않도록 구현했다.
 - `v2_event_change_log`를 v1 baseline을 수정하지 않는 additive migration으로 구현했고, linked rebind·log와 Undo rebind·restored append를 각각 하나의 SQLite transaction으로 묶었다.
-- detached occurrence의 `이번 이후`, 모든 linked `이번 이후`, attendee meeting, complex recurrence의 future/rule 변경은 Calendar.app 또는 안전 안내로 보낸다. complex recurrence의 `이번 일정` ordinary-field patch는 rule을 보존하며 linked delete는 Phase 7까지 차단한다.
-- 전체 **121-test 구현 checkpoint**와 122-test read-only gate를 보존한다. 비반복 분류·default scope routing·legacy Brief 정상화 회귀를 추가한 현재 suite는 **132 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**이며 테스트 전후 운영 Context DB는 불변이다.
+- detached occurrence의 `이번 이후`, 모든 linked `이번 이후`, attendee meeting, complex recurrence의 future/rule 변경은 Calendar.app 또는 안전 안내로 보낸다. complex recurrence의 `이번 일정` ordinary-field patch는 rule을 보존하며 linked delete는 Phase 7C까지 차단한다.
+- Phase 6의 **121-test 구현 checkpoint**, 122-test read-only gate와 132-test legacy compatibility checkpoint를 보존한다. Phase 7A lifecycle·After Review와 post-write occurrence focus 회귀를 추가한 현재 suite는 **145 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**이며 테스트와 최신 Release bootstrap 전후 운영 Context DB는 불변이다.
 - live gate에서 EventKit이 비반복 `EKEvent`에도 `occurrenceDate == startDate`를 제공할 수 있어 반복 badge와 scope를 잘못 요구하는 문제를 발견했다. 반복 소속은 `hasRecurrenceRules || isDetached`만으로 판정하고, 비반복 display identity의 `occurrenceDate`는 `nil`로 정규화하도록 수정했다.
-- 최신 build-only ad-hoc signed Release는 CDHash `511a11258d95a49c826b49dc463a79039707807e`로 strict codesign, hardened runtime, app sandbox, Calendar entitlement, full-access usage description을 통과했다. 실계정 run은 바로 전 recurrence-fix artifact에서 수행했고, 최종 호환성 artifact에는 새 fixture write를 반복하지 않았다. 전체 자동·live QA 동안 운영 Context DB는 변하지 않았다.
+- 최신 Phase 7A build-only ad-hoc signed Release는 CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`로 strict codesign, hardened runtime, app sandbox, Calendar entitlement, full-access usage description을 통과했다. 실계정 run은 recurrence-fix artifact에서 수행했고, Phase 7A artifact에는 새 fixture write를 반복하지 않았다. 전체 자동·live QA 동안 운영 Context DB는 변하지 않았다.
 - 2026-07-11 FinalRelease EventKit run `20260711-1626-B7D2`에서 full access, 두 writable Exchange calendar, `KAOS-TEST` 비반복 create→앱 재실행/refetch→scope 없는 update→single delete를 확인했다. 서버 item은 생성·수정 뒤 모두 `singleInstance`·recurrence 없음이었고 source/destination marker residue는 `0/0`이었다.
 - 이전 Outlook connector run `20260711-1512-7C4E`의 source create/fetch/update, destination independent write, 시간대·유한 반복 `this_instance`, exact cleanup checkpoint는 유지한다. actual cross-calendar move·all-day는 당시 도구 입력이 없어 미검증이고 `this_and_following`은 mutation 전에 거부됐다.
 - Calendar.app 시각 round-trip, live all-day, 실제 반복 `이번 일정`/`이번 이후`·future split, `KAOS-TEST`→`일정` calendar move는 아직 대기다. 현재 결과를 Exchange Online 전체 지원 통과로 합치지 않는다.
@@ -223,6 +224,16 @@ Definition of Done:
 - 종료된 일정의 After task 처리 가능
 - 삭제된 원본 일정의 Brief가 보관됨
 - 사용자가 보관/재연결/삭제 선택 가능
+
+현재 구현 판정:
+- **Phase 7A 완료**: active link의 occurrence별 유효 종료를 기준으로 `scheduled ↔ completed`를 갱신한다. `now == end`가 완료 경계이며, 종일은 배타 종료일, floating은 저장 civil components를 현재 표시 calendar에서 재구성한다.
+- 완료 일정은 Event Brief에 `Event ended` banner와 After Review 안내를 표시한다. Today/Upcoming의 열린 Before/During은 DB에서 삭제하거나 자동 완료하지 않고 projection에서만 제외하며, 미완료 After만 유지한다.
+- Task Center에 `After Review` 필터를 추가했다. completed context의 미완료 After만 표시하고 personal task와 완료 task는 제외한다. Completed 목록은 기존 모든 section 기록을 보존한다.
+- 시간 reconciliation은 `cancelled`/`orphaned` 또는 non-active link를 덮어쓰지 않고, 관찰에서 파생한 완료에는 change log를 만들지 않는다. 미래로 이동한 active 일정은 다시 scheduled가 될 수 있다.
+- 반복 write 뒤 동일 identifier를 공유하는 다른 occurrence를 잘못 선택할 수 있던 회귀를 함께 수정했다. post-write selection은 전체 exact display ID를 먼저 찾고, 반복 fallback은 같은 calendar와 같은 civil/instant occurrence anchor까지 요구한다.
+- [ADR-012](adr/ADR-012-lifecycle-after-review-and-orphan-confirmation.md)에서 7A와 후속 안전 경계를 확정했다.
+- **Phase 7B 대기**: 일반 구간 fetch 부재는 삭제 증거로 쓰지 않는다. strong occurrence-aware 전용 lookup의 첫 `notFound`는 missing만 표시하고, 별도 사용자 재확인 뒤 keep/relink/local delete를 제공해야 한다.
+- **Phase 7C 대기**: linked original delete impact review, cancelled/link orphaned 전이, 저장 link 기반 cancelled change snapshot과 부분 성공 처리가 남아 있다. linked future-series와 attendee meeting 원본 삭제는 계속 차단한다.
 
 ## Phase 8: Multi-Calendar Clarity
 

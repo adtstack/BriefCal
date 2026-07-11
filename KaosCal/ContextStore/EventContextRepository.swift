@@ -118,6 +118,40 @@ final class EventContextRepository {
         }
     }
 
+    @discardableResult
+    func reconcileTemporalLifecycle(
+        at date: Date,
+        calendar: Calendar,
+        in db: Database
+    ) throws -> [String] {
+        let linksByContextID = Dictionary(
+            uniqueKeysWithValues: try EventLink.fetchAll(db).map {
+                ($0.contextID, $0)
+            }
+        )
+        var changedContextIDs: [String] = []
+
+        for var context in try EventContext.fetchAll(db) {
+            guard context.lifecycleStatus == .scheduled
+                    || context.lifecycleStatus == .completed,
+                  let link = linksByContextID[context.id],
+                  link.linkStatus == .active else {
+                continue
+            }
+            let desiredStatus = Self.temporalLifecycleStatus(
+                eventEnd: link.effectiveDateRange(calendar: calendar).end,
+                at: date
+            )
+            guard context.lifecycleStatus != desiredStatus else { continue }
+            context.lifecycleStatus = desiredStatus
+            context.updatedAt = date
+            try context.update(db)
+            changedContextIDs.append(context.id)
+        }
+
+        return changedContextIDs.sorted()
+    }
+
     func delete(contextID: String) throws {
         try database.write { db in
             _ = try EventContext.deleteOne(db, key: contextID)
@@ -593,6 +627,13 @@ final class EventContextRepository {
         default:
             return false
         }
+    }
+
+    private static func temporalLifecycleStatus(
+        eventEnd: Date,
+        at date: Date
+    ) -> EventLifecycleStatus {
+        date >= eventEnd ? .completed : .scheduled
     }
 
     private static func strongResolution(

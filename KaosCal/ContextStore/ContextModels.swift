@@ -378,6 +378,7 @@ enum TaskCenterCompletionResult: Equatable {
 enum TaskCenterList: Equatable {
     case today
     case upcoming
+    case afterReview
     case completed
 }
 

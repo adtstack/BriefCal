@@ -266,6 +266,282 @@ final class Phase6AppStateTests: XCTestCase {
         XCTAssertEqual(provider.lastUpdateScope, .thisEvent)
     }
 
+    func testPostWriteFocusPrefersExactIDAcrossRecurringSiblings() async throws {
+        let recurrence = CalendarEventRecurrence.basic(
+            BasicRecurrenceRule(frequency: .daily)
+        )
+        let earlier = makeEvent(
+            id: "series-earlier",
+            recurrence: recurrence,
+            start: date(2026, 7, 9, 9),
+            identifierSeed: "shared-series"
+        )
+        let original = makeEvent(
+            id: "series-original",
+            recurrence: recurrence,
+            start: date(2026, 7, 10, 9),
+            identifierSeed: "shared-series"
+        )
+        let exactRefetched = makeEvent(
+            id: "series-exact-refetched",
+            recurrence: recurrence,
+            title: "Changed occurrence",
+            start: date(2026, 7, 10, 9),
+            identifierSeed: "shared-series"
+        )
+        let provider = makeProvider(events: [earlier, original])
+        provider.updateMutationHandler = { _, _, scope in
+            provider.events = [earlier, exactRefetched]
+            return CalendarEventMutationReceipt(
+                event: exactRefetched,
+                didWrite: true,
+                scope: scope,
+                changedFields: [.title]
+            )
+        }
+        let state = makeState(provider: provider)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        var draft = try XCTUnwrap(state.eventEditorSession).initialDraft
+        draft.title = "Changed occurrence"
+
+        let didPrepare = await state.saveEventEditor(
+            draft,
+            scope: .thisEvent
+        )
+        XCTAssertFalse(didPrepare)
+        let didConfirm = await state.confirmPendingEventMutation()
+        XCTAssertTrue(didConfirm)
+
+        XCTAssertEqual(state.selectedEventID, exactRefetched.id)
+        XCTAssertEqual(state.selectedEvent?.startDate, exactRefetched.startDate)
+    }
+
+    func testPostWriteRecurringFallbackRequiresCalendarAndOccurrence() async throws {
+        let recurrence = CalendarEventRecurrence.basic(
+            BasicRecurrenceRule(frequency: .daily)
+        )
+        let original = makeEvent(
+            id: "fallback-original",
+            recurrence: recurrence,
+            start: date(2026, 7, 10, 9),
+            identifierSeed: "shared-fallback-series"
+        )
+        let wrongCalendar = makeEvent(
+            id: "fallback-wrong-calendar",
+            recurrence: recurrence,
+            title: "Changed occurrence",
+            start: date(2026, 7, 10, 9),
+            identifierSeed: "shared-fallback-series",
+            calendarIdentifier: "destination"
+        )
+        let earlierSibling = makeEvent(
+            id: "fallback-earlier",
+            recurrence: recurrence,
+            title: "Changed occurrence",
+            start: date(2026, 7, 9, 9),
+            identifierSeed: "shared-fallback-series"
+        )
+        let matchingOccurrence = makeEvent(
+            id: "fallback-refetched-target",
+            recurrence: recurrence,
+            title: "Changed occurrence",
+            start: date(2026, 7, 10, 9),
+            identifierSeed: "shared-fallback-series"
+        )
+        let unseenReceipt = makeEvent(
+            id: "fallback-unseen-receipt",
+            recurrence: recurrence,
+            title: "Changed occurrence",
+            start: date(2026, 7, 10, 9),
+            identifierSeed: "shared-fallback-series"
+        )
+        let provider = makeProvider(events: [original])
+        provider.updateMutationHandler = { _, _, scope in
+            provider.events = [
+                wrongCalendar,
+                earlierSibling,
+                matchingOccurrence
+            ]
+            return CalendarEventMutationReceipt(
+                event: unseenReceipt,
+                didWrite: true,
+                scope: scope,
+                changedFields: [.title]
+            )
+        }
+        let state = makeState(provider: provider)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        var draft = try XCTUnwrap(state.eventEditorSession).initialDraft
+        draft.title = "Changed occurrence"
+
+        let didPrepare = await state.saveEventEditor(
+            draft,
+            scope: .thisEvent
+        )
+        XCTAssertFalse(didPrepare)
+        let didConfirm = await state.confirmPendingEventMutation()
+        XCTAssertTrue(didConfirm)
+
+        XCTAssertEqual(state.selectedEventID, matchingOccurrence.id)
+        XCTAssertEqual(
+            state.selectedEvent?.occurrenceDate,
+            matchingOccurrence.occurrenceDate
+        )
+    }
+
+    func testPostWriteAllDayFallbackUsesLocalOccurrenceAnchor() async throws {
+        let original = makeCivilRecurringEvent(
+            id: "all-day-original",
+            localDay: 10,
+            identifierSeed: "shared-all-day",
+            isAllDay: true
+        )
+        let wrongSibling = makeCivilRecurringEvent(
+            id: "all-day-wrong-sibling",
+            localDay: 9,
+            identifierSeed: "shared-all-day",
+            isAllDay: true
+        )
+        let matchingOccurrence = makeCivilRecurringEvent(
+            id: "all-day-refetched",
+            localDay: 10,
+            identifierSeed: "shared-all-day",
+            isAllDay: true,
+            rawStart: date(2026, 7, 9, 15)
+        )
+        let unseenReceipt = makeCivilRecurringEvent(
+            id: "all-day-unseen-receipt",
+            localDay: 10,
+            identifierSeed: "shared-all-day",
+            isAllDay: true,
+            rawStart: date(2026, 7, 10, 6)
+        )
+        let provider = makeProvider(events: [original])
+        provider.updateMutationHandler = { _, _, scope in
+            provider.events = [wrongSibling, matchingOccurrence]
+            return CalendarEventMutationReceipt(
+                event: unseenReceipt,
+                didWrite: true,
+                scope: scope,
+                changedFields: [.title]
+            )
+        }
+        let state = makeState(provider: provider)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        var draft = try XCTUnwrap(state.eventEditorSession).initialDraft
+        draft.title = "Changed all-day occurrence"
+
+        let didPrepare = await state.saveEventEditor(
+            draft,
+            scope: .thisEvent
+        )
+        XCTAssertFalse(didPrepare)
+        let didConfirm = await state.confirmPendingEventMutation()
+        XCTAssertTrue(didConfirm)
+
+        XCTAssertEqual(state.selectedEventID, matchingOccurrence.id)
+    }
+
+    func testPostWriteFloatingFallbackUsesLocalOccurrenceAnchor() async throws {
+        let original = makeCivilRecurringEvent(
+            id: "floating-original",
+            localDay: 10,
+            identifierSeed: "shared-floating",
+            isAllDay: false
+        )
+        let wrongSibling = makeCivilRecurringEvent(
+            id: "floating-wrong-sibling",
+            localDay: 9,
+            identifierSeed: "shared-floating",
+            isAllDay: false
+        )
+        let matchingOccurrence = makeCivilRecurringEvent(
+            id: "floating-refetched",
+            localDay: 10,
+            identifierSeed: "shared-floating",
+            isAllDay: false,
+            rawStart: date(2026, 7, 10)
+        )
+        let unseenReceipt = makeCivilRecurringEvent(
+            id: "floating-unseen-receipt",
+            localDay: 10,
+            identifierSeed: "shared-floating",
+            isAllDay: false,
+            rawStart: date(2026, 7, 9, 15)
+        )
+        let provider = makeProvider(events: [original])
+        provider.updateMutationHandler = { _, _, scope in
+            provider.events = [wrongSibling, matchingOccurrence]
+            return CalendarEventMutationReceipt(
+                event: unseenReceipt,
+                didWrite: true,
+                scope: scope,
+                changedFields: [.title]
+            )
+        }
+        let state = makeState(provider: provider)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        var draft = try XCTUnwrap(state.eventEditorSession).initialDraft
+        draft.title = "Changed floating occurrence"
+
+        let didPrepare = await state.saveEventEditor(
+            draft,
+            scope: .thisEvent
+        )
+        XCTAssertFalse(didPrepare)
+        let didConfirm = await state.confirmPendingEventMutation()
+        XCTAssertTrue(didConfirm)
+
+        XCTAssertEqual(state.selectedEventID, matchingOccurrence.id)
+    }
+
+    func testPostWriteSingleEventKeepsStrongIdentifierFallback() async throws {
+        let original = makeEvent(
+            id: "single-original",
+            identifierSeed: "shared-single"
+        )
+        let refetched = makeEvent(
+            id: "single-refetched",
+            title: "Changed single event",
+            identifierSeed: "shared-single"
+        )
+        let unseenReceipt = makeEvent(
+            id: "single-unseen-receipt",
+            title: "Changed single event",
+            identifierSeed: "shared-single"
+        )
+        let provider = makeProvider(events: [original])
+        provider.updateMutationHandler = { _, _, scope in
+            provider.events = [refetched]
+            return CalendarEventMutationReceipt(
+                event: unseenReceipt,
+                didWrite: true,
+                scope: scope,
+                changedFields: [.title]
+            )
+        }
+        let state = makeState(provider: provider)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        var draft = try XCTUnwrap(state.eventEditorSession).initialDraft
+        draft.title = "Changed single event"
+
+        let didSave = await state.saveEventEditor(draft)
+        XCTAssertTrue(didSave)
+
+        XCTAssertEqual(state.selectedEventID, refetched.id)
+        XCTAssertEqual(state.selectedEvent?.title, "Changed single event")
+    }
+
     func testLinkedFutureSeriesAndUnsupportedRuleStopBeforeProvider() async throws {
         let basic = CalendarEventRecurrence.basic(
             BasicRecurrenceRule(frequency: .daily)
@@ -600,20 +876,27 @@ final class Phase6AppStateTests: XCTestCase {
     private func makeEvent(
         id: String = "event",
         recurrence: CalendarEventRecurrence = .none,
-        isDetached: Bool = false
+        isDetached: Bool = false,
+        title: String = "Phase 6 fixture",
+        start requestedStart: Date? = nil,
+        identifierSeed requestedIdentifierSeed: String? = nil,
+        calendarIdentifier: String = "calendar"
     ) -> DisplayEvent {
-        let start = date(2026, 7, 10, 9)
+        let start = requestedStart ?? date(2026, 7, 10, 9)
+        let identifierSeed = requestedIdentifierSeed ?? id
         return DisplayEvent(
             id: id,
-            eventIdentifier: "event-\(id)",
-            calendarItemIdentifier: "item-\(id)",
-            calendarItemExternalIdentifier: "external-\(id)",
-            calendarIdentifier: "calendar",
-            calendarTitle: "KAOS-TEST",
+            eventIdentifier: "event-\(identifierSeed)",
+            calendarItemIdentifier: "item-\(identifierSeed)",
+            calendarItemExternalIdentifier: "external-\(identifierSeed)",
+            calendarIdentifier: calendarIdentifier,
+            calendarTitle: calendarIdentifier == "destination"
+                ? "일정"
+                : "KAOS-TEST",
             sourceTitle: "Exchange QA",
             accountType: .exchange,
             calendarColor: nil,
-            title: "Phase 6 fixture",
+            title: title,
             location: nil,
             startDate: start,
             endDate: start.addingTimeInterval(3_600),
@@ -631,6 +914,65 @@ final class Phase6AppStateTests: XCTestCase {
             hasAttendees: false,
             originalNotes: nil,
             recurrence: recurrence
+        )
+    }
+
+    private func makeCivilRecurringEvent(
+        id: String,
+        localDay: Int,
+        identifierSeed: String,
+        isAllDay: Bool,
+        rawStart requestedRawStart: Date? = nil
+    ) -> DisplayEvent {
+        let localHour = isAllDay ? 0 : 9
+        let localStartDate = date(2026, 7, localDay, localHour)
+        let localEndDate = isAllDay
+            ? date(2026, 7, localDay + 1)
+            : date(2026, 7, localDay, localHour + 1)
+        let localStart = LocalDateTimeComponents(
+            date: localStartDate,
+            calendar: calendar
+        )
+        let localEnd = LocalDateTimeComponents(
+            date: localEndDate,
+            calendar: calendar
+        )
+        let rawStart = requestedRawStart ?? localStartDate
+        let rawEnd = rawStart.addingTimeInterval(
+            isAllDay ? 86_400 : 3_600
+        )
+        let timeSemantics: EventTimeSemantics = isAllDay
+            ? .allDay(start: localStart, endExclusive: localEnd)
+            : .floating(start: localStart, end: localEnd)
+
+        return DisplayEvent(
+            id: id,
+            eventIdentifier: "event-\(identifierSeed)",
+            calendarItemIdentifier: "item-\(identifierSeed)",
+            calendarItemExternalIdentifier: "external-\(identifierSeed)",
+            calendarIdentifier: "calendar",
+            calendarTitle: "KAOS-TEST",
+            sourceTitle: "Exchange QA",
+            accountType: .exchange,
+            calendarColor: nil,
+            title: "Civil recurring fixture",
+            location: nil,
+            startDate: rawStart,
+            endDate: rawEnd,
+            isAllDay: isAllDay,
+            timeZoneIdentifier: nil,
+            timeSemantics: timeSemantics,
+            isRecurring: true,
+            occurrenceDate: rawStart,
+            occurrenceLocalComponents: localStart,
+            isDetached: false,
+            isReadOnly: false,
+            isInvitation: false,
+            hasAttendees: false,
+            originalNotes: nil,
+            recurrence: .basic(
+                BasicRecurrenceRule(frequency: .daily)
+            )
         )
     }
 

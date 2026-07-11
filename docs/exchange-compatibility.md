@@ -1,6 +1,6 @@
 # Exchange Compatibility
 
-> 상태: Phase 6 recurrence·safe-move·change-log·session Undo 자동·Release·ad-hoc 서명 checkpoint / Outlook 서버 측 부분 통과·서명 FinalRelease 로컬 EventKit 비반복 CRUD 통과
+> 상태: Phase 7A lifecycle·After Review 자동·Release·ad-hoc 서명 checkpoint / Outlook 서버 측 부분 통과·서명 FinalRelease 로컬 EventKit 비반복 CRUD 통과
 > 제품 대상: macOS Calendar에 구성된 Exchange Online
 > 현재 테스트 환경: backend 종류 미확인. Outlook connector run `20260711-1512-7C4E`에서 `KAOS-TEST`(source)·`일정`(destination)이 각각 exact-name 1개, editable, distinct, same owner로 관찰됐고, signed FinalRelease/EventKit run `20260711-1626-B7D2`에서 full access와 두 calendar의 `Exchange`·writable 표시 및 `KAOS-TEST` 비반복 CRUD를 확인했다. 이는 Calendar.app visual round-trip이나 backend의 Exchange Online 판정 증거가 아니다.
 > 마지막 갱신: 2026-07-11
@@ -54,7 +54,7 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 - 반복 소속 판정은 `hasRecurrenceRules || isDetached`만 사용한다. 새 비반복 `EKEvent`도 `occurrenceDate == startDate`를 노출할 수 있으므로 `occurrenceDate`는 반복 identity anchor일 뿐이며 비반복 display event에서는 `nil`로 정규화한다.
 - 반복 write는 명시적 `이번 일정`/`이번 이후`와 최종 impact Confirm 전에는 실행하지 않는다.
 - detached occurrence의 `이번 이후`, complex recurrence의 future/rule 변경, 모든 linked `이번 이후`는 초기 Phase 6에서 write 전에 차단한다. complex recurrence의 `이번 일정` ordinary-field patch는 rule을 그대로 보존해야 한다.
-- linked delete는 Phase 7 orphan review 전까지 실행하지 않는다.
+- linked delete는 Phase 7C orphan review 전까지 실행하지 않는다.
 - fake provider와 SQLite 자동 테스트는 Exchange save/remove 통과 증거가 아니다. Calendar.app round-trip을 별도로 기록한다.
 - connector의 source create와 destination independent write를 calendar 간 move로 해석하지 않는다. 실제 move API 또는 EventKit/Calendar.app round-trip이 필요하다.
 - connector search가 지원되지 않으면 날짜 범위를 제한한 list로 exact run marker만 대조하며, 검색 실패 뒤 mutation을 추측 재시도하지 않는다.
@@ -143,6 +143,16 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 - 자동 gate: **132 tests, 1 intentional skip, 0 failures, 0 unexpected**. 테스트 전후 두 production DB와 WAL/SHM 상태는 완전히 동일했다.
 - 최종 build-only artifact: `/private/tmp/KaosCalFinalReleaseCompat/Build/Products/Release/KaosCal.app`, CDHash `511a11258d95a49c826b49dc463a79039707807e`. strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description 통과; get-task-allow와 XCTest plug-in/link 없음.
 - 이 후속 artifact에는 새 Exchange fixture write를 실행하지 않았다. 따라서 실계정 CRUD pass는 직전 live artifact에, legacy normalization과 최종 서명/build pass는 이 artifact에 각각 귀속한다. 남은 Calendar.app, all-day, time-zone 변경, recurrence/future split, calendar move 판정은 그대로 pending이다.
+
+## 2026-07-11 Phase 7A lifecycle 후속 checkpoint
+
+- active occurrence의 유효 종료를 기준으로 `scheduled ↔ completed`를 파생하고, 완료 일정의 미완료 After task만 Today/Upcoming과 전용 `After Review`에 투영한다. 이 동작은 local Context DB에만 쓰며 EventKit 원본을 수정하지 않는다.
+- zoned instant, all-day exclusive end, floating civil components와 반복 occurrence별 독립 상태를 자동 검증했다. cancelled/orphaned context와 non-active link는 시간 reconciliation이 덮어쓰지 않는다.
+- 반복 write 후 identifier를 공유하는 다른 occurrence를 선택할 수 있던 focus 경로는 exact display ID 우선, 동일 calendar와 occurrence anchor를 요구하는 fallback으로 좁혔다.
+- 자동 gate: **145 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 결과 bundle은 `/private/tmp/KaosCalPhase7AFull.xcresult`다.
+- 최신 build-only artifact: `/private/tmp/KaosCalPhase7ARelease/Build/Products/Release/KaosCal.app`, CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`. strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description 통과; get-task-allow와 XCTest plug-in/link 없음.
+- exact Release는 EventKit write 없이 1360×840 onscreen 창을 생성했고 종료 뒤 프로세스가 남지 않았다. 테스트와 bootstrap 전후 direct/sandbox production DB의 mtime·size·SHA-256 및 WAL/SHM 부재는 동일했다.
+- 이 checkpoint는 Exchange fixture를 새로 만들지 않았으므로 실제 비반복 CRUD 증거는 run `20260711-1626-B7D2`에 계속 귀속한다. Calendar.app, all-day, time-zone 변경, recurrence/future split, calendar move 판정은 그대로 pending이다.
 
 ## 테스트 기록 형식
 

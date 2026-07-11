@@ -24,7 +24,7 @@ Phase 5부터 KaosCal은 EventKit 원본 일정을 생성·수정·삭제한다.
 - `Keep local time` 결과가 DST gap의 존재하지 않는 시각이거나 fall-back의 중복 시각이면 자동 보정·임의 선택하지 않고 저장을 차단한다.
 - 연결된 비반복 일정의 같은-calendar 제목·시간·종일·time zone·장소·원본 notes 변경은 편집기의 `Save Changes`를 사용자 승인으로 보고 Phase 5에서 허용한다. 성공 receipt로 기존 `contextID`의 link snapshot만 명시적으로 다시 묶고 local notes/tasks는 보존한다.
 - 연결된 일정을 다른 calendar로 옮기는 작업은 Phase 6 safe-move 흐름까지 차단한다. local Brief가 없는 일정만 다른 writable calendar로 옮길 수 있다.
-- 연결된 원본 일정 삭제는 Phase 7 orphan review까지 차단한다. local Brief가 없는 비반복 일정만 Phase 5에서 삭제한다.
+- 연결된 원본 일정 삭제는 ADR-012의 Phase 7C orphan review까지 차단한다. local Brief가 없는 비반복 일정만 Phase 5에서 삭제한다.
 - 반복 생성·수정·삭제와 `EKSpan` 범위 선택은 Phase 6으로 이월한다.
 - EventKit 저장과 SQLite rebind는 원자적이지 않다. EventKit 성공 뒤 local rebind가 실패하면 성공을 되돌린 것처럼 표시하지 않고, 원본 저장 성공·local 갱신 실패·local 데이터 보존을 함께 알린다.
 - 편집기를 열기 전 pending local notes를 먼저 저장한다. 저장 실패, weak/ambiguous identity, 다른 활성 편집 세션이 있으면 원본 편집을 열지 않는다.

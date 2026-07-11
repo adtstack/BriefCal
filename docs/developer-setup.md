@@ -1,6 +1,6 @@
 # Developer And Test Setup
 
-> 상태: Phase 6 구현·현재 132-test suite(수동 gate 1 opt-in skip)·signed Release checkpoint / 비반복 EventKit live CRUD 부분 통과·반복/이동 gate 대기
+> 상태: Phase 7A 구현·현재 145-test suite(수동 gate 1 opt-in skip)·signed Release checkpoint / 비반복 EventKit live CRUD 부분 통과·반복/이동 gate 대기
 > 마지막 갱신: 2026-07-11
 
 KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에서 결정하고 기록한다. 사용자가 우선 준비할 것은 개발·실계정 검증에 필요한 아래 항목뿐이다.
@@ -72,7 +72,7 @@ Exchange Online인지 온프레미스인지 알 수 있는 관리자 정보가 �
 
 fixture는 민감하지 않은 제목과 내용, 고유 run marker로 `KAOS-TEST`에 만들고 calendar 이동 대상은 `일정`을 사용한다. KC-E4에는 attendee나 실제 연락처를 넣지 않고 KaosCal이 표현 가능한 기본 recurrence만 사용한다. Phase 6 구현·자동 gate와 서버 측 제한된 round-trip에 이어 비반복 EventKit write도 recurrence-fix signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서 부분 통과했다. 반복·all-day·move는 각각 별도 marker와 exact cleanup을 전제로 실행한다. 앱이나 환경변수에 account password를 넣는 fixture 자동화는 만들지 않는다.
 
-2026-07-11에 준비한 Phase 5와 Phase 6 수동 gate build의 역사적 source 상태·임시 path·CDHash·서명 검증은 [Exchange Compatibility](exchange-compatibility.md)의 서로 다른 build-evidence section에 유지한다. live run `20260711-1626-B7D2`의 ad-hoc signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서 화면·EventKit·서버 결과를 확인했다. 그 뒤 legacy Brief 호환성까지 보강한 최신 build-only Release는 CDHash `511a11258d95a49c826b49dc463a79039707807e`로 strict codesign·hardened runtime·sandbox·Calendar entitlement를 통과했으며 전체 132-test gate를 통과했다. 후속 빌드에는 새 Exchange fixture write를 반복하지 않았으므로 live 증거와 최종 build 증거를 합치지 않는다. 어느 artifact도 아직 Calendar.app 시각 round-trip, all-day, 반복, move pass를 뜻하지 않는다.
+2026-07-11에 준비한 Phase 5와 Phase 6 수동 gate build의 역사적 source 상태·임시 path·CDHash·서명 검증은 [Exchange Compatibility](exchange-compatibility.md)의 서로 다른 build-evidence section에 유지한다. live run `20260711-1626-B7D2`의 ad-hoc signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서 화면·EventKit·서버 결과를 확인했다. 그 뒤 legacy Brief 호환성과 Phase 7A lifecycle을 보강한 최신 build-only Release는 CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`로 strict codesign·hardened runtime·sandbox·Calendar entitlement를 통과했으며 전체 145-test gate를 통과했다. 후속 빌드에는 새 Exchange fixture write를 반복하지 않았으므로 live 증거와 최종 build 증거를 합치지 않는다. 어느 artifact도 아직 Calendar.app 시각 round-trip, all-day, 반복, move pass를 뜻하지 않는다.
 
 ## 제공하지 않아도 되는 것
 

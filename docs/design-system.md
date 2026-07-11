@@ -56,7 +56,7 @@ Event Brief Panel:
 - read-only 설명
 
 Task Center:
-- sidebar 항목으로 열고 오늘·예정·완료를 빠르게 전환
+- sidebar 항목으로 열고 오늘·예정·After Review·완료를 빠르게 전환
 - event task에는 연결 일정의 시간과 source를 작게 표시
 - personal task에는 로컬 저장 badge를 표시
 - 프로젝트·팀 collaboration UI는 제공하지 않음
@@ -119,11 +119,13 @@ After:
 - `due_kind = none` event task는 `Follows event`로 표시한다. Before/During은 시작, After는 종료 시각을 따른다. fixed/relative due editor는 후속 범위다.
 - identity candidate/ambiguous 상태는 빈 Brief로 위장하지 않고 편집을 중단한 safety card와 설명을 표시한다.
 
-### Phase 4 Task Center 실제 상호작용
+### Task Center 실제 상호작용 (Phase 4 + Phase 7A)
 
 - toolbar의 날짜 이동 control을 숨기고 `Task Center`와 local reload만 표시한다. 목록 기준일은 사용자가 이동한 calendar focused date가 아니라 현재 시각이다.
-- 상단 segmented control로 Today/Upcoming/Completed를 전환한다.
-- Today는 Overdue/Today/No date, Upcoming은 날짜별, Completed는 최근 완료 group으로 표시한다.
+- 상단 segmented control로 Today/Upcoming/After Review/Completed를 전환한다.
+- Today는 Overdue/Today/No date, Upcoming은 날짜별, After Review는 종료 일정의 미완료 후속 작업, Completed는 최근 완료 group으로 표시한다.
+- completed Event Brief는 inspector 상단에 `Event ended` banner와 After Review 안내를 표시한다. 전체 Before/During 기록은 Brief에 남기되 Today/Upcoming에는 열린 After만 보인다.
+- After Review에는 personal composer를 표시하지 않는다. 이 목록은 새 개인 task 입력 화면이 아니라 종료 일정 후속 작업 처리 화면이다.
 - row는 checkbox, inline title, task due, event section·원본 일정 범위·calendar/source 또는 `Personal · Local`, due edit, delete 순서다.
 - personal quick-add는 제목·선택 due를 받는다. Upcoming에서는 내일 이후 due가 필수이고, due 변경 시 Today/Upcoming의 해당 목록으로 이동한다.
 - due는 정렬·분류 metadata이며 reminder notification을 생성하지 않는다.
@@ -137,7 +139,7 @@ After:
 - 종일 종료는 사람이 보는 포함 날짜로 표시하고, EventKit 배타 종료라는 설명을 붙인다.
 - floating toggle 또는 IANA time zone 입력이 실제 draft에 적용되기 전에는 Save를 비활성화한다. Apply 뒤 `Keep local time`/`Keep instant`의 두 결과를 confirmation dialog에서 비교한다.
 - DST gap·overlap처럼 local time이 존재하지 않거나 두 번 생기면 임의로 고르지 않고 field 가까이에 오류를 표시한다.
-- local Brief가 연결된 일정도 calendar picker를 열어 두되, 이동·시간 의미·반복 변경은 impact review에서 확인한 뒤에만 write한다. linked delete는 Phase 7 orphan review 전까지 계속 잠그고 이유를 설명한다.
+- local Brief가 연결된 일정도 calendar picker를 열어 두되, 이동·시간 의미·반복 변경은 impact review에서 확인한 뒤에만 write한다. linked delete는 Phase 7C orphan review 전까지 계속 잠그고 이유를 설명한다.
 - read-only, attendee meeting/invitation은 inspector에서 원본 편집 대신 잠금 이유를 표시한다. 지원 가능한 반복 occurrence는 명시적 scope로 편집하고, detached·complex rule의 unsafe future/rule 변경만 Calendar.app으로 안내한다. local Brief 편집은 계속 가능하다.
 - 저장 중에는 progress와 interactive-dismiss 차단을 사용한다. stale·identity 모호성은 write 전 복구 가능한 오류로 보여 준다. EventKit save 후 post-save occurrence를 확정하지 못한 부분 성공은 editor/review를 닫고 refresh한 뒤 “Do not retry·Calendar.app에서 확인”을 표시한다. local data는 보존하며 log·Undo를 만들지 않는다.
 - 한 번에 하나의 editor만 허용하고 sheet가 열려 있으면 toolbar와 `⌘N`을 비활성화한다.

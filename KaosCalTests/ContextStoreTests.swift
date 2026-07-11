@@ -1013,7 +1013,11 @@ final class ContextStoreTests: XCTestCase {
             makeID: IDs.next
         )
         let eventTask = try store.appendEventTask(
-            for: makeEvent(id: "typed-routing"),
+            for: makeEvent(
+                id: "typed-routing",
+                start: date(2026, 7, 10, 15),
+                end: date(2026, 7, 10, 16)
+            ),
             section: .before,
             title: "Event task"
         )
@@ -1248,6 +1252,386 @@ final class ContextStoreTests: XCTestCase {
                 contextID: allDayTask.contextID
             )]?.dueAt,
             expectedAllDayDue
+        )
+    }
+
+    func testTemporalLifecycleUsesExactAndAllDayExclusiveEndBoundaries() throws {
+        let database = try AppDatabase.inMemory()
+        let store = ContextStore(
+            database: database,
+            now: { self.date(2026, 7, 10, 12) }
+        )
+        let timedEvent = makeEvent(
+            id: "lifecycle-timed",
+            start: date(2026, 7, 10, 15),
+            end: date(2026, 7, 10, 16)
+        )
+        let timedContext = try XCTUnwrap(
+            try store.saveNotes(for: timedEvent, notes: "Keep")
+        )
+        XCTAssertEqual(timedContext.lifecycleStatus, .scheduled)
+
+        XCTAssertEqual(
+            try store.refreshTemporalLifecycle(
+                at: timedEvent.endDate,
+                calendar: testCalendar
+            ),
+            [timedContext.id]
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: timedContext.id)?
+                .lifecycleStatus,
+            .completed
+        )
+
+        let movedFuture = makeEvent(
+            id: "lifecycle-timed",
+            start: date(2026, 7, 11, 15),
+            end: date(2026, 7, 11, 16)
+        )
+        _ = try store.rebindUserApprovedMutation(
+            contextID: timedContext.id,
+            to: movedFuture
+        )
+        _ = try store.refreshTemporalLifecycle(
+            at: date(2026, 7, 10, 12),
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: timedContext.id)?
+                .lifecycleStatus,
+            .scheduled
+        )
+
+        let allDayStart = localComponents(2026, 7, 11)
+        let allDayEnd = localComponents(2026, 7, 12)
+        let rawInclusiveEnd = date(2026, 7, 12).addingTimeInterval(-1)
+        let allDayEvent = makeEvent(
+            id: "lifecycle-all-day",
+            start: date(2026, 7, 11),
+            end: rawInclusiveEnd,
+            isAllDay: true,
+            timeSemantics: .allDay(
+                start: allDayStart,
+                endExclusive: allDayEnd
+            )
+        )
+        let allDayContext = try XCTUnwrap(
+            try store.saveNotes(for: allDayEvent, notes: "All-day")
+        )
+        _ = try store.refreshTemporalLifecycle(
+            at: rawInclusiveEnd,
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: allDayContext.id)?
+                .lifecycleStatus,
+            .scheduled
+        )
+
+        _ = try store.refreshTemporalLifecycle(
+            at: date(2026, 7, 12),
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: allDayContext.id)?
+                .lifecycleStatus,
+            .completed
+        )
+    }
+
+    func testTemporalLifecycleRebuildsFloatingEndInDisplayTimeZone() throws {
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { self.date(2026, 7, 10, 12) }
+        )
+        let floatingEvent = makeEvent(
+            id: "lifecycle-floating",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 13),
+            timeSemantics: .floating(
+                start: localComponents(2026, 7, 10, 9),
+                end: localComponents(2026, 7, 10, 13)
+            )
+        )
+        let context = try XCTUnwrap(
+            try store.saveNotes(for: floatingEvent, notes: "Floating")
+        )
+
+        _ = try store.refreshTemporalLifecycle(
+            at: date(2026, 7, 10, 12),
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: context.id)?.lifecycleStatus,
+            .scheduled
+        )
+
+        var seoulCalendar = testCalendar
+        seoulCalendar.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        _ = try store.refreshTemporalLifecycle(
+            at: date(2026, 7, 10, 12),
+            calendar: seoulCalendar
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: context.id)?.lifecycleStatus,
+            .completed
+        )
+
+        _ = try store.refreshTemporalLifecycle(
+            at: date(2026, 7, 10, 12),
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: context.id)?.lifecycleStatus,
+            .scheduled
+        )
+    }
+
+    func testTemporalLifecycleCompletesRecurringOccurrencesIndependently() throws {
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { self.date(2026, 7, 10, 12) }
+        )
+        let ended = makeEvent(
+            id: "recurrence-ended",
+            title: "Ended occurrence",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 10),
+            externalIdentifier: "shared-lifecycle-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9)
+        )
+        let future = makeEvent(
+            id: "recurrence-future",
+            title: "Future occurrence",
+            start: date(2026, 7, 10, 15),
+            end: date(2026, 7, 10, 16),
+            externalIdentifier: "shared-lifecycle-series",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 15)
+        )
+        let endedContext = try XCTUnwrap(
+            try store.saveNotes(for: ended, notes: "Ended")
+        )
+        let futureContext = try XCTUnwrap(
+            try store.saveNotes(for: future, notes: "Future")
+        )
+
+        _ = try store.refreshTemporalLifecycle(
+            at: date(2026, 7, 10, 12),
+            calendar: testCalendar
+        )
+
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: endedContext.id)?
+                .lifecycleStatus,
+            .completed
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: futureContext.id)?
+                .lifecycleStatus,
+            .scheduled
+        )
+    }
+
+    func testTemporalLifecycleNeverOverwritesCancelledOrOrphaned() throws {
+        let database = try AppDatabase.inMemory()
+        let store = ContextStore(
+            database: database,
+            now: { self.date(2026, 7, 10, 12) }
+        )
+        let cancelled = try XCTUnwrap(try store.saveNotes(
+            for: makeEvent(
+                id: "cancelled-lifecycle",
+                title: "Cancelled fixture",
+                start: date(2026, 7, 10, 15),
+                end: date(2026, 7, 10, 16)
+            ),
+            notes: "Cancelled"
+        ))
+        let orphaned = try XCTUnwrap(try store.saveNotes(
+            for: makeEvent(
+                id: "orphaned-lifecycle",
+                title: "Orphaned fixture",
+                start: date(2026, 7, 10, 15),
+                end: date(2026, 7, 10, 16)
+            ),
+            notes: "Orphaned"
+        ))
+        let missingLink = try XCTUnwrap(try store.saveNotes(
+            for: makeEvent(
+                id: "missing-link-lifecycle",
+                title: "Missing link fixture",
+                start: date(2026, 7, 10, 15),
+                end: date(2026, 7, 10, 16)
+            ),
+            notes: "Missing link"
+        ))
+        let orphanedLink = try XCTUnwrap(try store.saveNotes(
+            for: makeEvent(
+                id: "orphaned-link-lifecycle",
+                title: "Orphaned link fixture",
+                start: date(2026, 7, 13, 15),
+                end: date(2026, 7, 13, 16)
+            ),
+            notes: "Orphaned link"
+        ))
+        try database.write { db in
+            try db.execute(
+                sql: "UPDATE event_contexts SET lifecycle_status = 'cancelled' WHERE id = ?",
+                arguments: [cancelled.id]
+            )
+            try db.execute(
+                sql: "UPDATE event_contexts SET lifecycle_status = 'orphaned' WHERE id = ?",
+                arguments: [orphaned.id]
+            )
+            try db.execute(
+                sql: "UPDATE event_links SET link_status = 'missing' WHERE context_id = ?",
+                arguments: [missingLink.id]
+            )
+            try db.execute(
+                sql: "UPDATE event_contexts SET lifecycle_status = 'completed' WHERE id = ?",
+                arguments: [orphanedLink.id]
+            )
+            try db.execute(
+                sql: "UPDATE event_links SET link_status = 'orphaned' WHERE context_id = ?",
+                arguments: [orphanedLink.id]
+            )
+        }
+
+        let changed = try store.refreshTemporalLifecycle(
+            at: date(2026, 7, 12),
+            calendar: testCalendar
+        )
+
+        XCTAssertTrue(changed.isEmpty)
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: cancelled.id)?.lifecycleStatus,
+            .cancelled
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: orphaned.id)?.lifecycleStatus,
+            .orphaned
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: missingLink.id)?
+                .lifecycleStatus,
+            .scheduled
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: orphanedLink.id)?
+                .lifecycleStatus,
+            .completed
+        )
+    }
+
+    func testAfterReviewKeepsOnlyOpenAfterTasksWithoutDeletingHistory() throws {
+        let harness = try makeHarness()
+        let endedEvent = makeEvent(
+            id: "after-review",
+            start: date(2026, 7, 10, 9),
+            end: date(2026, 7, 10, 10)
+        )
+        let before = try harness.store.appendEventTask(
+            for: endedEvent,
+            section: .before,
+            title: "Prepare"
+        )
+        let during = try harness.store.appendEventTask(
+            for: endedEvent,
+            section: .during,
+            title: "Take notes"
+        )
+        let afterToday = try harness.store.appendEventTask(
+            for: endedEvent,
+            section: .after,
+            title: "Send recap"
+        )
+        let afterFuture = try harness.store.appendEventTask(
+            for: endedEvent,
+            section: .after,
+            title: "Check response",
+            due: .fixed(date(2026, 7, 12, 9))
+        )
+        _ = try harness.store.setEventTaskCompleted(
+            contextID: during.contextID,
+            taskID: during.id,
+            isCompleted: true
+        )
+        let personal = try harness.store.personalTasks.create(
+            title: "Personal inbox"
+        )
+
+        let today = try harness.store.taskCenter.fetch(
+            list: .today,
+            now: harness.now,
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            Set(today.map(\.id)),
+            Set([
+                .eventTask(
+                    taskID: afterToday.id,
+                    contextID: afterToday.contextID
+                ),
+                .personalTask(taskID: personal.id)
+            ])
+        )
+        XCTAssertFalse(today.contains {
+            $0.id == .eventTask(
+                taskID: before.id,
+                contextID: before.contextID
+            )
+        })
+
+        let upcoming = try harness.store.taskCenter.fetch(
+            list: .upcoming,
+            now: harness.now,
+            calendar: testCalendar
+        )
+        XCTAssertEqual(upcoming.map(\.id), [
+            .eventTask(
+                taskID: afterFuture.id,
+                contextID: afterFuture.contextID
+            )
+        ])
+
+        let afterReview = try harness.store.taskCenter.fetch(
+            list: .afterReview,
+            now: harness.now,
+            calendar: testCalendar
+        )
+        XCTAssertEqual(
+            Set(afterReview.map(\.id)),
+            Set([
+                .eventTask(
+                    taskID: afterToday.id,
+                    contextID: afterToday.contextID
+                ),
+                .eventTask(
+                    taskID: afterFuture.id,
+                    contextID: afterFuture.contextID
+                )
+            ])
+        )
+
+        let completed = try harness.store.taskCenter.fetch(
+            list: .completed,
+            now: harness.now,
+            calendar: testCalendar
+        )
+        XCTAssertEqual(completed.map(\.id), [
+            .eventTask(
+                taskID: during.id,
+                contextID: during.contextID
+            )
+        ])
+        XCTAssertEqual(
+            try harness.store.eventTasks.fetch(
+                contextID: before.contextID
+            ).count,
+            4
         )
     }
 

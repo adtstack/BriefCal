@@ -199,7 +199,7 @@ EventEditorView local draft
 - attendee가 있는 meeting, read-only, recurrence/detached occurrence는 provider와 AppState 양쪽에서 차단한다.
 - pending local notes 저장 실패와 weak/ambiguous context는 editor 진입 전에 차단한다. 한 번에 하나의 editor session만 허용한다.
 - same-calendar linked update 성공 뒤 `EventMutationContext.linked(contextID)`로 기존 row의 identifier/snapshot만 갱신한다. notes/tasks는 같은 transaction에서 유지되고 unique 충돌은 rollback된다.
-- EventKit과 SQLite는 원자적이지 않다. EventKit 성공 뒤 rebind 실패 시 sheet를 유지하고 부분 성공을 명시한다. linked calendar 이동은 Phase 6, linked 삭제는 Phase 7까지 provider 호출 전에 차단한다.
+- EventKit과 SQLite는 원자적이지 않다. EventKit 성공 뒤 rebind 실패 시 sheet를 유지하고 부분 성공을 명시한다. linked calendar 이동은 Phase 6, linked 삭제는 Phase 7C까지 provider 호출 전에 차단한다.
 
 세부 결정은 [ADR-010](adr/ADR-010-original-event-write-safety.md)을 따른다.
 
@@ -221,8 +221,9 @@ EventEditor draft + selected occurrence
 - 반복 write, calendar 이동, 기존 시간·종일·time-zone 의미 변경은 confirmation 전에 EventKit write, local rebind, log append가 모두 0회여야 한다. 확인 뒤에도 stale·read-only·attendee 상태를 다시 검사한다.
 - `thisEvent`는 선택 occurrence 하나를 대상으로 하며 detached 결과가 생길 수 있다. 복잡한 recurrence도 ordinary fields만 patch하고 recurrenceRules를 보존하는 `thisEvent`는 허용할 수 있다. detached occurrence의 `futureEvents`, 복잡한 rule의 `futureEvents`·rule 변경은 Calendar.app 전용이다.
 - 초기 Phase 6은 linked `futureEvents`를 전부 provider 호출 전에 차단한다. 후속으로 열 때도 DB의 영향받는 모든 context를 열거하고 series split 뒤 각각을 강한 identity로 재연결할 계획이 필요하며, 하나라도 weak·ambiguous·missing이면 계속 차단한다.
-- linked move 성공 뒤 기존 `contextID`를 유지한다. EventKit 성공과 local transaction 실패는 부분 성공이며 자동 역보정하지 않는다. linked delete는 Phase 7 전까지 차단한다.
+- linked move 성공 뒤 기존 `contextID`를 유지한다. EventKit 성공과 local transaction 실패는 부분 성공이며 자동 역보정하지 않는다. linked delete는 Phase 7C 전까지 차단한다.
 - EventKit save 성공 뒤 identifier churn으로 post-save occurrence receipt를 강하게 확정할 수 없으면 부분 성공으로 처리한다. editor/review를 닫아 동일 변경을 재시도하지 못하게 하고, refresh 후 “Do not retry·Calendar.app에서 확인”을 안내한다. local rebind·log·Undo는 만들지 않고 기존 Event Brief를 보존한다.
+- post-write 화면 focus는 refresh 전체 snapshot의 exact display ID를 먼저 사용한다. exact ID가 없을 때 반복 fallback은 strong identity와 같은 calendar에 더해 zoned instant 또는 all-day/floating civil occurrence anchor까지 일치해야 하며, series identifier만 같은 sibling은 선택하지 않는다. 비반복 strong-ID fallback은 유지한다.
 - `v2_event_change_log`는 immutable v1 뒤에 추가하는 migration이다. `mutationImpact`, `changeHistory`, mutation rebind+record, undo rebind+record 같은 use-case API가 provider 명령과 local transaction 사이의 경계를 담당한다.
 - persistent log의 `undo_state = available`만으로 앱 재실행 뒤 Undo를 허용하지 않는다. UI Undo 권한은 현재 process의 one-shot token, provider의 fresh after-snapshot match, 권한과 strong identity를 모두 요구한다. 일반 EventKit refresh는 자체 save 알림과 외부 알림을 구분할 수 없어 token을 즉시 지우지 않지만, 외부 변경·missing·read-only는 역방향 write 전에 provider stale check로 차단한다. 이후 성공한 KaosCal mutation은 token을 폐기하며 반복 scope, detached, delete는 token을 만들지 않는다.
 - `DisplayEvent.isRecurring`이 런타임 scope routing의 단일 기준이어도 persisted Undo snapshot을 복원하는 recurrence·detached·occurrence 중복 검사는 방어적으로 유지한다. 오래된 payload나 불일치 snapshot을 single Undo로 잘못 승격하지 않기 위한 별도 안전장치다.
@@ -267,19 +268,22 @@ KaosCalApp / AppBootstrap
 - EventKit fetch 관찰은 강한 ID로 이미 연결된 record만 갱신한다. exact snapshot과 versioned fingerprint는 확인이 필요한 후보다.
 - 과거 synthetic `occurrenceDate` 오분류 build가 recurring으로 저장한 실제 single link는 일반 weak relink로 풀지 않는다. 현재 single과 강한 identifier가 맞고 calendar/title/location/time/local-components/fingerprint와 저장 occurrence anchor까지 모두 정확히 같은 경우에만 기존 context를 연결한 뒤 `single:v1` snapshot으로 원자적으로 정상화한다. legacy 구조와 strong identifier는 맞지만 snapshot이 바뀌었으면 자동 연결하지 않고 confirmation candidate로만 노출한다. navigation lookup 자체는 read-only다.
 - 반복 identity는 zoned absolute occurrence와 all-day/floating civil occurrence를 분리한다. identifier+occurrence unique index가 동시 중복 생성을 막는다.
-- all-day/floating relative task due는 저장된 local components를 조회 calendar에서 재구성한다. personal task와 event task는 한 consistent read에서 Today/Upcoming/Completed item으로 합친다.
+- all-day/floating relative task due와 temporal lifecycle은 저장된 local components를 조회 calendar에서 재구성한다. personal task와 event task는 한 consistent read에서 Today/Upcoming/After Review/Completed item으로 합친다.
 - 날짜는 UTC millisecond TEXT 계약을 명시한다. details와 선택 근거는 [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md)을 따른다.
 
 ## Event Brief 경계
 
-Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다. Phase 4는 지연 생성, notes autosave, task CRUD·완료와 Task Center projection을 구현했다. Phase 5는 same-calendar 비반복 원본 수정 뒤 explicit rebind를 추가했고, Phase 6은 linked move·반복 occurrence reconciliation·change log를 구현했다. Phase 7은 orphan lifecycle·linked delete review를 담당한다.
+Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다. Phase 4는 지연 생성, notes autosave, task CRUD·완료와 Task Center projection을 구현했다. Phase 5는 same-calendar 비반복 원본 수정 뒤 explicit rebind를 추가했고, Phase 6은 linked move·반복 occurrence reconciliation·change log를 구현했다. Phase 7A는 종료 시각 기반 scheduled/completed와 After Review를 구현했고, Phase 7B/C는 orphan lifecycle·linked delete review를 담당한다.
 
 - Event Brief 생성: 이벤트를 단순 선택할 때는 만들지 않고, 사용자가 처음 메모나 작업을 저장할 때 local context를 만든다.
 - Event Brief 수정: SQLite에만 쓴다.
 - same-calendar 시간 의미 변경: linked 일정은 before/after impact confirmation 뒤 context rebind·change log를 한 local transaction으로 수행한다.
 - calendar 간 이동: linked nonrecurring single과 안전한 `thisEvent`는 strong preflight·impact confirmation·receipt rebind를 통과하면 기존 context를 유지한 채 이동한다. linked `futureEvents`는 계속 사전 차단한다.
 - 반복 future 변경: 영향받는 local context 전체를 안전하게 reconciliation할 수 없으면 차단한다.
-- 원본 일정 삭제: local context가 연결되어 있으면 Phase 7 orphan review 전까지 차단한다.
+- 시간 lifecycle: active occurrence의 유효 종료가 현재 시각 이하이면 completed다. 종일 배타 종료와 floating civil time을 사용하고 cancelled/orphaned는 시간 계산으로 덮어쓰지 않는다. Today/Upcoming은 완료 일정의 After만 투영하며 Before/During row 자체는 보존한다.
+- 원본 일정 삭제: local context가 연결되어 있으면 Phase 7B/C orphan review와 전용 strong lookup이 구현될 때까지 차단한다. 일반 범위 조회의 한 번 부재는 삭제로 판정하지 않는다.
+
+세부 lifecycle·missing 확인 경계는 [ADR-012](adr/ADR-012-lifecycle-after-review-and-orphan-confirmation.md)를 따른다.
 
 ## Identity resolution
 

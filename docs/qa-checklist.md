@@ -121,7 +121,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 기대 결과:
 - calendar 이동은 impact review를 열고, Cancel 전에는 EventKit update·local rebind·change log가 없다.
 - Confirm하면 기존 context_id·notes·tasks를 유지한 채 target calendar receipt로 rebind하고 change log를 append한다.
-- linked delete만 Phase 7 orphan review 이유와 함께 계속 잠긴다. local Brief가 없는 지원 일정의 이동·삭제는 허용된다.
+- linked delete만 Phase 7C orphan review 이유와 함께 계속 잠긴다. local Brief가 없는 지원 일정의 이동·삭제는 허용된다.
 
 ### 7. 읽기 전용 일정
 
@@ -134,7 +134,37 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 왜 수정할 수 없는지 설명한다.
 - KaosCal local Event Brief는 편집 가능해야 한다.
 
-### 8. 원본 일정 삭제 후 orphan (Phase 7 수동 gate)
+### 7-a. 종료 일정과 After Review (Phase 7A)
+
+절차:
+1. 종료 전인 일정에 Before, During, After task와 local notes를 만든다.
+2. 정확한 종료 시각에 Task Center를 새로고침한다.
+3. Today, Upcoming, After Review, Completed와 선택 Event Brief를 확인한다.
+4. 종일 일정의 배타 종료일, floating 일정의 system time zone 변경, 서로 다른 반복 occurrence를 확인한다.
+
+기대 결과:
+- active context는 종료 전 scheduled, `now >= end`에서 completed이며 Event Brief 상단에 `Event ended` banner와 After Review 안내가 표시된다.
+- 종일은 배타 종료 자정, floating은 현재 표시 time zone의 civil end, 반복은 occurrence별 종료를 사용한다.
+- Today/Upcoming에는 완료 일정의 미완료 After만 남고 Before/During row는 DB와 Event Brief에 보존된다.
+- After Review에는 completed context의 미완료 After만 있고 personal task와 완료 task는 없다.
+- Completed에는 완료 처리한 Before/During/After와 personal task가 기존처럼 유지된다.
+- cancelled/orphaned와 non-active link는 시간 계산으로 바뀌지 않고, 자동 completed 전이에 change log가 생기지 않는다.
+
+### 7-b. 반복 write 후 occurrence focus (Phase 7A)
+
+절차:
+1. 같은 series identifier를 공유하는 여러 occurrence를 현재 snapshot에 둔다.
+2. 뒤쪽 occurrence의 title/time 같은 지원 필드를 `이번 일정`으로 수정한다.
+3. provider receipt가 exact display ID를 반환하는 경우와, receipt ID가 snapshot에 없지만 강한 identifier와 occurrence anchor가 남는 경우를 각각 확인한다.
+4. zoned instant, all-day civil day, floating civil date-time과 비반복 일정을 각각 확인한다.
+
+기대 결과:
+- 전체 snapshot에서 exact display ID가 있으면 다른 sibling보다 먼저 선택된다.
+- exact ID가 없을 때 반복 fallback은 강한 identifier뿐 아니라 같은 calendar와 같은 occurrence anchor까지 모두 일치해야 한다.
+- zoned는 절대 instant, all-day와 floating은 civil anchor를 비교해 time-zone 표시 변경으로 다른 occurrence를 선택하지 않는다.
+- 비반복 write는 기존 strong-ID fallback을 유지하고, 일치하는 event가 없으면 임의 sibling을 선택하지 않는다.
+
+### 8. 원본 일정 삭제 후 orphan (Phase 7B 수동 gate)
 
 절차:
 1. Event Brief가 있는 일정을 Calendar.app에서 삭제한다.
@@ -245,7 +275,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - `moved` log의 before/after calendar·time과 `single` scope가 남는다. 원본 EventKit notes와 Event Brief notes는 서로 덮어쓰지 않는다.
 - EventKit 성공 뒤 local transaction 실패를 주입하면 원본 성공·local 갱신 실패·local data 보존·false log 없음이 함께 표시된다.
 - 후속 성공 write, 권한 철회, 앱 재실행 뒤에는 이전 session Undo를 제공하지 않는다. 외부 변경 알림 뒤 button이 남더라도 실행 시 provider가 stale/missing/read-only를 감지해 local mutation 전에 차단한다.
-- linked original delete는 여전히 비활성화되고 Phase 7 orphan review 이유가 보인다.
+- linked original delete는 여전히 비활성화되고 Phase 7C orphan review 이유가 보인다.
 
 ### 12-b. 좁은 session Undo (Phase 6 수동 gate)
 
@@ -268,7 +298,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 절차:
 1. Before/After event task와 Personal task를 만든다.
-2. 오늘, 예정, 완료 목록을 차례로 연다.
+2. 오늘, 예정, After Review, 완료 목록을 차례로 연다.
 3. personal due를 미래 날짜로 바꿨다가 제거한다.
 4. event task 제목을 편집한 채 연결 일정을 연다.
 5. 자정 또는 system time zone 변경 알림 뒤 목록을 확인한다.
@@ -277,6 +307,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - event task와 personal task가 출처를 잃지 않고 한 목록에 표시된다.
 - event task에는 task due와 별도로 section·원본 일정 시간·calendar/source가 표시된다.
 - personal due 변경에 따라 Today/Upcoming으로 이동하고 due 없음은 Today에 포함된다.
+- 종료 일정의 열린 Before/During은 Today/Upcoming에서 숨기되 삭제·자동 완료하지 않고, After만 After Review에서 처리할 수 있다.
 - target range 밖 일정은 해당 범위를 fetch한 뒤 강한 occurrence match일 때만 열린다.
 - weak/ambiguous/not-found이면 다른 일정을 열지 않고 local task와 오류 안내를 유지한다.
 - 완료 상태와 기한이 앱 재실행 후에도 유지된다.
@@ -410,6 +441,15 @@ Phase 6 signed FinalRelease corrective live gate:
 - full test와 live QA 전후 direct/sandbox production DB 및 각 `-wal`·`-shm` 상태 **불변**
 - 과거 synthetic anchor 오분류로 recurring identity가 저장된 Brief는 strong identifier와 calendar/title/location/time/fingerprint/anchor가 모두 같은 single에만 자동 연결하고 `single:v1`로 갱신. notes/tasks 보존, navigation read-only. legacy 구조와 strong identifier는 맞지만 snapshot이 달라졌으면 자동 연결 없이 확인 필요 후보, identifier가 없으면 기존 exact/fingerprint 후보 정책 유지
 - Calendar.app visual round-trip, live all-day, time-zone 변경, recurrence occurrence·future split, calendar move는 이 gate에서 **not tested**이며 beta 지원 근거로 올리지 않음
+
+Phase 7A lifecycle·focus 자동/Release gate:
+
+- active occurrence의 zoned/all-day/floating 유효 종료, 반복 occurrence별 독립 lifecycle, cancelled/orphaned와 non-active link 보존, Today/Upcoming/After Review/Completed projection 검증
+- exact display ID 우선과 same-calendar + instant/civil occurrence anchor 반복 fallback, 비반복 strong-ID fallback 검증
+- 전체 **145 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase7AFull.xcresult`
+- build-only Release `/private/tmp/KaosCalPhase7ARelease/Build/Products/Release/KaosCal.app`, CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
+- exact Release의 1360×840 onscreen 창 bootstrap과 종료 후 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
+- 이 gate에서는 EventKit/Exchange write를 실행하지 않았으며, Screen Recording 권한 부재로 픽셀 캡처는 시각 레이아웃 pass 근거로 사용하지 않음
 
 상세 명령·artifact·DB 수치와 실계정 미검증 상태는 구현 로그와 Exchange compatibility 문서에 기록한다.
 
