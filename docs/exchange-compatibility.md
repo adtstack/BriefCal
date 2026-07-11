@@ -158,9 +158,23 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 
 - mini month는 EventKit mutation을 만들지 않는 local navigation UI다. 월 화살표는 local browse state만 바꾸고 날짜 선택만 기존 visible-period fetch 경계로 보낸다.
 - 자동 gate: **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 검토 수정 뒤 최종 결과 bundle은 `/private/tmp/KaosCalMiniMonthPostReview.xcresult`다.
-- 최신 build-only artifact: `/private/tmp/KaosCalMiniMonthRelease/Build/Products/Release/KaosCal.app`, CDHash `92e16853c099db014b3f3f2d370d0b57ba44bc90`. strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description 통과; get-task-allow와 XCTest plug-in/link 없음.
+- 당시 post-review mini-month build-only artifact: `/private/tmp/KaosCalMiniMonthRelease/Build/Products/Release/KaosCal.app`, CDHash `92e16853c099db014b3f3f2d370d0b57ba44bc90`. strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description 통과; get-task-allow와 XCTest plug-in/link 없음.
 - exact Release가 1482×931 onscreen 창을 만들고 정상 종료 뒤 process 0임을 확인했다. 전체 test와 bootstrap 전후 direct/sandbox production DB의 mtime·size·SHA-256 및 WAL/SHM 부재는 동일했다.
 - 새 Exchange fixture write를 실행하지 않았다. 실제 비반복 CRUD 증거는 계속 run `20260711-1626-B7D2`에 귀속하며 Calendar.app, all-day, time-zone 변경, recurrence/future split, calendar move 판정은 pending이다.
+
+## 2026-07-11~12 AppIcon 최초 opaque build와 compatibility correction
+
+- `AppIcon.appiconset` 10개 macOS slot을 추가하고 Xcode가 `AppIcon.icns`, `CFBundleIconFile`과 `CFBundleIconName`을 생성하는 것을 확인했다.
+- 최초 opaque build-only artifact: `/private/tmp/KaosCalIconRelease/Build/Products/Release/KaosCal.app`, CDHash `d8990eec4462f6662f5cb7676cf844c35f2b8a98`. strict codesign, hardened runtime, sandbox, Calendar entitlement 통과.
+- 최초 opaque AppIcon build 당시 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**를 통과했다. 당시 결과 bundle은 `/private/tmp/KaosCalAppIconFinal.xcresult`다.
+- exact Release가 1482×931 onscreen 창을 만들고 종료 뒤 process 0임을 확인했다. NSWorkspace가 icon을 valid로 읽고 여러 logical 표현을 반환했으며, source catalog는 최대 1024px과 1x/2x slot을 제공한다. 테스트와 bootstrap 전후 production DB는 불변이다.
+- 이 checkpoint도 EventKit/Exchange write를 실행하지 않았다. live 비반복 CRUD 증거와 남은 Calendar.app/all-day/time-zone/recurrence/move 판정은 이전 run과 분리한다.
+- 후속 호환 검토에서 macOS 14/15 legacy `.icns`가 최신 system mask를 보장하지 않아 opaque square가 각지게 보일 수 있음을 확인했다. 이 artifact는 release candidate에서 제외했다.
+- 현재 worktree는 동일 표식의 full-bleed squircle과 transparent corner를 가진 alpha PNG 10개 slot로 교체했다. corner alpha 0, center alpha 255와 16/64/128/1024px 시각 상태를 확인했다.
+- 사용자 확장 권한 승인 뒤 transparent fallback을 새 경로에서 재빌드했다. 최종 artifact는 `/private/tmp/KaosCalIconCompatRelease/Build/Products/Release/KaosCal.app`, CDHash `bc2ddd83c9d7f5e1bfd62241b0e02e63b23308b6`이며 strict codesign, hardened runtime, sandbox, Calendar entitlement를 통과했다.
+- `AppIcon.icns`를 iconset으로 역추출해 16/32/128/256px 표현의 alpha, 네 corner 0과 center 255를 확인했다. Info.plist의 `CFBundleIconFile/Name = AppIcon`, Assets.car, XCTest 비포함도 확인했다.
+- 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 최종 result bundle은 `/private/tmp/KaosCalAppIconCompatFinal.xcresult`다.
+- exact Release가 1512×949 onscreen 창을 만들고 정상 종료 뒤 process 0임을 확인했다. test와 bootstrap 전후 production DB mtime·size·SHA-256 및 WAL/SHM 부재는 동일했다. 이 final gate도 EventKit/Exchange write를 실행하지 않았다.
 
 ## 테스트 기록 형식
 

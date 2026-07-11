@@ -15,6 +15,20 @@ BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. �
 - 장식보다 판독성을 우선한다.
 - 일정의 출처와 권한을 숨기지 않는다.
 
+## 앱 아이콘
+
+- calendar grid는 일정 탐색, 겹친 schedule block은 고밀도 계획, apricot
+  checkmark는 Event Brief와 Todo 완료를 나타낸다.
+- midnight navy 배경, steel blue 일정, off-white calendar, warm apricot
+  action의 네 역할만 사용한다. 앱 accent `#2B7099`와 같은 계열이다.
+- 글자·숫자·특정 날짜·외부 서비스 표식은 사용하지 않는다.
+- square master의 핵심은 중앙 70% 안에 둔다. macOS 14/15 legacy `.icns`를
+  위해 canvas edge까지 닿는 full-bleed squircle과 transparent corner를
+  포함하고, 최신 system mask와 겹쳐도 줄어들지 않도록 별도 margin은 두지
+  않는다. 16px에서도 흰 calendar와 apricot check silhouette이 남아야 한다.
+- 현재 asset catalog는 16~1024px flattened alpha PNG다. layered/dark/tinted
+  Icon Composer variant는 외부 배포 polish에서 검토한다.
+
 ## 기본 레이아웃
 
 ```text
@@ -228,8 +242,8 @@ impact confirmation에 표시할 것:
 
 ## 초기 브랜드 방향
 
-- 앱 아이콘: 날짜 격자와 정리된 체크 표시를 결합한 단순한 KaosCal mark
-- 기본 색: system background 위에 ink navy, muted slate, calendar accent만 사용
+- 앱 아이콘: calendar grid·겹친 schedule blocks·apricot check를 결합한 KaosCal mark
+- UI 기본 색: system background 위에 ink navy, muted slate, calendar accent만 사용
 - 강조 색: calendar source color는 narrow rail과 badge에 제한
 - 다크 모드: 같은 정보 계층을 유지하고 과한 neon/glass 효과를 피함
 

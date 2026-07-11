@@ -553,6 +553,36 @@
   - EventKit/Exchange write를 실행하지 않았다. live 비반복 CRUD 증거는 CDHash `63ded03a9d704976c4ba45340f2748eda9892382`, run `20260711-1626-B7D2`에 계속 귀속한다.
 - 결과: 요청된 Day/Week/Agenda와 함께 사용할 compact 날짜 탐색기를 구현하고 자동·시각·Release·운영 DB 격리 gate를 통과했다. 다음 주요 개발 범위는 Phase 7B/C missing·orphan·relink·linked delete, backup/settings, app icon과 남은 live/distribution gate다.
 
+## 2026-07-11 — AppIcon과 초기 브랜드 방향
+
+- 관련 ADR: ADR-005, ADR-006, ADR-013
+- 생성과 채택:
+  - built-in `imagegen` 경로로 외부 reference 없이 새 square raster를 생성했다. 프롬프트는 macOS AppIcon, calendar grid·layered schedule blocks·single checkmark, midnight navy/steel blue/off-white/warm apricot, 중앙 70% safe area, 16px silhouette, 글자·숫자·watermark·기존 calendar 앱 복제 금지를 요구했다.
+  - 생성 원본은 1254×1254 opaque PNG였다. 정사각 비율과 가장자리 uniform background를 확인한 뒤 1024px master와 각 macOS slot을 `sips`로 deterministic resize했다.
+  - 채택 이유는 calendar와 Todo가 동시에 읽히고, 기존 accent `#2B7099`와 맞으며, red calendar-page나 특정 날짜에 기대지 않기 때문이다.
+- asset catalog:
+  - `AppIcon.appiconset`에 16/32/64/128/256/512/1024px을 제공하고 Debug·Release의 `ASSETCATALOG_COMPILER_APPICON_NAME`을 `AppIcon`으로 지정했다.
+  - 첫 rendition은 square opaque PNG였고 선언 pixel size와 실제 size가 일치했다. 16·64·128px 직접 확인에서 흰 calendar와 apricot check silhouette이 남았다.
+  - 현재는 flattened design 하나를 사용한다. Icon Composer layered/default·dark·tinted variant는 clean-machine beta 전 polish로 남긴다.
+- Release gate:
+  - 최초 opaque artifact: `/private/tmp/KaosCalIconRelease/Build/Products/Release/KaosCal.app`
+  - 최초 opaque CDHash: `d8990eec4462f6662f5cb7676cf844c35f2b8a98`
+  - Release가 `AppIcon.icns`와 `Assets.car`를 포함하고 Info.plist에 `CFBundleIconFile = AppIcon`, `CFBundleIconName = AppIcon`을 생성했다.
+  - 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 결과 bundle은 `/private/tmp/KaosCalAppIconFinal.xcresult`다.
+  - `codesign --verify --deep --strict`, hardened runtime, app sandbox와 Calendar entitlement를 통과했고 get-task-allow·XCTest plug-in/link는 없다.
+  - exact Release가 1482×931 onscreen 창을 만들고 정상 종료 뒤 process 0임을 확인했다. NSWorkspace가 app icon을 valid로 읽고 여러 logical 표현을 반환했으며 source catalog는 최대 1024px과 1x/2x slot을 제공한다.
+  - direct DB `1783704658|126976`, sandbox DB `1783700481|126976`, 양쪽 SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 WAL/SHM 부재가 전체 test 및 exact Release bootstrap 전후 동일했다. EventKit/Exchange write도 실행하지 않았다.
+- compatibility review와 correction:
+  - current HIG의 system mask를 macOS 14/15 legacy `.icns`에도 적용된다고 가정한 점을 P1로 발견했다. 최초 opaque artifact는 자동·서명 gate 통과와 별개로 release candidate에서 제외했다.
+  - approved artwork를 built-in `imagegen` edit로 flat green 밖의 full-bleed squircle에 넣고, skill의 `remove_chroma_key.py`를 soft matte·despill로 실행했다. alpha bounding box의 6px uniform inset을 crop한 뒤 같은 10개 slot을 다시 만들었다.
+  - 현재 rendition은 모두 square alpha PNG이며 실제 size가 선언과 일치한다. 네 corner alpha 0, center 255, 16·64·128·1024px의 squircle과 calendar/check 가독성을 확인했다.
+  - 확장 권한 자동 승인 사용량 제한 때문에 corrected asset의 첫 xcodebuild가 거절됐고, sandbox 대체는 SwiftPM/Xcode cache 접근 차단으로 실패했다. 우회하지 않고 중단한 뒤 사용자에게 필요한 승인만 요청했다.
+  - 2026-07-12 사용자 승인 뒤 `/private/tmp/KaosCalIconCompatRelease/Build/Products/Release/KaosCal.app`을 새로 빌드했다. CDHash는 `bc2ddd83c9d7f5e1bfd62241b0e02e63b23308b6`이며 strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description, XCTest 비포함을 통과했다.
+  - `AppIcon.icns`를 `/private/tmp/KaosCalIconCompat-BC2D.iconset`으로 역추출해 16/32/128/256px 모두 alpha가 있고 네 corner 0, center 255임을 확인했다. Info.plist의 icon file/name과 Assets.car도 확인했다.
+  - corrected asset을 포함한 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 최종 result bundle은 `/private/tmp/KaosCalAppIconCompatFinal.xcresult`다.
+  - exact Release가 onscreen 1512×949 창을 만들고 정상 종료 뒤 process 0임을 확인했다. direct DB `1783704658|126976`, sandbox DB `1783700481|126976`, 양쪽 SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 WAL/SHM 부재가 test·bootstrap 전후 동일했다.
+- 결과: 사용자 브랜드 입력 없이 식별 가능한 KaosCal 표식과 macOS 14/15 legacy `.icns` alpha fallback을 구현하고 최종 자동·Release·bootstrap·운영 DB 격리 gate를 통과했다. 실제 macOS 14/15/최신 Finder·Dock wallpaper contrast와 Icon Composer variant는 이후 clean-machine beta gate다.
+
 ## 다음 항목 템플릿
 
 ```markdown

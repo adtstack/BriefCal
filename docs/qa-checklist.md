@@ -478,6 +478,20 @@ Mini month 자동/Release gate:
 - exact Release의 1482×931 onscreen 창 bootstrap과 종료 후 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
 - 이 gate에서는 EventKit/Exchange write를 실행하지 않았으며, live Exchange 증거는 run `20260711-1626-B7D2`와 분리
 
+App icon asset/Release gate:
+
+- `AppIcon.appiconset/Contents.json`의 10개 macOS slot이 16, 32, 64, 128, 256, 512, 1024px PNG와 정확히 일치하고 모두 square alpha PNG인지 확인
+- 네 corner alpha 0, center alpha 255, full-bleed squircle edge와 내부 green spill 부재를 확인해 macOS 14/15 legacy `.icns`에서 opaque square가 되지 않게 한다.
+- 16·32·64·128px를 실제 크기와 확대 보기로 확인해 off-white calendar와 apricot check silhouette이 남고 글자·숫자·watermark가 없는지 확인
+- Release build에 `AppIcon.icns`, `Assets.car`, `CFBundleIconFile = AppIcon`, `CFBundleIconName = AppIcon`이 포함되는지 확인
+- Finder/Dock light·dark wallpaper와 clean-machine beta에서 system mask, contrast, 캐시 갱신을 수동 확인. layered/dark/tinted Icon Composer variant는 현재 gate 밖
+- AppIcon 추가가 EventKit/Context DB를 쓰지 않고 기존 전체 154-test gate를 바꾸지 않는지 확인
+- 최초 opaque build는 자동·서명 gate 통과와 별개로 macOS 14/15 risk 때문에 candidate에서 제외
+- transparent correction 최종 자동 결과: **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalAppIconCompatFinal.xcresult`
+- 최종 build-only Release `/private/tmp/KaosCalIconCompatRelease/Build/Products/Release/KaosCal.app`, CDHash `bc2ddd83c9d7f5e1bfd62241b0e02e63b23308b6`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
+- `AppIcon.icns` 역추출 16/32/128/256px alpha, corner 0/center 255, Info.plist icon keys, Assets.car와 XCTest 비포함 확인
+- exact Release의 1512×949 onscreen 창, NSWorkspace valid icon, 종료 후 process 0 확인. 테스트·bootstrap 전후 direct/sandbox production DB와 WAL/SHM 상태 불변
+
 상세 명령·artifact·DB 수치와 실계정 미검증 상태는 구현 로그와 Exchange compatibility 문서에 기록한다.
 
 ## Beta gate
