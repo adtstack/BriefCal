@@ -150,9 +150,17 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 - zoned instant, all-day exclusive end, floating civil components와 반복 occurrence별 독립 상태를 자동 검증했다. cancelled/orphaned context와 non-active link는 시간 reconciliation이 덮어쓰지 않는다.
 - 반복 write 후 identifier를 공유하는 다른 occurrence를 선택할 수 있던 focus 경로는 exact display ID 우선, 동일 calendar와 occurrence anchor를 요구하는 fallback으로 좁혔다.
 - 자동 gate: **145 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 결과 bundle은 `/private/tmp/KaosCalPhase7AFull.xcresult`다.
-- 최신 build-only artifact: `/private/tmp/KaosCalPhase7ARelease/Build/Products/Release/KaosCal.app`, CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`. strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description 통과; get-task-allow와 XCTest plug-in/link 없음.
+- 당시 Phase 7A build-only artifact: `/private/tmp/KaosCalPhase7ARelease/Build/Products/Release/KaosCal.app`, CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`. strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description 통과; get-task-allow와 XCTest plug-in/link 없음.
 - exact Release는 EventKit write 없이 1360×840 onscreen 창을 생성했고 종료 뒤 프로세스가 남지 않았다. 테스트와 bootstrap 전후 direct/sandbox production DB의 mtime·size·SHA-256 및 WAL/SHM 부재는 동일했다.
 - 이 checkpoint는 Exchange fixture를 새로 만들지 않았으므로 실제 비반복 CRUD 증거는 run `20260711-1626-B7D2`에 계속 귀속한다. Calendar.app, all-day, time-zone 변경, recurrence/future split, calendar move 판정은 그대로 pending이다.
+
+## 2026-07-11 Sidebar mini month 후속 checkpoint
+
+- mini month는 EventKit mutation을 만들지 않는 local navigation UI다. 월 화살표는 local browse state만 바꾸고 날짜 선택만 기존 visible-period fetch 경계로 보낸다.
+- 자동 gate: **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 검토 수정 뒤 최종 결과 bundle은 `/private/tmp/KaosCalMiniMonthPostReview.xcresult`다.
+- 최신 build-only artifact: `/private/tmp/KaosCalMiniMonthRelease/Build/Products/Release/KaosCal.app`, CDHash `92e16853c099db014b3f3f2d370d0b57ba44bc90`. strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description 통과; get-task-allow와 XCTest plug-in/link 없음.
+- exact Release가 1482×931 onscreen 창을 만들고 정상 종료 뒤 process 0임을 확인했다. 전체 test와 bootstrap 전후 direct/sandbox production DB의 mtime·size·SHA-256 및 WAL/SHM 부재는 동일했다.
+- 새 Exchange fixture write를 실행하지 않았다. 실제 비반복 CRUD 증거는 계속 run `20260711-1626-B7D2`에 귀속하며 Calendar.app, all-day, time-zone 변경, recurrence/future split, calendar move 판정은 pending이다.
 
 ## 테스트 기록 형식
 

@@ -1217,6 +1217,14 @@ final class AppState: ObservableObject {
         visiblePeriodDidChange()
     }
 
+    func selectMiniMonthDate(_ date: Date) {
+        focusedDate = calendar.startOfDay(for: date)
+        if selectedSection == .tasks || selectedSection == nil {
+            selectedSection = .day
+        }
+        visiblePeriodDidChange()
+    }
+
     func moveFocusedPeriod(direction: Int) {
         let dayCount: Int
         switch selectedSection ?? .week {

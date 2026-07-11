@@ -53,6 +53,23 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - recurrence-fix FinalRelease run `20260711-1626-B7D2`(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서는 `Full calendar access`, EventKit fetch와 재실행 후 refetch, 두 exact-name calendar의 `Exchange`·writable 표시를 직접 확인했다.
 - 이 결과만으로 backend를 Exchange Online이라고 판정하거나 Calendar.app visual round-trip을 통과 처리하지 않는다.
 
+### 1-a. Sidebar mini month
+
+절차:
+1. Sidebar를 최소 폭 210pt로 줄이고 6행 mini month와 calendar 목록을 확인한다.
+2. 시스템의 주 시작 요일, locale과 time zone을 바꿔 다시 확인한다.
+3. 이전/다음 월로 탐색한 뒤 본문 날짜가 그대로인지 확인한다. toolbar Today와 이미 focused인 같은 spillover 날짜로 focused month 복귀를 확인하고, 현재 월과 인접 월 날짜를 각각 선택한다.
+4. Day, Week, Agenda, Tasks와 선택 없는 상태에서 날짜를 선택한다.
+5. keyboard focus/Space·Return과 VoiceOver 날짜 label·selected/today/adjacent value를 확인한다.
+
+기대 결과:
+- 월은 항상 42개의 연속 civil day/6행이며 DST 시작·종료와 윤년·연도 경계에서 누락·중복이 없다.
+- 월 탐색만으로 본문 focused date가 바뀌지 않는다. Today나 동일 날짜 재지정도 local browse를 끝내고 focused month로 복귀한다. 날짜 선택 시 Day/Week/Agenda는 유지되고 Tasks/선택 없음은 Day로 전환한다.
+- 같은 loaded range에서 현재 event가 새 visible period에도 남는 Week/Agenda 선택은 event selection과 fetch count를 유지한다. Day에서 다른 날짜를 고르거나 먼 날짜로 이동해 event가 새 visible period 밖이면 selection을 정리한다. 새 range fetch는 선택 날짜를 포함해 정확히 한 번 실행하며 EventKit create/update/delete는 없다.
+- focused는 fill, today는 ring, 인접 월은 낮은 강조도로 구분되고 색만으로 상태를 전달하지 않는다.
+- 긴 월 제목과 6행이 210pt에서 잘리지 않고 calendar 목록만 별도로 scroll한다.
+- event dot은 완전한 42일 fetch coverage가 없으므로 표시하지 않는다.
+
 ### 2. 권한 거부
 
 절차:
@@ -450,6 +467,16 @@ Phase 7A lifecycle·focus 자동/Release gate:
 - build-only Release `/private/tmp/KaosCalPhase7ARelease/Build/Products/Release/KaosCal.app`, CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
 - exact Release의 1360×840 onscreen 창 bootstrap과 종료 후 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
 - 이 gate에서는 EventKit/Exchange write를 실행하지 않았으며, Screen Recording 권한 부재로 픽셀 캡처는 시각 레이아웃 pass 근거로 사용하지 않음
+
+Mini month 자동/Release gate:
+
+- Sunday/Monday-first, 윤년·연도 경계, New York DST 시작/종료, LA/Tokyo absolute-date 차이와 42개 고유 civil identifier 검증
+- 같은 범위·먼 범위 날짜 선택의 selection/fetch 경계와 provider create/update/delete 0회 검증
+- `MiniMonthView`를 Sidebar 최소 폭 210×240, German locale, Monday-first로 직접 offscreen render해 6행·인접 월·focused/today 상태와 잘림 없음 확인. 전체 `NavigationSplitView` offscreen 결과는 sidebar가 렌더되지 않아 근거에서 제외
+- 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; post-review result bundle `/private/tmp/KaosCalMiniMonthPostReview.xcresult`
+- build-only Release `/private/tmp/KaosCalMiniMonthRelease/Build/Products/Release/KaosCal.app`, CDHash `92e16853c099db014b3f3f2d370d0b57ba44bc90`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
+- exact Release의 1482×931 onscreen 창 bootstrap과 종료 후 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
+- 이 gate에서는 EventKit/Exchange write를 실행하지 않았으며, live Exchange 증거는 run `20260711-1626-B7D2`와 분리
 
 상세 명령·artifact·DB 수치와 실계정 미검증 상태는 구현 로그와 Exchange compatibility 문서에 기록한다.
 

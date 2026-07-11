@@ -529,6 +529,30 @@
   - 이 checkpoint에서는 EventKit/Exchange write를 실행하지 않았다. live 비반복 CRUD 증거는 artifact CDHash `63ded03a9d704976c4ba45340f2748eda9892382`, run `20260711-1626-B7D2`에 계속 귀속한다.
 - 결과: Phase 7A 코드·전체 자동·운영 DB 격리·Release·bootstrap checkpoint를 통과했다. Phase 7B/C의 삭제 판정은 일반 fetch 부재가 아니라 전용 strong lookup과 사용자 재확인을 구현한 뒤에만 연다.
 
+## 2026-07-11 — Sidebar mini month 구현과 Release checkpoint
+
+- 관련 ADR: ADR-002, ADR-005, ADR-007
+- 동작과 결정:
+  - Sidebar 상단에 현재 calendar의 locale·`firstWeekday`·time zone을 따르는 고정 6×7/42일 mini month를 추가했다. DST 구간도 초 단위 증가가 아닌 calendar civil-day 연산을 사용한다.
+  - 월 화살표는 mini month의 local browse state만 바꾼다. 날짜 선택은 Day/Week/Agenda를 유지하고 Tasks 또는 선택 없는 상태에서는 Day로 전환하며, 기존 `visiblePeriodDidChange`의 selection 정리·range fetch 경계를 재사용한다.
+  - focused/today/인접 월을 fill·ring·강조도와 접근성 value로 함께 구분했다. 날짜 label은 요일과 전체 날짜를 포함하고 각 날짜는 안정적인 civil accessibility identifier를 가진다.
+  - 현재 event fetch가 42일 전체를 보장하지 않으므로 불완전 데이터를 `일정 없음`처럼 보이게 할 event dot은 넣지 않았다.
+- 회귀와 시각 검증:
+  - Sunday/Monday-first, 윤년·12월 경계, New York DST의 23/25시간 간격, LA/Tokyo 날짜 차이, 42개 고유 identifier를 검증했다.
+  - 같은 loaded week와 먼 날짜의 selection/fetch 동작, 캐시된 재선택, provider create/update/delete 0회를 검증했다.
+  - `MiniMonthView`를 210×240, German locale, Monday-first로 직접 offscreen render해 6행, 인접 월, focused+today 표시와 잘림 없음을 확인했다. 전체 `NavigationSplitView` offscreen render는 sidebar를 만들지 않아 시각 근거로 사용하지 않았다.
+  - post-review에서 다른 달을 둘러본 뒤 이미 focused인 같은 날짜를 Today 또는 spillover cell로 다시 지정하면 `onChange`가 동일값을 무시해 local browse가 남는 문제를 발견했다. `@Published`의 모든 assignment를 받는 `onReceive`와 순수 `MiniMonthBrowseState` 동기화로 고치고 같은 날짜 signal 회귀를 추가했다.
+  - 렌더 자동 gate는 intrinsic fitting이 210×240 안에 들어오는지와 offscreen bitmap 생성을 함께 검증한다. 테스트용 `NSWindow`에 붙이는 실험은 XCTest process SIGSEGV를 일으켜 제품 실패 근거로 사용하지 않고 제거했으며, 별도로 직접 확인한 210pt bitmap만 시각 근거로 유지했다.
+  - 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. post-review 최종 result bundle은 `/private/tmp/KaosCalMiniMonthPostReview.xcresult`다.
+- Release와 데이터 안전 gate:
+  - artifact: `/private/tmp/KaosCalMiniMonthRelease/Build/Products/Release/KaosCal.app`
+  - CDHash: `92e16853c099db014b3f3f2d370d0b57ba44bc90`
+  - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` ad-hoc Release, hardened runtime, `codesign --verify --deep --strict`: **pass**. entitlement는 app sandbox와 Calendar access만 포함하고 `get-task-allow`는 없으며 XCTest plug-in·link도 없다.
+  - exact artifact 경로의 앱이 onscreen 1482×931 창을 만들고 정상 종료 뒤 process 0임을 확인했다.
+  - direct DB `1783704658|126976`, sandbox DB `1783700481|126976`, 양쪽 SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 WAL/SHM 부재가 전체 test 및 exact Release bootstrap 전후 동일했다.
+  - EventKit/Exchange write를 실행하지 않았다. live 비반복 CRUD 증거는 CDHash `63ded03a9d704976c4ba45340f2748eda9892382`, run `20260711-1626-B7D2`에 계속 귀속한다.
+- 결과: 요청된 Day/Week/Agenda와 함께 사용할 compact 날짜 탐색기를 구현하고 자동·시각·Release·운영 DB 격리 gate를 통과했다. 다음 주요 개발 범위는 Phase 7B/C missing·orphan·relink·linked delete, backup/settings, app icon과 남은 live/distribution gate다.
+
 ## 다음 항목 템플릿
 
 ```markdown

@@ -37,7 +37,7 @@ BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. �
 ## 3-pane 규칙
 
 Sidebar:
-- mini month
+- 고정 6×7 mini month 날짜 탐색기
 - calendar list
 - calendar sets
 - visible filters
@@ -88,6 +88,17 @@ Task Center:
 - 오늘 열은 약한 accent fill, 현재 시각은 red line과 dot으로 표시한다.
 - calendar rail은 EventKit calendar의 실제 sRGB color snapshot을 사용한다. 색을 가져올 수 없을 때만 Exchange 공통 blue 또는 secondary gray를 fallback으로 쓴다.
 - calendar role, 사용자 color override, calendar set은 Phase 8에서 추가한다.
+
+### Mini month 실제 적용값
+
+- Sidebar `List` 위에 고정하고 calendar 목록만 독립적으로 scroll한다.
+- Sidebar 최소 폭 210pt에서 바깥 padding 12pt, 7열 간격 2pt, 날짜 최소 높이 24pt, 요일 header 최소 높이 16pt를 사용한다.
+- 월은 항상 42개 civil day/6행이다. 현재 calendar의 첫 요일 순서, locale과 time zone을 사용하며 DST에서도 calendar day 연산으로 날짜를 만든다.
+- 월 화살표는 본문 날짜를 바꾸지 않고 mini month만 탐색한다. 날짜 선택은 Day/Week/Agenda를 유지하고 Task Center에서는 Day로 이동한다.
+- 다른 월을 둘러보는 중 toolbar Today 또는 이미 focused인 같은 날짜를 다시 선택해도 focused month로 복귀한다.
+- focused date는 accent 원형 fill과 흰 숫자, today는 accent ring, focused+today는 흰 inset ring, 인접 월은 secondary와 낮은 opacity로 표시한다.
+- 모든 날짜와 월 화살표는 `Button`이고 grid는 keyboard focus section이다. 날짜 접근성 label은 요일+전체 날짜, value는 focused/today/adjacent 상태, identifier는 calendar civil key를 쓴다.
+- event dot은 42일 전체 fetch coverage를 보장할 때까지 표시하지 않는다.
 
 ## Event Brief 규칙
 

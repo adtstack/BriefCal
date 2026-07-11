@@ -2,7 +2,7 @@
 
 KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 각 일정의 준비물·메모·후속 작업을 로컬에 보존하는 macOS 앱이다.
 
-현재 상태: **Phase 7A lifecycle·After Review 구현 / Phase 7B~7C orphan·linked delete 및 반복·이동 live gate 대기**. Day/Week/Agenda, Event Brief, Task Center와 Phase 6의 반복·safe-move·change-log·session Undo 위에 occurrence별 종료 시각 기반 `scheduled ↔ completed`, 완료 일정의 After 작업 projection, 전용 `After Review` 목록을 연결했다. 현재 suite는 **145 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**이며, 테스트와 정확한 릴리스 bootstrap 전후에 운영 Context DB가 바뀌지 않았다. 최신 build-only ad-hoc signed Release는 CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`로 strict codesign·hardened runtime·sandbox·Calendar entitlement 검증을 통과했다.
+현재 상태: **Phase 7A lifecycle·After Review와 Sidebar mini month 구현 / Phase 7B~7C orphan·linked delete 및 반복·이동 live gate 대기**. Day/Week/Agenda, 고정 6×7 mini month, Event Brief, Task Center와 Phase 6의 반복·safe-move·change-log·session Undo 위에 occurrence별 종료 시각 기반 `scheduled ↔ completed`, 완료 일정의 After 작업 projection, 전용 `After Review` 목록을 연결했다. 현재 suite는 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**이며, 테스트와 정확한 릴리스 bootstrap 전후에 운영 Context DB가 바뀌지 않았다. 최신 build-only ad-hoc signed Release는 CDHash `92e16853c099db014b3f3f2d370d0b57ba44bc90`로 strict codesign·hardened runtime·sandbox·Calendar entitlement 검증을 통과했다.
 
 2026-07-11 live FinalRelease EventKit run `20260711-1626-B7D2`는 recurrence-fix artifact CDHash `63ded03a9d704976c4ba45340f2748eda9892382`에서 수행했고, 위 최신 CDHash는 EventKit write를 반복하지 않은 후속 build-only checkpoint다. live run에서는 `Full calendar access`, writable Exchange 캘린더 `KAOS-TEST`와 `일정`을 확인했다. `KAOS-TEST`에 만든 비반복 fixture는 Outlook 서버에서 `singleInstance`이고 recurrence가 없었으며, 앱 재실행·refetch 뒤에도 반복 badge나 scope 선택 없이 단일 일정으로 수정·삭제됐다. 수정 뒤에도 서버 recurrence는 없었고, 최종 source/destination marker residue는 `0/0`이다. 이 과정에서 EventKit이 비반복 일정에도 `occurrenceDate == startDate`를 줄 수 있음을 발견해 반복 소속 판정을 `hasRecurrenceRules || isDetached`로 고정하고 비반복 `occurrenceDate`는 `nil`로 정규화했다. 이전 Outlook connector run `20260711-1512-7C4E`의 독립 writable fixture·제한된 반복·시간대·cleanup 결과도 역사적 checkpoint로 유지한다. 다만 Calendar.app 시각 round-trip, live all-day, 반복 `이번 일정`/`이번 이후`, 실제 calendar move는 아직 검증하지 않았고, 이 결과만으로 Exchange Online 전체 지원을 선언하지 않는다. linked 삭제·orphan 처리는 Phase 7B~7C 범위이고, 참석자가 있는 meeting과 초대 원본 편집은 v1에서 Calendar.app 전용이다.
 
@@ -10,7 +10,7 @@ KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 
 
 - macOS 14 이상
 - macOS Calendar에 구성된 Exchange 캘린더를 우선 검증 대상으로 하는 EventKit 앱
-- Day, Week, Agenda 캘린더와 Task Center
+- Day, Week, Agenda 캘린더, Sidebar mini month와 Task Center
 - 종일 일정, 시간대, 반복 일정의 안전한 표시·편집
 - Event Brief와 KaosCal 작업은 로컬 SQLite에만 저장
 

@@ -200,20 +200,15 @@ private struct SidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(
-                    CalendarEventDateFormatting.monthAndYear(
-                        appState.focusedDate,
-                        calendar: appState.calendar
-                    )
-                )
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 8) {
+                MiniMonthView(appState: appState)
+
                 Text(appState.calendarAuthorizationState.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(16)
+            .padding(12)
 
             Divider()
 
@@ -276,6 +271,341 @@ private struct SidebarView: View {
                 appState.select(section)
             }
         )
+    }
+}
+
+struct MiniMonthDay: Identifiable, Equatable {
+    let date: Date
+    let isInDisplayedMonth: Bool
+
+    var id: Date { date }
+}
+
+struct MiniMonthGrid: Equatable {
+    let monthStart: Date
+    let weekdayOrdinals: [Int]
+    let days: [MiniMonthDay]
+
+    init(containing date: Date, calendar: Calendar) {
+        let monthStart = Self.monthStart(containing: date, calendar: calendar)
+        self.monthStart = monthStart
+
+        let firstSymbolIndex = Self.normalizedWeekdayIndex(
+            calendar.firstWeekday
+        )
+        weekdayOrdinals = (0..<7).map {
+            ((firstSymbolIndex + $0) % 7) + 1
+        }
+
+        let monthStartWeekday = calendar.component(
+            .weekday,
+            from: monthStart
+        )
+        let leadingDayCount = (
+            monthStartWeekday - calendar.firstWeekday + 7
+        ) % 7
+        let gridStart = calendar.date(
+            byAdding: .day,
+            value: -leadingDayCount,
+            to: monthStart
+        ) ?? monthStart
+
+        days = (0..<42).map { offset in
+            let day = calendar.date(
+                byAdding: .day,
+                value: offset,
+                to: gridStart
+            ) ?? gridStart
+            return MiniMonthDay(
+                date: day,
+                isInDisplayedMonth: calendar.isDate(
+                    day,
+                    equalTo: monthStart,
+                    toGranularity: .month
+                )
+            )
+        }
+    }
+
+    static func monthStart(
+        containing date: Date,
+        calendar: Calendar
+    ) -> Date {
+        calendar.dateInterval(of: .month, for: date)?.start
+            ?? calendar.startOfDay(for: date)
+    }
+
+    static func shiftedMonthStart(
+        from monthStart: Date,
+        by value: Int,
+        calendar: Calendar
+    ) -> Date {
+        let shifted = calendar.date(
+            byAdding: .month,
+            value: value,
+            to: monthStart
+        ) ?? monthStart
+        return Self.monthStart(containing: shifted, calendar: calendar)
+    }
+
+    static func dayIdentifier(
+        for date: Date,
+        calendar: Calendar
+    ) -> String {
+        let components = calendar.dateComponents(
+            [.year, .month, .day],
+            from: date
+        )
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
+    }
+
+    private static func normalizedWeekdayIndex(_ weekday: Int) -> Int {
+        ((weekday - 1) % 7 + 7) % 7
+    }
+}
+
+struct MiniMonthBrowseState: Equatable {
+    private(set) var displayedMonthStart: Date
+
+    init(focusedDate: Date, calendar: Calendar) {
+        displayedMonthStart = MiniMonthGrid.monthStart(
+            containing: focusedDate,
+            calendar: calendar
+        )
+    }
+
+    mutating func shift(by value: Int, calendar: Calendar) {
+        displayedMonthStart = MiniMonthGrid.shiftedMonthStart(
+            from: displayedMonthStart,
+            by: value,
+            calendar: calendar
+        )
+    }
+
+    mutating func synchronize(
+        to focusedDate: Date,
+        calendar: Calendar
+    ) {
+        displayedMonthStart = MiniMonthGrid.monthStart(
+            containing: focusedDate,
+            calendar: calendar
+        )
+    }
+}
+
+struct MiniMonthView: View {
+    @ObservedObject var appState: AppState
+    @State private var browseState: MiniMonthBrowseState
+
+    init(appState: AppState) {
+        self.appState = appState
+        _browseState = State(
+            initialValue: MiniMonthBrowseState(
+                focusedDate: appState.focusedDate,
+                calendar: appState.calendar
+            )
+        )
+    }
+
+    var body: some View {
+        VStack(spacing: 7) {
+            HStack(spacing: 6) {
+                monthButton(
+                    title: "Previous month",
+                    systemImage: "chevron.left",
+                    direction: -1
+                )
+
+                Spacer(minLength: 2)
+
+                Text(
+                    CalendarEventDateFormatting.monthAndYear(
+                        grid.monthStart,
+                        calendar: appState.calendar
+                    )
+                )
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .accessibilityAddTraits(.isHeader)
+
+                Spacer(minLength: 2)
+
+                monthButton(
+                    title: "Next month",
+                    systemImage: "chevron.right",
+                    direction: 1
+                )
+            }
+
+            LazyVGrid(columns: columns, spacing: 2) {
+                ForEach(
+                    grid.weekdayOrdinals,
+                    id: \.self
+                ) { weekdayOrdinal in
+                    Text(weekdaySymbol(for: weekdayOrdinal))
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, minHeight: 16)
+                        .accessibilityHidden(true)
+                }
+
+                ForEach(grid.days) { day in
+                    dayButton(day)
+                }
+            }
+            .focusSection()
+        }
+        .onReceive(appState.$focusedDate) { focusedDate in
+            browseState.synchronize(
+                to: focusedDate,
+                calendar: appState.calendar
+            )
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Mini month")
+        .accessibilityIdentifier("sidebar.miniMonth")
+    }
+
+    private var grid: MiniMonthGrid {
+        MiniMonthGrid(
+            containing: browseState.displayedMonthStart,
+            calendar: appState.calendar
+        )
+    }
+
+    private var columns: [GridItem] {
+        Array(
+            repeating: GridItem(.flexible(minimum: 20), spacing: 2),
+            count: 7
+        )
+    }
+
+    private func monthButton(
+        title: String,
+        systemImage: String,
+        direction: Int
+    ) -> some View {
+        Button {
+            browseState.shift(
+                by: direction,
+                calendar: appState.calendar
+            )
+        } label: {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(title)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(
+            direction < 0
+                ? "miniMonth.previousMonth"
+                : "miniMonth.nextMonth"
+        )
+    }
+
+    private func dayButton(_ day: MiniMonthDay) -> some View {
+        let isFocused = appState.calendar.isDate(
+            day.date,
+            inSameDayAs: appState.focusedDate
+        )
+        let isToday = appState.calendar.isDate(
+            day.date,
+            inSameDayAs: appState.taskReferenceDate
+        )
+
+        return Button {
+            appState.selectMiniMonthDate(day.date)
+        } label: {
+            ZStack {
+                if isFocused {
+                    Circle()
+                        .fill(KaosCalTheme.accent)
+                }
+
+                if isToday {
+                    Circle()
+                        .stroke(
+                            isFocused ? Color.white : KaosCalTheme.accent,
+                            lineWidth: 1.25
+                        )
+                        .padding(1)
+                }
+
+                Text(
+                    CalendarEventDateFormatting.dayNumber(
+                        day.date,
+                        calendar: appState.calendar
+                    )
+                )
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(
+                    isFocused
+                        ? Color.white
+                        : day.isInDisplayedMonth
+                            ? Color.primary
+                            : Color.secondary
+                )
+            }
+            .frame(maxWidth: .infinity, minHeight: 24)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .opacity(day.isInDisplayedMonth ? 1 : 0.62)
+        .accessibilityLabel(
+            "\(CalendarEventDateFormatting.weekday(day.date, calendar: appState.calendar)), "
+                + CalendarEventDateFormatting.longDate(
+                    day.date,
+                    calendar: appState.calendar
+                )
+        )
+        .accessibilityValue(
+            accessibilityValue(
+                day: day,
+                isFocused: isFocused,
+                isToday: isToday
+            )
+        )
+        .accessibilityHint(dayAccessibilityHint)
+        .accessibilityAddTraits(isFocused ? .isSelected : [])
+        .accessibilityIdentifier(
+            "miniMonth.day.\(MiniMonthGrid.dayIdentifier(for: day.date, calendar: appState.calendar))"
+        )
+    }
+
+    private var dayAccessibilityHint: String {
+        if appState.selectedSection == .tasks
+            || appState.selectedSection == nil {
+            return "Show Day view for this date"
+        }
+        return "Show this date in \((appState.selectedSection ?? .week).title)"
+    }
+
+    private func weekdaySymbol(for weekdayOrdinal: Int) -> String {
+        let symbols = appState.calendar.veryShortStandaloneWeekdaySymbols
+        let index = weekdayOrdinal - 1
+        guard symbols.indices.contains(index) else { return "" }
+        return symbols[index]
+    }
+
+    private func accessibilityValue(
+        day: MiniMonthDay,
+        isFocused: Bool,
+        isToday: Bool
+    ) -> String {
+        var values: [String] = []
+        if isFocused { values.append("Focused date") }
+        if isToday { values.append("Today") }
+        if !day.isInDisplayedMonth { values.append("Adjacent month") }
+        return values.joined(separator: ", ")
     }
 }
 

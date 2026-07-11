@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import KaosCal
 
@@ -122,6 +124,128 @@ final class AppStateTests: XCTestCase {
             state.focusedDate,
             calendar.date(byAdding: .day, value: 1, to: afterAgenda)
         )
+    }
+
+    func testMiniMonthSelectionNormalizesDatePreservesViewAndResyncsBrowse() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Seoul")!
+        calendar.locale = Locale(identifier: "ko_KR")
+        let baseline = calendar.date(
+            from: DateComponents(year: 2026, month: 7, day: 11, hour: 9)
+        )!
+        let selectedDate = calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 19, hour: 17)
+        )!
+        let state = AppState(
+            calendar: calendar,
+            now: { baseline },
+            calendarProvider: FakeCalendarProvider()
+        )
+
+        for section in [WorkspaceSection.day, .week, .agenda] {
+            state.select(section)
+            state.selectMiniMonthDate(selectedDate)
+
+            XCTAssertEqual(state.selectedSection, section)
+            XCTAssertEqual(
+                state.focusedDate,
+                calendar.startOfDay(for: selectedDate)
+            )
+        }
+
+        var browseState = MiniMonthBrowseState(
+            focusedDate: state.focusedDate,
+            calendar: calendar
+        )
+        browseState.shift(by: 1, calendar: calendar)
+        XCTAssertEqual(
+            MiniMonthGrid.dayIdentifier(
+                for: browseState.displayedMonthStart,
+                calendar: calendar
+            ),
+            "2026-09-01"
+        )
+
+        // @Published emits for an assignment even when the Date is equal.
+        // MiniMonthView forwards every emission here via onReceive so Today
+        // and same-date spillover selection both leave local month browsing.
+        browseState.synchronize(
+            to: state.focusedDate,
+            calendar: calendar
+        )
+        XCTAssertEqual(
+            MiniMonthGrid.dayIdentifier(
+                for: browseState.displayedMonthStart,
+                calendar: calendar
+            ),
+            "2026-08-01"
+        )
+    }
+
+    func testMiniMonthSelectionLeavesTasksOrNoSelectionForDayView() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let baseline = Date(timeIntervalSince1970: 1_700_000_000)
+        let selectedDate = calendar.date(
+            from: DateComponents(year: 2026, month: 8, day: 19, hour: 17)
+        )!
+        let state = AppState(
+            calendar: calendar,
+            now: { baseline },
+            calendarProvider: FakeCalendarProvider()
+        )
+
+        state.select(.tasks)
+        state.selectMiniMonthDate(selectedDate)
+        XCTAssertEqual(state.selectedSection, .day)
+
+        state.selectedSection = nil
+        state.selectMiniMonthDate(selectedDate)
+        XCTAssertEqual(state.selectedSection, .day)
+    }
+
+    func testMiniMonthIntrinsicSizeFitsAndProducesOffscreenBitmap() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.locale = Locale(identifier: "de_DE")
+        calendar.firstWeekday = 2
+        let baseline = calendar.date(
+            from: DateComponents(year: 2026, month: 9, day: 17, hour: 9)
+        )!
+        let state = AppState(
+            calendar: calendar,
+            now: { baseline },
+            calendarProvider: FakeCalendarProvider()
+        )
+        let hostingView = NSHostingView(rootView:
+            MiniMonthView(appState: state)
+                .padding(12)
+                .background(Color(nsColor: .windowBackgroundColor))
+        )
+        let fittingSize = hostingView.fittingSize
+        XCTAssertLessThanOrEqual(fittingSize.width, 210)
+        XCTAssertLessThanOrEqual(fittingSize.height, 240)
+
+        hostingView.frame = NSRect(x: 0, y: 0, width: 210, height: 240)
+        hostingView.wantsLayer = true
+        hostingView.layoutSubtreeIfNeeded()
+
+        let representation = try XCTUnwrap(
+            hostingView.bitmapImageRepForCachingDisplay(
+                in: hostingView.bounds
+            )
+        )
+        hostingView.cacheDisplay(
+            in: hostingView.bounds,
+            to: representation
+        )
+        let pngData = try XCTUnwrap(
+            representation.representation(using: .png, properties: [:])
+        )
+
+        XCTAssertGreaterThanOrEqual(representation.pixelsWide, 210)
+        XCTAssertGreaterThanOrEqual(representation.pixelsHigh, 240)
+        XCTAssertGreaterThan(pngData.count, 5_000)
     }
 }
 

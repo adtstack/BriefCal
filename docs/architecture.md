@@ -247,6 +247,7 @@ EventKitProvider
 - pending 범위 조회는 다음 navigation 전에 취소해 오래된 결과가 현재 화면을 덮지 않게 한다. `EKEventStoreChanged`는 마지막 loaded interval을 250ms 병합 재조회한다.
 - `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
 - `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
+- Sidebar의 `MiniMonthGrid`는 Foundation calendar로 month start, first-weekday offset과 42개 civil day만 계산한다. SwiftUI `MiniMonthView`는 월 탐색을 local state로 유지하고 날짜 선택만 `AppState.selectMiniMonthDate`로 보내 기존 selection 정리·range fetch 경계를 재사용한다. incomplete fetch를 일정 없음으로 오인하지 않도록 event dot은 만들지 않는다.
 - UI용 `DisplayEventIdentity`는 SwiftUI 선택 안정성을 위한 값이다. all-day/floating 반복은 local occurrence anchor를 써 시스템 시간대 변경에도 같은 civil occurrence ID를 유지한다. 영속 resolver와 같은 ID 또는 같은 우선순위를 보장하지 않는다.
 
 세부 배치 결정은 [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md)을 따른다.

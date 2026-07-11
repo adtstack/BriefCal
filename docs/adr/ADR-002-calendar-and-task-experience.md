@@ -20,3 +20,12 @@ KaosCal에는 모든 캘린더 관점과 눈에 보이는 할 일 목록이 필�
 - 오른쪽 Event Brief는 선택된 일정의 맥락을 담당한다.
 - Task Center는 오늘·예정·완료를 보여 주고, event-linked task에는 원본 일정의 시간과 source를 표시한다.
 - Month는 mini month로 시작하며, 전체 Month grid는 v1의 필수 화면이 아니다.
+
+## 2026-07-11 mini month 구현 확장
+
+- mini month는 Sidebar 상단의 고정 날짜 탐색기다. 전체 Month 화면, 이벤트 제목 배치, drag 생성·이동과 범위 선택을 제공하지 않는다.
+- 현재 calendar의 `firstWeekday`, locale과 time zone을 사용하고 42개의 연속 civil day를 6×7로 고정해 월별 Sidebar 높이가 흔들리지 않게 한다. 날짜 증가는 86,400초가 아니라 calendar day 연산을 사용한다.
+- 이전/다음 월 버튼은 mini month만 탐색한다. 날짜를 선택하면 display calendar의 시작 시각으로 정규화하고 Day/Week/Agenda는 현재 view를 유지한다. Task Center 또는 선택 없는 상태에서는 이동 결과가 보이도록 Day로 전환한다.
+- toolbar Today와 날짜 선택처럼 focused date를 명시하는 action은 값이 기존 날짜와 같아도 local 월 탐색을 끝내고 그 날짜가 속한 월로 mini month를 다시 맞춘다.
+- focused date는 accent fill, today는 ring, 인접 월 날짜는 낮은 강조도로 구분한다. 요일 header는 현재 주 시작 순서로 회전하고 날짜 button의 VoiceOver label에는 요일과 전체 날짜를 포함한다.
+- 이벤트 dot은 현재 fetch가 42일 전체를 보장하지 않는 상태에서 거짓 `일정 없음` 인상을 줄 수 있으므로 넣지 않는다. 완전한 mini-month fetch coverage를 설계한 뒤 별도 확장한다.

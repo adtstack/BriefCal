@@ -422,6 +422,48 @@ final class CalendarEventLayoutTests: XCTestCase {
         XCTAssertGreaterThan(interval.end, date(2027, 7, 9))
     }
 
+    func testMiniMonthSelectionUsesVisiblePeriodPipelineWithoutWrites() async {
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        let selected = makeEvent(
+            id: "mini-month-selected",
+            start: date(2026, 7, 8, 10),
+            end: date(2026, 7, 8, 11)
+        )
+        provider.events = [selected]
+        let state = AppState(
+            calendar: testCalendar,
+            now: { self.date(2026, 7, 8, 9) },
+            calendarProvider: provider
+        )
+        await state.loadCalendarStatus()
+        state.selectEvent(selected.id)
+
+        state.selectMiniMonthDate(date(2026, 7, 9, 15))
+        for _ in 0..<20 { await Task.yield() }
+
+        XCTAssertEqual(state.selectedEventID, selected.id)
+        XCTAssertEqual(provider.fetchCallCount, 1)
+
+        let farDate = date(2027, 7, 8, 15)
+        state.selectMiniMonthDate(farDate)
+        for _ in 0..<100 where provider.fetchCallCount < 2 {
+            await Task.yield()
+        }
+
+        XCTAssertNil(state.selectedEventID)
+        XCTAssertEqual(provider.fetchCallCount, 2)
+        let interval = try! XCTUnwrap(provider.lastFetchInterval)
+        XCTAssertLessThanOrEqual(interval.start, farDate)
+        XCTAssertGreaterThan(interval.end, farDate)
+
+        state.selectMiniMonthDate(date(2027, 7, 9, 15))
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(provider.fetchCallCount, 2)
+        XCTAssertEqual(provider.createCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
     func testReturningToCachedPeriodCancelsPendingFarRangeLoad() async {
         let provider = FakeCalendarProvider(authorizationState: .fullAccess)
         provider.events = [makeEvent(
@@ -716,5 +758,198 @@ final class CalendarEventLayoutTests: XCTestCase {
             hasAttendees: false,
             originalNotes: nil
         )
+    }
+}
+
+final class MiniMonthGridTests: XCTestCase {
+    func testAugustGridHonorsFirstWeekdayAndUsesSixRows() {
+        let sundayCalendar = makeCalendar(firstWeekday: 1)
+        let mondayCalendar = makeCalendar(firstWeekday: 2)
+        let sundayGrid = MiniMonthGrid(
+            containing: date(2026, 8, 15, calendar: sundayCalendar),
+            calendar: sundayCalendar
+        )
+        let mondayGrid = MiniMonthGrid(
+            containing: date(2026, 8, 15, calendar: mondayCalendar),
+            calendar: mondayCalendar
+        )
+
+        XCTAssertEqual(sundayGrid.days.count, 42)
+        XCTAssertEqual(mondayGrid.days.count, 42)
+        XCTAssertEqual(Set(sundayGrid.days.map(\.date)).count, 42)
+        XCTAssertEqual(Set(mondayGrid.days.map(\.date)).count, 42)
+        XCTAssertEqual(sundayGrid.days.filter(\.isInDisplayedMonth).count, 31)
+        XCTAssertEqual(mondayGrid.days.filter(\.isInDisplayedMonth).count, 31)
+        XCTAssertEqual(dayKey(sundayGrid.days.first!.date, calendar: sundayCalendar), "2026-07-26")
+        XCTAssertEqual(dayKey(sundayGrid.days.last!.date, calendar: sundayCalendar), "2026-09-05")
+        XCTAssertEqual(dayKey(mondayGrid.days.first!.date, calendar: mondayCalendar), "2026-07-27")
+        XCTAssertEqual(dayKey(mondayGrid.days.last!.date, calendar: mondayCalendar), "2026-09-06")
+        XCTAssertEqual(sundayGrid.weekdayOrdinals, [1, 2, 3, 4, 5, 6, 7])
+        XCTAssertEqual(mondayGrid.weekdayOrdinals, [2, 3, 4, 5, 6, 7, 1])
+    }
+
+    func testLeapMonthAndYearBoundaryUseCalendarMonthIdentity() {
+        let calendar = makeCalendar(firstWeekday: 2)
+        let leapGrid = MiniMonthGrid(
+            containing: date(2024, 2, 12, calendar: calendar),
+            calendar: calendar
+        )
+
+        XCTAssertEqual(leapGrid.days.filter(\.isInDisplayedMonth).count, 29)
+        XCTAssertEqual(dayKey(leapGrid.days.first!.date, calendar: calendar), "2024-01-29")
+        XCTAssertEqual(dayKey(leapGrid.days.last!.date, calendar: calendar), "2024-03-10")
+
+        let decemberStart = MiniMonthGrid.monthStart(
+            containing: date(2026, 12, 31, calendar: calendar),
+            calendar: calendar
+        )
+        let januaryStart = MiniMonthGrid.shiftedMonthStart(
+            from: decemberStart,
+            by: 1,
+            calendar: calendar
+        )
+        XCTAssertEqual(dayKey(januaryStart, calendar: calendar), "2027-01-01")
+
+        let januaryGrid = MiniMonthGrid(
+            containing: januaryStart,
+            calendar: calendar
+        )
+        XCTAssertEqual(januaryGrid.days.filter(\.isInDisplayedMonth).count, 31)
+    }
+
+    func testDSTMonthsContainConsecutiveCivilDays() {
+        let calendar = makeCalendar(
+            timeZoneIdentifier: "America/New_York",
+            firstWeekday: 1
+        )
+        let march = MiniMonthGrid(
+            containing: date(2026, 3, 15, calendar: calendar),
+            calendar: calendar
+        )
+        let november = MiniMonthGrid(
+            containing: date(2026, 11, 15, calendar: calendar),
+            calendar: calendar
+        )
+
+        assertCivilSequence(march.days.map(\.date), calendar: calendar)
+        assertCivilSequence(november.days.map(\.date), calendar: calendar)
+
+        let march8 = try! XCTUnwrap(
+            march.days.first { dayKey($0.date, calendar: calendar) == "2026-03-08" }
+        ).date
+        let march9 = try! XCTUnwrap(
+            march.days.first { dayKey($0.date, calendar: calendar) == "2026-03-09" }
+        ).date
+        XCTAssertEqual(march9.timeIntervalSince(march8), 23 * 60 * 60)
+
+        let november1 = try! XCTUnwrap(
+            november.days.first { dayKey($0.date, calendar: calendar) == "2026-11-01" }
+        ).date
+        let november2 = try! XCTUnwrap(
+            november.days.first { dayKey($0.date, calendar: calendar) == "2026-11-02" }
+        ).date
+        XCTAssertEqual(november2.timeIntervalSince(november1), 25 * 60 * 60)
+    }
+
+    func testContainingMonthUsesInjectedCalendarTimeZone() {
+        let absoluteDate = Date(timeIntervalSince1970: 1_772_325_000)
+        let losAngeles = makeCalendar(
+            timeZoneIdentifier: "America/Los_Angeles",
+            firstWeekday: 1
+        )
+        let tokyo = makeCalendar(
+            timeZoneIdentifier: "Asia/Tokyo",
+            firstWeekday: 1
+        )
+
+        let losAngelesGrid = MiniMonthGrid(
+            containing: absoluteDate,
+            calendar: losAngeles
+        )
+        let tokyoGrid = MiniMonthGrid(
+            containing: absoluteDate,
+            calendar: tokyo
+        )
+
+        XCTAssertEqual(dayKey(losAngelesGrid.monthStart, calendar: losAngeles), "2026-02-01")
+        XCTAssertEqual(dayKey(tokyoGrid.monthStart, calendar: tokyo), "2026-03-01")
+    }
+
+    func testCivilIdentifiersStayUniqueAcrossSpilloverCells() {
+        let calendar = makeCalendar(firstWeekday: 2)
+        let grid = MiniMonthGrid(
+            containing: date(2026, 8, 15, calendar: calendar),
+            calendar: calendar
+        )
+        let identifiers = grid.days.map {
+            MiniMonthGrid.dayIdentifier(for: $0.date, calendar: calendar)
+        }
+
+        XCTAssertEqual(Set(identifiers).count, 42)
+        XCTAssertEqual(identifiers.first, "2026-07-27")
+        XCTAssertEqual(identifiers.last, "2026-09-06")
+        XCTAssertTrue(identifiers.allSatisfy { $0.split(separator: "-").count == 3 })
+    }
+
+    private func makeCalendar(
+        timeZoneIdentifier: String = "UTC",
+        firstWeekday: Int
+    ) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timeZoneIdentifier)!
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.firstWeekday = firstWeekday
+        return calendar
+    }
+
+    private func date(
+        _ year: Int,
+        _ month: Int,
+        _ day: Int,
+        calendar: Calendar
+    ) -> Date {
+        calendar.date(
+            from: DateComponents(
+                year: year,
+                month: month,
+                day: day,
+                hour: 12
+            )
+        )!
+    }
+
+    private func dayKey(_ date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents(
+            [.year, .month, .day],
+            from: date
+        )
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year!,
+            components.month!,
+            components.day!
+        )
+    }
+
+    private func assertCivilSequence(
+        _ dates: [Date],
+        calendar: Calendar,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for pair in zip(dates, dates.dropFirst()) {
+            XCTAssertEqual(
+                calendar.date(byAdding: .day, value: 1, to: pair.0),
+                pair.1,
+                file: file,
+                line: line
+            )
+            XCTAssertEqual(
+                calendar.component(.hour, from: pair.1),
+                0,
+                file: file,
+                line: line
+            )
+        }
     }
 }
