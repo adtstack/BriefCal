@@ -274,7 +274,7 @@ private struct RecoveryBriefSection: View {
                                 Text(brief.context.titleSnapshot)
                                     .font(.body.weight(.medium))
                                 Text(
-                                    recoveryStatus(brief.link.linkStatus)
+                                    recoveryStatus(brief)
                                         + " · \(brief.tasks.count) tasks"
                                         + (brief.context.notes.isEmpty ? "" : " · Notes")
                                 )
@@ -307,8 +307,13 @@ private struct RecoveryBriefSection: View {
         }
     }
 
-    private func recoveryStatus(_ status: EventLinkStatus) -> String {
-        switch status {
+    private func recoveryStatus(_ brief: EventBriefSnapshot) -> String {
+        if brief.hasRecordedOriginalDeletion,
+           brief.context.lifecycleStatus == .cancelled,
+           brief.link.linkStatus == .orphaned {
+            return "Original deleted · Local Brief kept"
+        }
+        return switch brief.link.linkStatus {
         case .active: "Linked"
         case .missing: "Original not found yet"
         case .orphaned: "Local orphan"
@@ -562,7 +567,12 @@ private struct TaskCenterRow: View {
     }
 
     private var eventLinkPrefix: String {
-        switch item.eventLinkStatus {
+        if item.wasOriginalDeletedByKaosCal,
+           item.eventLifecycleStatus == .cancelled,
+           item.eventLinkStatus == .orphaned {
+            return "Deleted original · "
+        }
+        return switch item.eventLinkStatus {
         case .missing: "Missing · "
         case .orphaned: "Orphan · "
         case .active, .none: ""
@@ -570,7 +580,12 @@ private struct TaskCenterRow: View {
     }
 
     private var eventSourceHelp: String {
-        switch item.eventLinkStatus {
+        if item.wasOriginalDeletedByKaosCal,
+           item.eventLifecycleStatus == .cancelled,
+           item.eventLinkStatus == .orphaned {
+            return "Review the kept local Brief for the deleted original"
+        }
+        return switch item.eventLinkStatus {
         case .missing: "Review the missing original event"
         case .orphaned: "Review the local orphan Event Brief"
         case .active, .none: "Open original event"

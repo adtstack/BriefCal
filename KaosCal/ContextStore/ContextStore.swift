@@ -12,6 +12,12 @@ struct LinkedEventLookupTarget: Equatable {
     let query: CalendarEventLookupQuery
 }
 
+struct LinkedOriginalDeletionPreparation: Equatable {
+    let brief: EventBriefSnapshot
+    let impact: EventMutationImpact
+    let changeSnapshot: EventChangeSnapshot
+}
+
 enum EventChangeLogError: Error, Equatable {
     case missingChange(String)
     case changeContextMismatch(
@@ -317,7 +323,7 @@ final class ContextStore {
             }
 
             let before = try EventChangeSnapshot(link: current.link)
-            var relinked = try eventContexts.relink(
+            _ = try eventContexts.relink(
                 contextID: contextID,
                 to: event,
                 at: date,
@@ -329,13 +335,6 @@ final class ContextStore {
                 context.lifecycleStatus = .cancelled
                 context.updatedAt = date
                 try context.update(db)
-                guard let refreshed = try eventContexts.fetchBrief(
-                    contextID: contextID,
-                    in: db
-                ) else {
-                    throw ContextStoreError.missingContext(contextID)
-                }
-                relinked = refreshed
             }
             let after = try EventChangeSnapshot(event: event)
             try db.execute(
@@ -358,6 +357,12 @@ final class ContextStore {
                 createdAt: date
             )
             try record.insert(db)
+            guard let relinked = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
             return relinked
         }
     }
@@ -449,6 +454,141 @@ final class ContextStore {
                     in: db
                 )
             )
+        }
+    }
+
+    func prepareLinkedOriginalDeletion(
+        contextID: String,
+        recentHistoryLimit: Int = 5
+    ) throws -> LinkedOriginalDeletionPreparation {
+        try database.read { db in
+            guard let brief = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            guard brief.link.linkStatus == .active else {
+                throw ContextStoreError.invalidEventLinkTransition
+            }
+            let trimmedNotes = brief.context.notes.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            )
+            let taskSections = EventTaskSection.allCases.map { section in
+                let tasks = brief.tasks.filter { $0.section == section }
+                return EventMutationTaskSummary(
+                    section: section,
+                    count: tasks.count,
+                    titles: tasks.map(\.title)
+                )
+            }
+            let impact = EventMutationImpact(
+                contextID: contextID,
+                hasNotes: !trimmedNotes.isEmpty,
+                notesCharacterCount: trimmedNotes.count,
+                taskCount: brief.tasks.count,
+                taskSections: taskSections,
+                recentHistory: try Self.fetchChangeHistory(
+                    contextID: contextID,
+                    limit: recentHistoryLimit,
+                    in: db
+                )
+            )
+            return LinkedOriginalDeletionPreparation(
+                brief: brief,
+                impact: impact,
+                changeSnapshot: try EventChangeSnapshot(link: brief.link)
+            )
+        }
+    }
+
+    @discardableResult
+    func validateLinkedOriginalDeletion(
+        contextID: String,
+        expectedLink: EventLink,
+        expectedSnapshot: EventChangeSnapshot
+    ) throws -> EventBriefSnapshot {
+        try database.read { db in
+            guard let brief = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            guard brief.link.linkStatus == .active,
+                  brief.link == expectedLink,
+                  try EventChangeSnapshot(link: brief.link)
+                    == expectedSnapshot else {
+                throw ContextStoreError.invalidEventLinkTransition
+            }
+            return brief
+        }
+    }
+
+    @discardableResult
+    func finalizeLinkedOriginalDeletion(
+        contextID: String,
+        expectedLink: EventLink,
+        expectedSnapshot: EventChangeSnapshot,
+        scope: EventChangeScope
+    ) throws -> EventBriefSnapshot {
+        try database.write { db in
+            guard let current = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            let requiredScope: EventChangeScope = current.link.isRecurring
+                ? .thisEvent
+                : .single
+            guard current.link.linkStatus == .active,
+                  current.link == expectedLink,
+                  scope == requiredScope,
+                  try EventChangeSnapshot(link: current.link)
+                    == expectedSnapshot else {
+                throw ContextStoreError.invalidEventLinkTransition
+            }
+
+            let timestamp = now()
+            var context = current.context
+            context.lifecycleStatus = .cancelled
+            context.updatedAt = timestamp
+            try context.update(db)
+
+            var link = current.link
+            link.linkStatus = .orphaned
+            link.updatedAt = timestamp
+            try link.update(db)
+
+            try db.execute(
+                sql: """
+                    UPDATE event_change_log
+                    SET undo_state = 'superseded'
+                    WHERE context_id = ? AND undo_state = 'available'
+                    """,
+                arguments: [contextID]
+            )
+            let record = try makeChangeRecord(
+                contextID: contextID,
+                changeType: .cancelled,
+                scope: scope,
+                before: expectedSnapshot,
+                after: expectedSnapshot,
+                undoState: .unavailable,
+                undoneAt: nil,
+                undoOfChangeID: nil,
+                createdAt: timestamp
+            )
+            try record.insert(db)
+
+            guard let result = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            return result
         }
     }
 

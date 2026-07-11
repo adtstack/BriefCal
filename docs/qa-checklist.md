@@ -129,16 +129,23 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 제목만 바꿨을 때 structured location 등 editor 밖 metadata를 불필요하게 지우지 않는다.
 - linked 일정의 성공한 원본 변경은 receipt rebind와 함께 change log에 기록되고, 실패·취소·no-op에는 기록되지 않는다.
 
-### 6. linked calendar 이동과 삭제 차단
+### 6. linked calendar 이동과 원본 삭제 review
 
 절차:
 1. Event Brief가 있는 일정을 다른 writable calendar로 옮기려고 한다.
-2. 같은 editor에서 원본 삭제 control을 확인한다.
+2. 같은 editor에서 원본 삭제를 선택하고 첫 alert의 `Review Deletion Impact`를 연다.
+3. 원본 title/date/calendar/scope와 보존될 notes, Before/During/After task 수·제목, 최근 history를 확인한다.
+4. Back/Cancel과 별도 fixture의 `Delete Original & Keep Brief`를 각각 실행한다.
 
 기대 결과:
 - calendar 이동은 impact review를 열고, Cancel 전에는 EventKit update·local rebind·change log가 없다.
 - Confirm하면 기존 context_id·notes·tasks를 유지한 채 target calendar receipt로 rebind하고 change log를 append한다.
-- linked delete만 Phase 7C orphan review 이유와 함께 계속 잠긴다. local Brief가 없는 지원 일정의 이동·삭제는 허용된다.
+- linked delete의 첫 alert, review와 Back은 provider/local write 0회다. final destructive Confirm만 EventKit delete를 호출한다.
+- nonrecurring은 `single`, recurring은 명시적 `thisEvent`만 가능하며 linked `futureEvents`, attendee/invitation과 read-only 원본은 provider 전에 차단된다.
+- successful receipt 뒤 context는 cancelled, link는 orphaned이고 같은 context_id·notes/tasks·saved link snapshot이 남는다. unavailable `cancelled` log의 before/after는 같은 saved-link payload, originalNotes는 nil/unavailable, Undo는 없다.
+- Task Center와 recovery sheet는 상태쌍에 더해 current-link-generation KaosCal deletion log가 있을 때만 `Original deleted · Local Brief kept`를 표시한다. 이후 `(created_at, rowid)`상 더 늦은 relink는 과거 deletion provenance를 무효화하고 Relink/local Brief delete 진입점은 유지한다.
+- provider 성공 뒤 local CAS/log 실패를 주입하면 local transaction 전체와 false log가 rollback되고 editor/review가 닫힌다. 원본은 이미 삭제됐을 수 있으므로 동일 Delete를 재시도하거나 자동 복원하지 않고 local data 보존을 알린다.
+- local Brief가 없는 지원 일정의 기존 이동·삭제 경로는 그대로 유지된다.
 
 ### 7. 읽기 전용 일정
 
@@ -299,7 +306,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - `moved` log의 before/after calendar·time과 `single` scope가 남는다. 원본 EventKit notes와 Event Brief notes는 서로 덮어쓰지 않는다.
 - EventKit 성공 뒤 local transaction 실패를 주입하면 원본 성공·local 갱신 실패·local data 보존·false log 없음이 함께 표시된다.
 - 후속 성공 write, 권한 철회, 앱 재실행 뒤에는 이전 session Undo를 제공하지 않는다. 외부 변경 알림 뒤 button이 남더라도 실행 시 provider가 stale/missing/read-only를 감지해 local mutation 전에 차단한다.
-- linked original delete는 여전히 비활성화되고 Phase 7C orphan review 이유가 보인다.
+- 이 Phase 6 gate에서는 linked original delete가 비활성화되고 Phase 7C 이유가 보이는 역사적 경계를 확인했다. 현재 삭제 review/finalize는 위 6번과 아래 Phase 7C gate에서 별도로 검증한다.
 
 ### 12-b. 좁은 session Undo (Phase 6 수동 gate)
 
@@ -436,6 +443,7 @@ Phase 5 이후에도 남은 수동·후속 후보:
 - 실제 `KAOS-TEST` 비반복 create→update→delete는 통과했다. 남은 live 후보는 all-day, floating/zoned 의미 보존과 Calendar.app 시각 round-trip
 - event task fixed/relative due 편집 UI와 notification/reminder 정책
 - 실제 Exchange 동기화 지연·외부 삭제에서의 missing/orphan/relink UI 수동 흐름
+- 실제 `KAOS-TEST` linked original `single`/`thisEvent` 삭제, Calendar.app·Outlook 반영, no-retry 부분 성공과 crash-window recovery
 - backup/export/import/reset과 손상 DB 복구
 
 Phase 6에서 구현·통과한 자동 gate:
@@ -487,8 +495,23 @@ Phase 7B missing/orphan/relink 자동 gate:
 - 전체 **175 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; Debug result bundle `/private/tmp/KaosCalPhase7BFinal-20260712-0155.xcresult`
 - build-only Release `/private/tmp/KaosCalPhase7BFinalRelease/Build/Products/Release/KaosCal.app`, CDHash `f3b30718434641dbbd2dbec90f82581342d47506`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
 - exact Release의 1482×931 onscreen 창 bootstrap과 정상 종료 뒤 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
-- 실제 Exchange 외부 삭제·동기화 지연, 후보 재연결과 recovery sheet의 전체 시각 상호작용은 수동 gate로 남고, KaosCal 내 linked original delete는 Phase 7C까지 비활성화
+- 실제 Exchange 외부 삭제·동기화 지연, 후보 재연결과 recovery sheet의 전체 시각 상호작용은 수동 gate로 남는다. 이 Phase 7B checkpoint 당시 KaosCal 내 linked original delete는 Phase 7C까지 비활성화했다.
 - 살아 있는 recurring series의 one-off 삭제와 범위 밖 detached move는 bounded EventKit lookup으로 구분할 수 없어 automatic orphan 수동 gate의 통과 범위에서 제외하고 manual exact relink만 확인
+
+Phase 7C linked original delete fake-provider/local DB 자동 gate:
+
+- active Brief의 notes/tasks/history, exact expected link와 saved-link change snapshot을 한 read에서 준비하고 Confirm 직전 full link/snapshot CAS를 반복함을 검증
+- first alert, review, Back/Cancel, stale preflight, invalid scope와 provider failure에는 provider/local write와 log가 모두 0임을 검증
+- nonrecurring `single`과 recurring `this_event` success, linked `futureEvents` provider 사전 차단, context `cancelled` + link `orphaned`, notes/tasks/context ID/last-known snapshot 보존을 검증
+- `cancelled` log의 동일 before/after saved-link payload, originalNotes nil/unavailable, previous available Undo supersede, 새 log unavailable과 process Undo 무효화를 검증
+- deleted-original projection은 `cancelled + orphaned`만으로 만들지 않고 current-link-generation unavailable `cancelled` log를 요구함을 검증. 뒤따르는 relink는 `(created_at, rowid)` 순서로 과거 provenance를 무효화하며 동일 timestamp rowid tie-break와 relink 뒤 외부 cancelled/orphaned 비표시를 포함
+- final expected-link CAS 또는 log insert 실패의 local 전체 rollback, successful provider 뒤 editor/review 종료·refresh·no-retry partial-success message와 false log 부재를 검증
+- deleted-original Task Center/recovery projection을 일반 orphan과 구분하고 Relink/local Brief delete 진입점을 유지함을 검증
+- Phase 7C 신규 회귀 총 14개를 포함한 전체 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase7CFinal-20260712-022700.xcresult`
+- build-only Release `/private/tmp/KaosCalPhase7CFinalRelease/Build/Products/Release/KaosCal.app`, CDHash `6b1da198f969cb033946fdb72b2b2e46392310f2`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
+- production DB open을 차단한 exact binary 스모크는 5초 이상 생존하고 종료 뒤 process 0. 전후 direct/sandbox DB mtime·size·SHA-256과 WAL/SHM 부재 불변. computer-use runtime 부재로 onscreen 시각 검증은 미실행
+- 이 checkpoint는 fake provider와 local DB 자동 증거다. 실제 EventKit/Exchange fixture delete, Calendar.app/Outlook 반영, process crash 재현은 **not tested**이며 별도 live gate다.
+- v1 `cancelled`/`orphaned`, v2 `cancelled` change type·기존 scope/undo를 재사용해 schema migration을 추가하지 않았다.
 
 Mini month 자동/Release gate:
 

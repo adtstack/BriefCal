@@ -76,6 +76,7 @@ enum LinkedEventRecoveryStage: Equatable {
     case firstMissing
     case orphanConfirmation
     case orphaned
+    case deletedOriginal
     case manualRelink
     case candidates([CalendarEventLookupMatch])
     case confirmRelink(DisplayEvent)
@@ -162,6 +163,21 @@ struct CalendarEventMutationPreview: Equatable, Identifiable {
     }
 }
 
+struct LinkedOriginalDeletionPreview: Equatable, Identifiable {
+    let original: DisplayEvent
+    let scope: CalendarEventMutationScope
+    let contextID: String
+    let brief: EventBriefSnapshot
+    let expectedLink: EventLink
+    let expectedSnapshot: EventChangeSnapshot
+    let impact: EventMutationImpact
+
+    var id: String {
+        [original.id, scope.rawValue, contextID, expectedLink.id]
+            .joined(separator: "#")
+    }
+}
+
 private struct CalendarEventUndoCandidate {
     let contextID: String
     let changeID: String
@@ -172,14 +188,17 @@ private struct CalendarEventUndoCandidate {
 private enum EventMutationSafetyError: LocalizedError {
     case linkedFutureSeriesDeferred
     case confirmationUnavailable
+    case deletionNotCommitted
     case undoUnavailable
 
     var errorDescription: String? {
         switch self {
         case .linkedFutureSeriesDeferred:
-            "This Event Brief is linked to one occurrence. KaosCal will not change this and future occurrences until every affected Brief can be reconciled safely."
+            "This Event Brief is linked to one occurrence. KaosCal will not change or delete this and future occurrences until every affected Brief can be reconciled safely."
         case .confirmationUnavailable:
             "The prepared event change is no longer current. Review the editor and prepare it again."
+        case .deletionNotCommitted:
+            "The calendar provider did not confirm a deletion. Nothing local was changed; review and try again."
         case .undoUnavailable:
             "The last calendar change is no longer available to undo."
         }
@@ -215,6 +234,7 @@ final class AppState: ObservableObject {
     @Published private(set) var eventEditorOperationState: CalendarEventEditorOperationState = .idle
     @Published private(set) var eventEditorError: String?
     @Published private(set) var pendingEventMutation: CalendarEventMutationPreview?
+    @Published private(set) var pendingLinkedOriginalDeletion: LinkedOriginalDeletionPreview?
     @Published private(set) var lastEventMutationUndoAvailable = false
     @Published private(set) var eventUndoError: String?
     @Published private(set) var isUndoingEventMutation = false
@@ -710,7 +730,10 @@ final class AppState: ObservableObject {
             case .orphaned:
                 linkedEventRecoverySession = LinkedEventRecoverySession(
                     brief: brief,
-                    stage: .orphaned
+                    stage: brief.hasRecordedOriginalDeletion
+                        && brief.context.lifecycleStatus == .cancelled
+                        ? .deletedOriginal
+                        : .orphaned
                 )
                 return
             case .active:
@@ -767,7 +790,10 @@ final class AppState: ObservableObject {
                 case .orphaned:
                     linkedEventRecoverySession = LinkedEventRecoverySession(
                         brief: target.brief,
-                        stage: .orphaned
+                        stage: target.brief.hasRecordedOriginalDeletion
+                            && target.brief.context.lifecycleStatus == .cancelled
+                            ? .deletedOriginal
+                            : .orphaned
                     )
                 case .missing:
                     break
@@ -1173,6 +1199,7 @@ final class AppState: ObservableObject {
     func cancelEventEditor() {
         guard eventEditorOperationState == .idle else { return }
         pendingEventMutation = nil
+        pendingLinkedOriginalDeletion = nil
         eventEditorSession = nil
         eventEditorError = nil
     }
@@ -1180,6 +1207,12 @@ final class AppState: ObservableObject {
     func cancelPendingEventMutation() {
         guard eventEditorOperationState == .idle else { return }
         pendingEventMutation = nil
+        eventEditorError = nil
+    }
+
+    func cancelPendingLinkedOriginalDeletion() {
+        guard eventEditorOperationState == .idle else { return }
+        pendingLinkedOriginalDeletion = nil
         eventEditorError = nil
     }
 
@@ -1199,6 +1232,12 @@ final class AppState: ObservableObject {
     ) async -> Bool {
         guard let session = eventEditorSession,
               eventEditorOperationState == .idle else { return false }
+        guard pendingLinkedOriginalDeletion == nil else {
+            eventEditorError = Self.message(
+                for: EventMutationSafetyError.confirmationUnavailable
+            )
+            return false
+        }
         eventEditorError = nil
 
         do {
@@ -1226,6 +1265,7 @@ final class AppState: ObservableObject {
                 let created = try calendarProvider.createEvent(normalized)
                 invalidateEventUndoCandidate()
                 pendingEventMutation = nil
+                pendingLinkedOriginalDeletion = nil
                 eventEditorSession = nil
                 eventEditorOperationState = .idle
                 await focusWrittenEvent(created)
@@ -1265,6 +1305,7 @@ final class AppState: ObservableObject {
                     changedFields: changedFields
                 )
                 if requiresImpactConfirmation(preview) {
+                    pendingLinkedOriginalDeletion = nil
                     pendingEventMutation = preview
                     return false
                 }
@@ -1278,6 +1319,12 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func confirmPendingEventMutation() async -> Bool {
+        guard pendingLinkedOriginalDeletion == nil else {
+            eventEditorError = Self.message(
+                for: EventMutationSafetyError.confirmationUnavailable
+            )
+            return false
+        }
         guard let preview = pendingEventMutation,
               let session = eventEditorSession,
               case let .existing(original) = session.target,
@@ -1288,6 +1335,175 @@ final class AppState: ObservableObject {
             return false
         }
         return await performEventMutation(preview)
+    }
+
+    @discardableResult
+    func prepareLinkedOriginalDeletion(
+        scope requestedScope: CalendarEventMutationScope?
+    ) -> Bool {
+        guard let session = eventEditorSession,
+              case let .existing(original) = session.target,
+              eventEditorOperationState == .idle else {
+            return false
+        }
+        eventEditorError = nil
+
+        do {
+            try validateOriginalWritePolicy(original)
+            flushPendingEventNotes()
+            if case .failed = notesSaveState {
+                throw CalendarEventWriteError.localDraftSaveRequired
+            }
+            let scope = try mutationScope(
+                for: original,
+                requested: requestedScope
+            )
+            if scope == .futureEvents {
+                throw EventMutationSafetyError.linkedFutureSeriesDeferred
+            }
+            guard case let .linked(contextID) = session.mutationContext,
+                  let contextStore else {
+                throw EventMutationSafetyError.confirmationUnavailable
+            }
+            guard try contextStore.mutationContext(for: original)
+                    == .linked(contextID: contextID) else {
+                throw EventMutationSafetyError.confirmationUnavailable
+            }
+            let preparation = try contextStore.prepareLinkedOriginalDeletion(
+                contextID: contextID,
+                recentHistoryLimit: 5
+            )
+            guard preparation.brief.link.isRecurring
+                    == original.isRecurring else {
+                throw EventMutationSafetyError.confirmationUnavailable
+            }
+            pendingEventMutation = nil
+            pendingLinkedOriginalDeletion = LinkedOriginalDeletionPreview(
+                original: original,
+                scope: scope,
+                contextID: contextID,
+                brief: preparation.brief,
+                expectedLink: preparation.brief.link,
+                expectedSnapshot: preparation.changeSnapshot,
+                impact: preparation.impact
+            )
+            return true
+        } catch {
+            pendingLinkedOriginalDeletion = nil
+            eventEditorError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func confirmPendingLinkedOriginalDeletion() async -> Bool {
+        guard let preview = pendingLinkedOriginalDeletion,
+              let session = eventEditorSession,
+              case let .existing(original) = session.target,
+              original.id == preview.original.id,
+              eventEditorOperationState == .idle,
+              let contextStore else {
+            eventEditorError = Self.message(
+                for: EventMutationSafetyError.confirmationUnavailable
+            )
+            return false
+        }
+        eventEditorError = nil
+
+        do {
+            try validateOriginalWritePolicy(original)
+            let scope = try mutationScope(
+                for: original,
+                requested: preview.scope
+            )
+            guard scope == preview.scope,
+                  scope != .futureEvents,
+                  session.mutationContext
+                    == .linked(contextID: preview.contextID),
+                  try contextStore.mutationContext(for: original)
+                    == .linked(contextID: preview.contextID) else {
+                throw EventMutationSafetyError.confirmationUnavailable
+            }
+            _ = try contextStore.validateLinkedOriginalDeletion(
+                contextID: preview.contextID,
+                expectedLink: preview.expectedLink,
+                expectedSnapshot: preview.expectedSnapshot
+            )
+        } catch {
+            pendingLinkedOriginalDeletion = nil
+            eventEditorError = Self.message(for: error)
+            return false
+        }
+
+        eventEditorOperationState = .deleting
+        defer {
+            if eventEditorOperationState == .deleting {
+                eventEditorOperationState = .idle
+            }
+        }
+
+        let receipt: CalendarEventMutationReceipt
+        do {
+            receipt = try calendarProvider.deleteEvent(
+                preview.original,
+                scope: preview.scope
+            )
+        } catch let partial as CalendarEventMutationPartialSuccess {
+            invalidateEventUndoCandidate()
+            await finishIrreversibleLinkedDeletionFailure(
+                "The original calendar event may already be deleted, but KaosCal could not verify the deletion receipt. Do not retry Delete. Your local Event Brief, notes, and tasks were kept. \(partial.localizedDescription)"
+            )
+            return false
+        } catch {
+            eventEditorError = Self.message(for: error)
+            return false
+        }
+
+        guard receipt.didWrite else {
+            eventEditorError = Self.message(
+                for: EventMutationSafetyError.deletionNotCommitted
+            )
+            return false
+        }
+        invalidateEventUndoCandidate()
+
+        guard receipt.scope == preview.scope,
+              receipt.changedFields == [.deletion],
+              Self.eventsShareStrongIdentity(
+                receipt.event,
+                preview.original
+              ) else {
+            await finishIrreversibleLinkedDeletionFailure(
+                "The original calendar event reported a deletion, but the provider returned an invalid receipt. Do not retry Delete. Your local Event Brief, notes, and tasks were kept for recovery in Task Center."
+            )
+            return false
+        }
+
+        do {
+            _ = try contextStore.finalizeLinkedOriginalDeletion(
+                contextID: preview.contextID,
+                expectedLink: preview.expectedLink,
+                expectedSnapshot: preview.expectedSnapshot,
+                scope: Self.changeScope(
+                    for: preview.original,
+                    mutationScope: preview.scope
+                )
+            )
+        } catch {
+            await finishIrreversibleLinkedDeletionFailure(
+                "The original calendar event was deleted, but its local Event Brief could not be finalized. Do not retry Delete. Your local notes and tasks were kept for recovery in Task Center. \(Self.message(for: error))"
+            )
+            return false
+        }
+
+        pendingLinkedOriginalDeletion = nil
+        pendingEventMutation = nil
+        eventEditorSession = nil
+        eventEditorOperationState = .idle
+        selectEvent(nil)
+        selectedSection = .tasks
+        await refreshCalendarData()
+        return true
     }
 
     @discardableResult
@@ -1304,6 +1520,10 @@ final class AppState: ObservableObject {
             return false
         }
         guard eventEditorOperationState == .idle else { return false }
+        if case .linked = session.mutationContext {
+            _ = prepareLinkedOriginalDeletion(scope: requestedScope)
+            return false
+        }
         eventEditorError = nil
         eventEditorOperationState = .deleting
         defer {
@@ -1319,11 +1539,9 @@ final class AppState: ObservableObject {
                 requested: requestedScope
             )
             switch session.mutationContext {
-            case .linked:
-                throw CalendarEventWriteError.linkedDeleteDeferred
             case .confirmationRequired:
                 throw CalendarEventWriteError.localIdentityConfirmationRequired
-            case .none:
+            case .none, .linked:
                 break
             }
             let receipt = try calendarProvider.deleteEvent(
@@ -1334,6 +1552,7 @@ final class AppState: ObservableObject {
                 invalidateEventUndoCandidate()
             }
             pendingEventMutation = nil
+            pendingLinkedOriginalDeletion = nil
             eventEditorSession = nil
             eventEditorOperationState = .idle
             selectEvent(nil)
@@ -1466,6 +1685,7 @@ final class AppState: ObservableObject {
             )
         } catch let partial as CalendarEventMutationPartialSuccess {
             pendingEventMutation = nil
+            pendingLinkedOriginalDeletion = nil
             invalidateEventUndoCandidate()
             eventEditorSession = nil
             eventEditorOperationState = .idle
@@ -1527,6 +1747,7 @@ final class AppState: ObservableObject {
                 }
             } catch {
                 pendingEventMutation = nil
+                pendingLinkedOriginalDeletion = nil
                 invalidateEventUndoCandidate()
                 await refreshCalendarData()
                 eventEditorError = "The calendar event was saved, but its local Event Brief could not be refreshed. Your local data was kept. \(Self.message(for: error))"
@@ -1535,10 +1756,24 @@ final class AppState: ObservableObject {
         }
 
         pendingEventMutation = nil
+        pendingLinkedOriginalDeletion = nil
         eventEditorSession = nil
         eventEditorOperationState = .idle
         await focusWrittenEvent(receipt.event)
         return true
+    }
+
+    private func finishIrreversibleLinkedDeletionFailure(
+        _ message: String
+    ) async {
+        pendingLinkedOriginalDeletion = nil
+        pendingEventMutation = nil
+        eventEditorSession = nil
+        eventEditorOperationState = .idle
+        selectEvent(nil)
+        selectedSection = .tasks
+        await refreshCalendarData()
+        eventEditorError = message
     }
 
     private func invalidateEventUndoCandidate() {
@@ -1638,8 +1873,10 @@ final class AppState: ObservableObject {
     }
 
     func refreshCalendarData(in requestedInterval: DateInterval? = nil) async {
-        if pendingEventMutation != nil {
+        if pendingEventMutation != nil
+            || pendingLinkedOriginalDeletion != nil {
             pendingEventMutation = nil
+            pendingLinkedOriginalDeletion = nil
             eventEditorError = "Calendar data was refreshed. Review the current event and prepare the change again."
         }
         calendarAuthorizationState = calendarProvider.authorizationState
@@ -1778,7 +2015,10 @@ final class AppState: ObservableObject {
         case .orphaned:
             linkedEventRecoverySession = LinkedEventRecoverySession(
                 brief: refreshed,
-                stage: .orphaned
+                stage: refreshed.hasRecordedOriginalDeletion
+                    && refreshed.context.lifecycleStatus == .cancelled
+                    ? .deletedOriginal
+                    : .orphaned
             )
         }
     }
@@ -2032,6 +2272,7 @@ final class AppState: ObservableObject {
     private func clearCalendarData() {
         rangeLoadTask?.cancel()
         pendingEventMutation = nil
+        pendingLinkedOriginalDeletion = nil
         eventEditorSession = nil
         eventEditorOperationState = .idle
         eventEditorError = nil

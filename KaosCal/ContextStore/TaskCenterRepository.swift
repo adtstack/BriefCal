@@ -24,6 +24,28 @@ final class TaskCenterRepository {
                     ($0.contextID, $0)
                 }
             )
+            let originalDeletionContextIDs = Set(try String.fetchAll(
+                db,
+                sql: """
+                    SELECT DISTINCT deletion.context_id
+                    FROM event_change_log AS deletion
+                    WHERE deletion.change_type = 'cancelled'
+                      AND deletion.undo_state = 'unavailable'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM event_change_log AS relink
+                          WHERE relink.context_id = deletion.context_id
+                            AND relink.change_type = 'relinked'
+                            AND (
+                                relink.created_at > deletion.created_at
+                                OR (
+                                    relink.created_at = deletion.created_at
+                                    AND relink.rowid > deletion.rowid
+                                )
+                            )
+                      )
+                    """
+            ))
             let eventItems: [TaskCenterItem] = try EventTask
                 .fetchAll(db)
                 .compactMap { task -> TaskCenterItem? in
@@ -77,7 +99,10 @@ final class TaskCenterRepository {
                             eventEnd: eventRange.end,
                             isAllDay: link.isAllDay
                         ),
-                        eventLinkStatus: link.linkStatus
+                        eventLinkStatus: link.linkStatus,
+                        eventLifecycleStatus: context.lifecycleStatus,
+                        wasOriginalDeletedByKaosCal:
+                            originalDeletionContextIDs.contains(context.id)
                     )
                 }
             let personalItems: [TaskCenterItem]
@@ -95,7 +120,9 @@ final class TaskCenterRepository {
                             completedAt: task.completedAt,
                             sortOrder: task.sortOrder,
                             source: .personal,
-                            eventLinkStatus: nil
+                            eventLinkStatus: nil,
+                            eventLifecycleStatus: nil,
+                            wasOriginalDeletedByKaosCal: false
                         )
                     }
             }

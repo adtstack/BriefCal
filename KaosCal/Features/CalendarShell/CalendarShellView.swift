@@ -355,6 +355,16 @@ private struct LinkedEventRecoveryView: View {
                 .foregroundStyle(.secondary)
                 recoveryActions(includeKeep: false)
             }
+        case .deletedOriginal:
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Original deleted · Local Brief kept", systemImage: "calendar.badge.minus")
+                    .font(.headline)
+                Text(
+                    "KaosCal removed the original calendar event after your final confirmation. There is no Undo. Local notes and tasks remain on this Mac until you relink or delete this Brief."
+                )
+                .foregroundStyle(.secondary)
+                recoveryActions(includeKeep: false)
+            }
         case .manualRelink:
             VStack(alignment: .leading, spacing: 12) {
                 Label("Choose the exact event manually", systemImage: "hand.tap")

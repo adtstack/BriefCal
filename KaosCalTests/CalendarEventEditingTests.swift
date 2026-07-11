@@ -1,4 +1,5 @@
 import EventKit
+import GRDB
 import XCTest
 @testable import KaosCal
 
@@ -879,7 +880,7 @@ final class CalendarEventEditingTests: XCTestCase {
         XCTAssertEqual(snapshot.tasks.map(\.title), ["Prepare"])
     }
 
-    func testLinkedCalendarMoveConfirmsAndRebindsWhileDeleteStaysBlocked() async throws {
+    func testLinkedCalendarMoveConfirmsAndRebindsWhileDeleteRoutesToReview() async throws {
         let original = makeEvent(id: "linked-block")
         let store = ContextStore(database: try AppDatabase.inMemory())
         let context = try XCTUnwrap(
@@ -920,10 +921,614 @@ final class CalendarEventEditingTests: XCTestCase {
         XCTAssertFalse(didDelete)
         XCTAssertEqual(provider.deleteCallCount, 0)
         XCTAssertNotNil(state.eventEditorSession)
-        XCTAssertEqual(
-            state.eventEditorError,
-            CalendarEventWriteError.linkedDeleteDeferred.localizedDescription
+        XCTAssertNotNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNil(state.eventEditorError)
+    }
+
+    func testLinkedOriginalDeletionPreparationAndBackAreWriteFree() async throws {
+        let original = makeEvent(id: "linked-delete-review")
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep this deletion note"
+        ))
+        let task = try store.appendEventTask(
+            for: original,
+            section: .before,
+            title: "Review before deleting"
         )
+        let provider = makeProvider(events: [original])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        let before = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        let prepared = state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+
+        XCTAssertTrue(prepared)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+        let preview = try XCTUnwrap(state.pendingLinkedOriginalDeletion)
+        XCTAssertEqual(preview.contextID, context.id)
+        XCTAssertEqual(preview.scope, .thisEvent)
+        XCTAssertEqual(preview.brief, before)
+        XCTAssertTrue(preview.impact.hasNotes)
+        XCTAssertEqual(preview.impact.notesCharacterCount, 23)
+        XCTAssertEqual(preview.impact.taskCount, 1)
+        XCTAssertEqual(
+            preview.impact.taskSections.first(where: { $0.section == .before }),
+            EventMutationTaskSummary(
+                section: .before,
+                count: 1,
+                titles: [task.title]
+            )
+        )
+        XCTAssertTrue(preview.impact.recentHistory.isEmpty)
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id),
+            before
+        )
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+
+        state.cancelPendingLinkedOriginalDeletion()
+
+        XCTAssertNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNotNil(state.eventEditorSession)
+        XCTAssertNil(state.eventEditorError)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id),
+            before
+        )
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+    }
+
+    func testLinkedSingleDeletionPreservesBriefAndCreatesNonUndoableLog() async throws {
+        let original = makeEvent(id: "linked-delete-success")
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep successful deletion notes"
+        ))
+        let beforeTask = try store.appendEventTask(
+            for: original,
+            section: .before,
+            title: "Prepare"
+        )
+        let afterTask = try store.appendEventTask(
+            for: original,
+            section: .after,
+            title: "Follow up"
+        )
+        let provider = makeProvider(events: [original])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        XCTAssertTrue(
+            state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+        )
+        let expectedSnapshot = try XCTUnwrap(
+            state.pendingLinkedOriginalDeletion?.expectedSnapshot
+        )
+
+        let deleted = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+        XCTAssertEqual(provider.lastDeletedEvent, original)
+        XCTAssertEqual(provider.lastDeleteScope, .thisEvent)
+        XCTAssertTrue(provider.events.isEmpty)
+        XCTAssertTrue(state.events.isEmpty)
+        XCTAssertNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNil(state.eventEditorSession)
+        XCTAssertNil(state.selectedEvent)
+        XCTAssertEqual(state.selectedSection, .tasks)
+        XCTAssertFalse(state.canUndoLastEventMutation(for: original))
+
+        let retained = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(retained.context.lifecycleStatus, .cancelled)
+        XCTAssertEqual(retained.link.linkStatus, .orphaned)
+        XCTAssertEqual(retained.context.notes, "Keep successful deletion notes")
+        XCTAssertEqual(
+            retained.tasks.map(\.id),
+            [beforeTask.id, afterTask.id]
+        )
+        let cancellation = try XCTUnwrap(
+            store.changeHistory(contextID: context.id).first
+        )
+        XCTAssertEqual(cancellation.changeType, .cancelled)
+        XCTAssertEqual(cancellation.scope, .single)
+        XCTAssertEqual(cancellation.before, expectedSnapshot)
+        XCTAssertEqual(cancellation.after, expectedSnapshot)
+        XCTAssertEqual(cancellation.undoState, .unavailable)
+        XCTAssertNil(cancellation.undoneAt)
+        XCTAssertNil(cancellation.undoOfChangeID)
+
+        let recoveryBrief = try XCTUnwrap(
+            state.recoveryBriefs.first(where: {
+                $0.context.id == context.id
+            })
+        )
+        XCTAssertEqual(recoveryBrief.context.lifecycleStatus, .cancelled)
+        XCTAssertEqual(recoveryBrief.link.linkStatus, .orphaned)
+        XCTAssertTrue(recoveryBrief.hasRecordedOriginalDeletion)
+        guard case let .loaded(taskItems) = state.taskCenterState else {
+            return XCTFail("Expected retained tasks in Task Center")
+        }
+        let retainedTaskItem = try XCTUnwrap(
+            taskItems.first(where: { $0.id == .eventTask(
+                taskID: beforeTask.id,
+                contextID: context.id
+            ) })
+        )
+        XCTAssertEqual(retainedTaskItem.eventLifecycleStatus, .cancelled)
+        XCTAssertEqual(retainedTaskItem.eventLinkStatus, .orphaned)
+        XCTAssertTrue(retainedTaskItem.wasOriginalDeletedByKaosCal)
+
+        await state.openOriginalEvent(contextID: context.id)
+        XCTAssertEqual(
+            state.linkedEventRecoverySession?.stage,
+            .deletedOriginal
+        )
+    }
+
+    func testLinkedRecurringDeletionAllowsThisEventAndBlocksFutureEvents() async throws {
+        let recurring = makeEvent(
+            id: "linked-recurring-delete",
+            isRecurring: true
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: recurring,
+            notes: "Keep recurring deletion notes"
+        ))
+        let task = try store.appendEventTask(
+            for: recurring,
+            section: .during,
+            title: "Keep occurrence task"
+        )
+        let provider = makeProvider(events: [recurring])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(recurring.id)
+        state.beginEditingSelectedEvent()
+
+        let preparedFuture = state.prepareLinkedOriginalDeletion(
+            scope: .futureEvents
+        )
+
+        XCTAssertFalse(preparedFuture)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+        XCTAssertNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertTrue(
+            state.eventEditorError?.contains("this and future occurrences")
+                == true
+        )
+
+        state.clearEventEditorError()
+        XCTAssertTrue(
+            state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+        )
+        XCTAssertEqual(provider.deleteCallCount, 0)
+
+        let deleted = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+        XCTAssertEqual(provider.lastDeleteScope, .thisEvent)
+        let retained = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(retained.context.lifecycleStatus, .cancelled)
+        XCTAssertEqual(retained.link.linkStatus, .orphaned)
+        XCTAssertEqual(retained.context.notes, "Keep recurring deletion notes")
+        XCTAssertEqual(retained.tasks.map(\.id), [task.id])
+        let cancellation = try XCTUnwrap(
+            store.changeHistory(contextID: context.id).first
+        )
+        XCTAssertEqual(cancellation.changeType, .cancelled)
+        XCTAssertEqual(cancellation.scope, .thisEvent)
+        XCTAssertEqual(cancellation.undoState, .unavailable)
+    }
+
+    func testLinkedDeletionProviderFailureKeepsReviewAndLocalBriefIntact() async throws {
+        let original = makeEvent(id: "linked-delete-provider-failure")
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep provider failure notes"
+        ))
+        let task = try store.appendEventTask(
+            for: original,
+            section: .after,
+            title: "Keep provider failure task"
+        )
+        let provider = makeProvider(events: [original])
+        provider.deleteMutationHandler = { _, _ in
+            throw FakeCalendarProviderError.failed
+        }
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        XCTAssertTrue(
+            state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+        )
+        let before = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        let deleted = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+        XCTAssertEqual(provider.events, [original])
+        XCTAssertNotNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNotNil(state.eventEditorSession)
+        XCTAssertEqual(state.eventEditorError, "Calendar provider failed")
+        let after = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(after, before)
+        XCTAssertEqual(after.link.linkStatus, .active)
+        XCTAssertEqual(after.context.notes, "Keep provider failure notes")
+        XCTAssertEqual(after.tasks.map(\.id), [task.id])
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+    }
+
+    func testLinkedDeletionStalePreflightStopsBeforeProviderWrite() async throws {
+        let original = makeEvent(id: "linked-delete-stale")
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep stale deletion notes"
+        ))
+        let provider = makeProvider(events: [original])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        XCTAssertTrue(
+            state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+        )
+        let refreshedEvent = makeEvent(
+            id: original.id,
+            startDate: date(2026, 7, 10, 15)
+        )
+        let refreshed = try store.rebindUserApprovedMutation(
+            contextID: context.id,
+            to: refreshedEvent
+        )
+
+        let deleted = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+        XCTAssertEqual(provider.events, [original])
+        XCTAssertNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNotNil(state.eventEditorSession)
+        XCTAssertNotNil(state.eventEditorError)
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id),
+            refreshed
+        )
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+    }
+
+    func testLinkedDeletionLocalFinalizeFailureCannotRetryProviderDelete() async throws {
+        let original = makeEvent(id: "linked-delete-local-failure")
+        let database = try AppDatabase.inMemory()
+        let store = ContextStore(database: database)
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep local failure notes"
+        ))
+        let task = try store.appendEventTask(
+            for: original,
+            section: .after,
+            title: "Recover local failure task"
+        )
+        let provider = makeProvider(events: [original])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        XCTAssertTrue(
+            state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+        )
+        let before = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        try database.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER reject_linked_cancelled_log
+                BEFORE INSERT ON event_change_log
+                WHEN NEW.change_type = 'cancelled'
+                BEGIN
+                    SELECT RAISE(ABORT, 'linked cancellation rejected');
+                END
+                """)
+        }
+
+        let deleted = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+        XCTAssertTrue(provider.events.isEmpty)
+        XCTAssertNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNil(state.eventEditorSession)
+        XCTAssertNil(state.selectedEvent)
+        XCTAssertEqual(state.selectedSection, .tasks)
+        XCTAssertTrue(
+            state.eventEditorError?.hasPrefix(
+                "The original calendar event was deleted, but its local Event Brief could not be finalized. Do not retry Delete."
+            ) == true
+        )
+        let retained = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(retained, before)
+        XCTAssertEqual(retained.link.linkStatus, .active)
+        XCTAssertEqual(retained.context.notes, "Keep local failure notes")
+        XCTAssertEqual(retained.tasks.map(\.id), [task.id])
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+
+        let retried = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertFalse(retried)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+    }
+
+    func testLinkedDeletionLinkRaceAfterProviderWriteUsesNonRetryablePartialPath() async throws {
+        let original = makeEvent(id: "linked-delete-link-race")
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep link-race notes"
+        ))
+        let provider = makeProvider(events: [original])
+        let concurrentlyRebound = makeEvent(
+            id: original.id,
+            startDate: date(2026, 7, 10, 16),
+            calendarIdentifier: writableLocalCalendar.id
+        )
+        provider.deleteMutationHandler = { event, scope in
+            _ = try store.rebindUserApprovedMutation(
+                contextID: context.id,
+                to: concurrentlyRebound
+            )
+            provider.events.removeAll { $0.id == event.id }
+            return CalendarEventMutationReceipt(
+                event: event,
+                didWrite: true,
+                scope: scope,
+                changedFields: [.deletion]
+            )
+        }
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        XCTAssertTrue(
+            state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+        )
+
+        let deleted = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+        XCTAssertTrue(provider.events.isEmpty)
+        XCTAssertNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNil(state.eventEditorSession)
+        XCTAssertTrue(
+            state.eventEditorError?.contains("Do not retry Delete") == true
+        )
+        let retained = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(retained.link.linkStatus, .active)
+        XCTAssertEqual(
+            retained.link.calendarIdentifier,
+            writableLocalCalendar.id
+        )
+        XCTAssertEqual(retained.context.notes, "Keep link-race notes")
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+
+        let retried = await state.confirmPendingLinkedOriginalDeletion()
+        XCTAssertFalse(retried)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+    }
+
+    func testLinkedDeletionNoOpReceiptKeepsReviewAndLocalState() async throws {
+        let original = makeEvent(id: "linked-delete-no-op")
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep no-op notes"
+        ))
+        let provider = makeProvider(events: [original])
+        provider.deleteMutationHandler = { event, scope in
+            CalendarEventMutationReceipt(
+                event: event,
+                didWrite: false,
+                scope: scope,
+                changedFields: []
+            )
+        }
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        XCTAssertTrue(
+            state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+        )
+        let before = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        let deleted = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+        XCTAssertEqual(provider.events, [original])
+        XCTAssertNotNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNotNil(state.eventEditorSession)
+        XCTAssertTrue(
+            state.eventEditorError?.contains(
+                "did not confirm a deletion"
+            ) == true
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id),
+            before
+        )
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+    }
+
+    func testLinkedDeletionInvalidPositiveReceiptClosesReviewWithoutLocalFinalize() async throws {
+        let original = makeEvent(id: "linked-delete-invalid-receipt")
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep invalid-receipt notes"
+        ))
+        let provider = makeProvider(events: [original])
+        provider.deleteMutationHandler = { event, scope in
+            provider.events.removeAll { $0.id == event.id }
+            return CalendarEventMutationReceipt(
+                event: event,
+                didWrite: true,
+                scope: scope,
+                changedFields: []
+            )
+        }
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(original.id)
+        state.beginEditingSelectedEvent()
+        XCTAssertTrue(
+            state.prepareLinkedOriginalDeletion(scope: .thisEvent)
+        )
+        let before = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        let deleted = await state.confirmPendingLinkedOriginalDeletion()
+
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+        XCTAssertTrue(provider.events.isEmpty)
+        XCTAssertNil(state.pendingLinkedOriginalDeletion)
+        XCTAssertNil(state.eventEditorSession)
+        XCTAssertTrue(
+            state.eventEditorError?.contains("invalid receipt") == true
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id),
+            before
+        )
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+
+        let retried = await state.confirmPendingLinkedOriginalDeletion()
+        XCTAssertFalse(retried)
+        XCTAssertEqual(provider.deleteCallCount, 1)
+    }
+
+    func testPastDeletionLogAfterRelinkDoesNotLabelLaterCancelledOrphanAsDeletedOriginal() async throws {
+        let timestamp = date(2026, 7, 10, 12)
+        let original = makeEvent(id: "cancelled-orphan-provenance")
+        let database = try AppDatabase.inMemory()
+        let store = ContextStore(database: database, now: { timestamp })
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "External cancellation notes"
+        ))
+        let task = try store.appendEventTask(
+            for: original,
+            section: .after,
+            title: "External cancellation task"
+        )
+        let preparation = try store.prepareLinkedOriginalDeletion(
+            contextID: context.id
+        )
+        let deleted = try store.finalizeLinkedOriginalDeletion(
+            contextID: context.id,
+            expectedLink: preparation.brief.link,
+            expectedSnapshot: preparation.changeSnapshot,
+            scope: .single
+        )
+        XCTAssertTrue(deleted.hasRecordedOriginalDeletion)
+
+        let replacement = makeEvent(
+            id: "cancelled-orphan-replacement",
+            startDate: date(2026, 7, 10, 13)
+        )
+        let relinked = try store.relinkLocalBrief(
+            contextID: context.id,
+            to: replacement,
+            expectedLink: deleted.link,
+            at: timestamp,
+            calendar: calendar
+        )
+        XCTAssertFalse(relinked.hasRecordedOriginalDeletion)
+        XCTAssertEqual(
+            relinked,
+            try store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        // Simulate a later provider-side cancellation/orphan transition without
+        // adding a KaosCal original-deletion record for the replacement link.
+        try database.write { db in
+            try db.execute(
+                sql: """
+                    UPDATE event_contexts
+                    SET lifecycle_status = 'cancelled'
+                    WHERE id = ?
+                    """,
+                arguments: [context.id]
+            )
+            try db.execute(
+                sql: """
+                    UPDATE event_links
+                    SET link_status = 'orphaned'
+                    WHERE context_id = ?
+                    """,
+                arguments: [context.id]
+            )
+        }
+        let history = try store.changeHistory(contextID: context.id)
+        XCTAssertEqual(history.map(\.changeType), [.relinked, .cancelled])
+        XCTAssertEqual(history.map(\.createdAt), [timestamp, timestamp])
+        let state = makeState(provider: makeProvider(), store: store)
+
+        await state.loadCalendarStatus()
+
+        let brief = try XCTUnwrap(
+            state.recoveryBriefs.first(where: {
+                $0.context.id == context.id
+            })
+        )
+        XCTAssertEqual(brief.context.lifecycleStatus, .cancelled)
+        XCTAssertEqual(brief.link.linkStatus, .orphaned)
+        XCTAssertFalse(brief.hasRecordedOriginalDeletion)
+        guard case let .loaded(taskItems) = state.taskCenterState else {
+            return XCTFail("Expected external cancellation task")
+        }
+        let item = try XCTUnwrap(taskItems.first(where: {
+            $0.id == .eventTask(
+                taskID: task.id,
+                contextID: context.id
+            )
+        }))
+        XCTAssertFalse(item.wasOriginalDeletedByKaosCal)
+
+        await state.openOriginalEvent(contextID: context.id)
+        XCTAssertEqual(state.linkedEventRecoverySession?.stage, .orphaned)
     }
 
     func testUnlinkedCalendarMoveAndDeleteAreAllowed() async throws {

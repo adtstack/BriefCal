@@ -1971,6 +1971,330 @@ final class ContextStoreTests: XCTestCase {
         )
     }
 
+    func testLinkedOriginalDeletionPreservesLocalBriefAndRecordsCancellation() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(id: "delete-linked-original")
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: original,
+                notes: "Keep deletion notes"
+            )
+        )
+        let beforeTask = try harness.store.appendEventTask(
+            for: original,
+            section: .before,
+            title: "Prepare deletion review"
+        )
+        let afterTask = try harness.store.appendEventTask(
+            for: original,
+            section: .after,
+            title: "Retain follow-up"
+        )
+        let currentEvent = makeEvent(
+            id: "delete-linked-current",
+            title: "Current linked title",
+            start: date(2026, 7, 10, 13),
+            end: date(2026, 7, 10, 14),
+            calendarIdentifier: "current-calendar"
+        )
+        let priorChange = try harness.store.rebindAndRecordMutation(
+            contextID: context.id,
+            from: original,
+            to: currentEvent,
+            changeType: .moved,
+            scope: .single,
+            undoState: .available
+        )
+
+        let preparation = try harness.store.prepareLinkedOriginalDeletion(
+            contextID: context.id
+        )
+
+        XCTAssertEqual(preparation.brief.context.notes, "Keep deletion notes")
+        XCTAssertEqual(
+            preparation.brief.tasks.map(\.id),
+            [beforeTask.id, afterTask.id]
+        )
+        XCTAssertEqual(preparation.brief.link.linkStatus, .active)
+        XCTAssertFalse(preparation.brief.hasRecordedOriginalDeletion)
+        XCTAssertTrue(preparation.impact.hasNotes)
+        XCTAssertEqual(preparation.impact.notesCharacterCount, 19)
+        XCTAssertEqual(preparation.impact.taskCount, 2)
+        XCTAssertEqual(
+            preparation.impact.taskSections,
+            [
+                EventMutationTaskSummary(
+                    section: .before,
+                    count: 1,
+                    titles: ["Prepare deletion review"]
+                ),
+                EventMutationTaskSummary(
+                    section: .during,
+                    count: 0,
+                    titles: []
+                ),
+                EventMutationTaskSummary(
+                    section: .after,
+                    count: 1,
+                    titles: ["Retain follow-up"]
+                )
+            ]
+        )
+        XCTAssertEqual(preparation.impact.recentHistory.map(\.id), [priorChange.id])
+        XCTAssertEqual(
+            preparation.changeSnapshot,
+            try EventChangeSnapshot(link: preparation.brief.link)
+        )
+        XCTAssertNil(preparation.changeSnapshot.originalNotes)
+        XCTAssertEqual(
+            try harness.store.validateLinkedOriginalDeletion(
+                contextID: context.id,
+                expectedLink: preparation.brief.link,
+                expectedSnapshot: preparation.changeSnapshot
+            ),
+            preparation.brief
+        )
+
+        let finalized = try harness.store.finalizeLinkedOriginalDeletion(
+            contextID: context.id,
+            expectedLink: preparation.brief.link,
+            expectedSnapshot: preparation.changeSnapshot,
+            scope: .single
+        )
+
+        XCTAssertEqual(finalized.context.lifecycleStatus, .cancelled)
+        XCTAssertEqual(finalized.link.linkStatus, .orphaned)
+        XCTAssertTrue(finalized.hasRecordedOriginalDeletion)
+        XCTAssertEqual(finalized.context.notes, "Keep deletion notes")
+        XCTAssertEqual(finalized.tasks, preparation.brief.tasks)
+        XCTAssertEqual(finalized.tasks.map(\.id), [beforeTask.id, afterTask.id])
+        XCTAssertEqual(
+            finalized.link.eventIdentifier,
+            preparation.brief.link.eventIdentifier
+        )
+        XCTAssertEqual(
+            finalized.link.occurrenceIdentityKey,
+            preparation.brief.link.occurrenceIdentityKey
+        )
+        XCTAssertEqual(
+            finalized.link.lastSeenAt,
+            preparation.brief.link.lastSeenAt
+        )
+
+        let history = try harness.store.changeHistory(contextID: context.id)
+        XCTAssertEqual(history.count, 2)
+        let cancellation = history[0]
+        XCTAssertEqual(cancellation.changeType, .cancelled)
+        XCTAssertEqual(cancellation.scope, .single)
+        XCTAssertEqual(cancellation.before, preparation.changeSnapshot)
+        XCTAssertEqual(cancellation.after, preparation.changeSnapshot)
+        XCTAssertEqual(cancellation.undoState, .unavailable)
+        XCTAssertNil(cancellation.undoneAt)
+        XCTAssertNil(cancellation.undoOfChangeID)
+        XCTAssertEqual(cancellation.createdAt, harness.now)
+        XCTAssertEqual(history[1].id, priorChange.id)
+        XCTAssertEqual(history[1].undoState, .superseded)
+    }
+
+    func testLinkedRecurringOccurrenceDeletionRequiresThisEventScope() throws {
+        let harness = try makeHarness()
+        let occurrence = date(2026, 7, 17, 9)
+        let recurring = makeEvent(
+            id: "delete-recurring-occurrence",
+            start: occurrence,
+            end: date(2026, 7, 17, 10),
+            externalIdentifier: "delete-recurring-series",
+            isRecurring: true,
+            occurrenceDate: occurrence
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: recurring,
+                notes: "Keep recurring notes"
+            )
+        )
+        let task = try harness.store.appendEventTask(
+            for: recurring,
+            section: .during,
+            title: "Keep occurrence task"
+        )
+        let preparation = try harness.store.prepareLinkedOriginalDeletion(
+            contextID: context.id
+        )
+
+        XCTAssertTrue(preparation.brief.link.isRecurring)
+        XCTAssertThrowsError(try harness.store.finalizeLinkedOriginalDeletion(
+            contextID: context.id,
+            expectedLink: preparation.brief.link,
+            expectedSnapshot: preparation.changeSnapshot,
+            scope: .single
+        )) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .invalidEventLinkTransition
+            )
+        }
+        XCTAssertEqual(
+            try harness.store.eventContexts.fetchBrief(contextID: context.id),
+            preparation.brief
+        )
+        XCTAssertTrue(
+            try harness.store.changeHistory(contextID: context.id).isEmpty
+        )
+
+        let finalized = try harness.store.finalizeLinkedOriginalDeletion(
+            contextID: context.id,
+            expectedLink: preparation.brief.link,
+            expectedSnapshot: preparation.changeSnapshot,
+            scope: .thisEvent
+        )
+
+        XCTAssertEqual(finalized.context.lifecycleStatus, .cancelled)
+        XCTAssertEqual(finalized.link.linkStatus, .orphaned)
+        XCTAssertEqual(finalized.context.notes, "Keep recurring notes")
+        XCTAssertEqual(finalized.tasks.map(\.id), [task.id])
+        let cancellation = try XCTUnwrap(
+            harness.store.changeHistory(contextID: context.id).first
+        )
+        XCTAssertEqual(cancellation.changeType, .cancelled)
+        XCTAssertEqual(cancellation.scope, .thisEvent)
+        XCTAssertEqual(cancellation.before, preparation.changeSnapshot)
+        XCTAssertEqual(cancellation.after, preparation.changeSnapshot)
+        XCTAssertEqual(cancellation.undoState, .unavailable)
+    }
+
+    func testLinkedOriginalDeletionRejectsStaleExpectedLinkWithoutMutation() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(id: "delete-stale-original")
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: original,
+                notes: "Keep stale-session notes"
+            )
+        )
+        let task = try harness.store.appendEventTask(
+            for: original,
+            section: .before,
+            title: "Keep stale-session task"
+        )
+        let stalePreparation = try harness.store.prepareLinkedOriginalDeletion(
+            contextID: context.id
+        )
+        let refreshedEvent = makeEvent(
+            id: "delete-stale-refreshed",
+            title: "Refreshed outside deletion review",
+            start: date(2026, 7, 11, 15),
+            end: date(2026, 7, 11, 16),
+            calendarIdentifier: "refreshed-calendar"
+        )
+        let refreshed = try harness.store.rebindUserApprovedMutation(
+            contextID: context.id,
+            to: refreshedEvent
+        )
+
+        XCTAssertThrowsError(try harness.store.validateLinkedOriginalDeletion(
+            contextID: context.id,
+            expectedLink: stalePreparation.brief.link,
+            expectedSnapshot: stalePreparation.changeSnapshot
+        )) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .invalidEventLinkTransition
+            )
+        }
+        XCTAssertThrowsError(try harness.store.finalizeLinkedOriginalDeletion(
+            contextID: context.id,
+            expectedLink: stalePreparation.brief.link,
+            expectedSnapshot: stalePreparation.changeSnapshot,
+            scope: .single
+        )) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .invalidEventLinkTransition
+            )
+        }
+
+        let after = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(after, refreshed)
+        XCTAssertEqual(after.link.linkStatus, .active)
+        XCTAssertEqual(after.context.notes, "Keep stale-session notes")
+        XCTAssertEqual(after.tasks.map(\.id), [task.id])
+        XCTAssertTrue(
+            try harness.store.changeHistory(contextID: context.id).isEmpty
+        )
+    }
+
+    func testLinkedOriginalDeletionLogFailureRollsBackEntireTransaction() throws {
+        let database = try AppDatabase.inMemory()
+        let timestamp = date(2026, 7, 10, 12)
+        let store = ContextStore(
+            database: database,
+            now: { timestamp },
+            makeID: IDSequence((1...20).map { "delete-rollback-\($0)" }).next
+        )
+        let original = makeEvent(id: "delete-log-rollback-original")
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Rollback deletion notes"
+        ))
+        let task = try store.appendEventTask(
+            for: original,
+            section: .after,
+            title: "Rollback deletion task"
+        )
+        let currentEvent = makeEvent(
+            id: "delete-log-rollback-current",
+            start: date(2026, 7, 10, 13),
+            end: date(2026, 7, 10, 14)
+        )
+        let priorChange = try store.rebindAndRecordMutation(
+            contextID: context.id,
+            from: original,
+            to: currentEvent,
+            changeType: .moved,
+            scope: .single,
+            undoState: .available
+        )
+        let preparation = try store.prepareLinkedOriginalDeletion(
+            contextID: context.id
+        )
+        let beforeFailure = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        try database.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER reject_cancelled_log
+                BEFORE INSERT ON event_change_log
+                WHEN NEW.change_type = 'cancelled'
+                BEGIN
+                    SELECT RAISE(ABORT, 'cancelled log rejected');
+                END
+                """)
+        }
+
+        XCTAssertThrowsError(try store.finalizeLinkedOriginalDeletion(
+            contextID: context.id,
+            expectedLink: preparation.brief.link,
+            expectedSnapshot: preparation.changeSnapshot,
+            scope: .single
+        ))
+
+        let afterFailure = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(afterFailure, beforeFailure)
+        XCTAssertEqual(afterFailure.link.linkStatus, .active)
+        XCTAssertEqual(afterFailure.context.notes, "Rollback deletion notes")
+        XCTAssertEqual(afterFailure.tasks.map(\.id), [task.id])
+        let history = try store.changeHistory(contextID: context.id)
+        XCTAssertEqual(history.count, 1)
+        XCTAssertEqual(history.first?.id, priorChange.id)
+        XCTAssertEqual(history.first?.undoState, .available)
+        XCTAssertFalse(history.contains { $0.changeType == .cancelled })
+    }
+
     func testRebindAndChangeLogAppendRollBackTogether() throws {
         let IDs = IDSequence([
             "rollback-context", "rollback-link",

@@ -369,6 +369,8 @@ struct TaskCenterItem: Equatable, Identifiable {
     let sortOrder: Int
     let source: TaskCenterItemSource
     let eventLinkStatus: EventLinkStatus?
+    let eventLifecycleStatus: EventLifecycleStatus?
+    let wasOriginalDeletedByKaosCal: Bool
 }
 
 enum TaskCenterCompletionResult: Equatable {

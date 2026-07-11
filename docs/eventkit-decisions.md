@@ -99,7 +99,11 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - Keep as orphan, Relink, Delete local Brief는 명시적으로 분리한다. local 삭제는 missing/orphaned SQLite context만 cascade 삭제하고 EventKit 삭제를 호출하지 않는다.
 - Relink는 선택 event를 provider에서 다시 strong lookup해 유일한 `.found`/`.cancelled`인지 최종 검증한다. 선택 당시 `EventLink`와 현재 row의 equality CAS, strong-ID 존재와 다른 context 충돌 검사를 통과한 뒤 snapshot/lifecycle/Undo supersede/`relinked` log를 하나의 SQLite transaction으로 저장한다.
 - Phase 7B는 schema migration을 추가하지 않았다. relink before log의 `originalNotes`는 v1 link가 원본 EventKit notes를 저장하지 않았기 때문에 nil/unavailable이며, local Event Brief notes를 대신 넣지 않는다.
-- linked original EventKit delete는 Phase 7C impact review와 별도 Confirm이 구현될 때까지 계속 잠근다.
+- 구현된 Phase 7C linked original delete는 active Brief의 notes/tasks/history, saved `EventLink`와 deletion snapshot을 read-only로 준비하고 별도 final Confirm 뒤에만 EventKit을 호출한다. Confirm 직전 expected-link/snapshot을 다시 검사한다.
+- successful delete receipt 뒤 context `cancelled`, link `orphaned`, available Undo supersede와 unavailable `cancelled` log를 한 SQLite transaction으로 finalize한다. log before/after는 같은 saved-link snapshot이고 v1에 없는 `originalNotes`는 nil/unavailable이다. local notes/tasks는 보존하며 Delete Undo는 없다.
+- deleted-original 표시는 status pair만으로 결정하지 않는다. 현재 context에 unavailable `cancelled` log가 있고 그 뒤 `(created_at, rowid)`상 더 최신 `relinked`가 없어야 한다. relink는 과거 deletion provenance를 무효화하므로 이후 같은 상태쌍이 다시 생겨도 새 KaosCal deletion log 없이는 일반 orphan이다.
+- nonrecurring은 log `single`, recurring occurrence는 `this_event`만 허용한다. linked `futureEvents`, attendee meeting/invitation과 read-only 원본은 계속 provider 전에 차단한다.
+- EventKit 성공 뒤 receipt/local finalize가 실패하거나 둘 사이 crash가 나면 원본을 자동 복원하거나 Delete를 재시도하지 않는다. review를 닫고 refresh하며 local Brief 보존과 false log 없음, 실제 외부 성공 범위를 알린다. Phase 7C는 기존 v1/v2 값만 써 migration이 없다.
 
 세부 경계는 [ADR-012](adr/ADR-012-lifecycle-after-review-and-orphan-confirmation.md)를 따른다.
 
@@ -157,7 +161,7 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - 원본 notes는 명시적 editor field로만 `EKEvent.notes`에 쓰고 local Event Brief notes/tasks와 분리한다.
 - 종일 종료는 배타 자정이다. draft가 포착한 reference time zone을 사용하고, 저장 시 기본 zone이 달라졌으면 all-day/floating wall components를 현재 zone에 rebase해 civil 값을 유지한다.
 - time zone 변경은 preserve-local/preserve-instant를 구분하고 DST gap/overlap의 모호한 local time은 자동 보정하지 않는다.
-- linked same-calendar update·calendar 이동·안전한 `thisEvent`는 EventKit receipt로 기존 context snapshot을 rebind한다. linked `futureEvents`와 linked 삭제는 각각 multi-context reconciliation과 Phase 7C orphan review 전까지 차단한다.
+- linked same-calendar update·calendar 이동·안전한 `thisEvent`는 EventKit receipt로 기존 context snapshot을 rebind한다. linked delete는 Phase 7C의 별도 saved-link review/finalize로 열었고, linked `futureEvents`와 attendee/invitation delete는 계속 차단한다.
 - EventKit 성공 뒤 SQLite rebind 실패는 부분 성공으로 알리고 local 데이터를 삭제하지 않는다.
 
 전체 계약은 [ADR-010](adr/ADR-010-original-event-write-safety.md)을 따른다. 실제 Exchange save/remove 통과 여부는 [Exchange Compatibility](exchange-compatibility.md)에서만 판정한다.
@@ -175,8 +179,8 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - 반복 write, calendar move, 기존 일정의 시간 의미 변경은 immutable impact preview를 보여 주고 사용자가 Confirm한 뒤에만 provider를 호출한다. linked context가 있으면 유지할 local 항목을 함께 보여 준다. Cancel·validation 실패·no-op에는 EventKit write와 local log가 없다.
 - confirm 뒤에도 현재 full access, source/target writable, strong identity, fresh supported-field snapshot을 다시 검사한다.
 - linked `thisEvent` move는 선택 context 하나를 receipt에 rebind한다. Phase 6의 첫 안전 범위는 series split 뒤 여러 context를 재연결하는 기능을 제공하지 않으므로 linked `futureEvents`를 전부 write 전에 차단한다. 나중에 열더라도 영향받는 local context 전부를 열거하고 각 context를 강하게 재연결할 수 있어야 하며 weak·ambiguous·missing이 하나라도 있으면 계속 차단한다.
-- linked delete는 Phase 7C orphan review까지 계속 차단한다. local Brief가 없는 반복 원본만 Phase 6 scoped delete 후보가 될 수 있다.
-- linked write 성공 뒤 context rebind와 `event_change_log` append는 하나의 SQLite transaction이다. EventKit과 이 local transaction은 원자적이지 않으므로 EventKit만 성공한 부분 성공을 숨기거나 자동 rollback하지 않는다.
+- Phase 7C는 linked nonrecurring `single`과 recurring occurrence `thisEvent` delete를 saved-link impact review와 final Confirm 뒤에 허용한다. linked `futureEvents`는 multi-context reconciliation이 없어 계속 차단한다.
+- linked write 성공 뒤 context rebind와 `event_change_log` append는 하나의 SQLite transaction이다. Phase 7C delete는 context/link status, Undo supersede와 cancellation log를 하나의 local transaction으로 묶는다. EventKit과 이 local transaction은 원자적이지 않으므로 EventKit만 성공한 부분 성공을 숨기거나 자동 rollback하지 않는다.
 - EventKit save 후 identifier churn으로 post-save occurrence를 강하게 재탐색하지 못하면 `CalendarEventMutationPartialSuccess`로 전파한다. UI는 editor/review를 닫고 refresh하며 동일 명령을 재시도하지 말고 Calendar.app에서 확인하도록 안내한다. local rebind·log·Undo는 수행하지 않고 Event Brief를 보존한다.
 - change log scope는 `single`, `this_event`, `future_events`를 구분한다. 실패·취소·단순 관찰은 기록하지 않는다.
 - persistent log는 audit/history이며 Undo 권한 자체가 아니다. Undo는 같은 process session의 직전 linked nonrecurring `single` calendar/time mutation 한 건만, 현재 원본이 logged after snapshot과 같을 때 역방향 write로 실행한다. unlinked·details-only·반복·detached·delete는 Undo하지 않는다.

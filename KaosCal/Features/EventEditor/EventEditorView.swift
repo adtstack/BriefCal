@@ -166,7 +166,9 @@ struct EventEditorView: View {
                         )
                     }
 
-                    if let preview = appState.pendingEventMutation {
+                    if let deletion = appState.pendingLinkedOriginalDeletion {
+                        linkedOriginalDeletionReview(deletion)
+                    } else if let preview = appState.pendingEventMutation {
                         mutationImpactReview(preview)
                     } else {
                         basicFields
@@ -213,14 +215,22 @@ struct EventEditorView: View {
             Text(timeZonePreviewMessage)
         }
         .alert(
-            "Delete this original calendar event?",
+            linkedDelete ? "Review original event deletion?" : "Delete this original calendar event?",
             isPresented: $showsDeleteConfirmation
         ) {
-            Button("Delete Original Event", role: .destructive) {
-                Task {
-                    await appState.deleteEventEditorTarget(
+            if linkedDelete {
+                Button("Review Deletion Impact") {
+                    appState.prepareLinkedOriginalDeletion(
                         scope: mutationScope
                     )
+                }
+            } else {
+                Button("Delete Original Event", role: .destructive) {
+                    Task {
+                        await appState.deleteEventEditorTarget(
+                            scope: mutationScope
+                        )
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
@@ -659,6 +669,126 @@ struct EventEditorView: View {
         }
     }
 
+    private func linkedOriginalDeletionReview(
+        _ deletion: LinkedOriginalDeletionPreview
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Label("Final deletion review", systemImage: "trash.slash")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Color.red)
+            Text(
+                "Nothing has been written yet. Back returns to the editor. The red confirmation below is the only action that deletes the original calendar event."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Original calendar event will be removed", systemImage: "calendar.badge.minus")
+                    .font(.headline)
+                    .foregroundStyle(Color.red)
+                Text(deletion.original.title)
+                    .font(.body.weight(.medium))
+                Text(
+                    CalendarEventDateFormatting.inspectorText(
+                        for: deletion.original,
+                        calendar: appState.calendar
+                    )
+                )
+                .font(.callout)
+                Text(
+                    "\(deletion.original.calendarTitle) · \(deletion.original.sourceTitle)"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                Text(
+                    deletion.original.isRecurring
+                        ? "Scope: This occurrence only"
+                        : "Scope: Single event"
+                )
+                .font(.caption.weight(.semibold))
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color.red.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Local Event Brief will be kept", systemImage: "archivebox")
+                    .font(.headline)
+                    .foregroundStyle(KaosCalTheme.accent)
+                Text(
+                    deletion.impact.hasNotes
+                        ? "Local notes: \(deletion.impact.notesCharacterCount) characters"
+                        : "Local notes: none"
+                )
+                .font(.callout)
+                if deletion.impact.hasNotes {
+                    Text(deletion.brief.context.notes)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(4)
+                }
+                Text("Local tasks: \(deletion.impact.taskCount)")
+                    .font(.callout)
+
+                ForEach(
+                    deletion.impact.taskSections,
+                    id: \.section
+                ) { section in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(section.section.editorTitle) · \(section.count)")
+                            .font(.caption.weight(.semibold))
+                        if !section.titles.isEmpty {
+                            Text(section.titles.joined(separator: " · "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                }
+
+                if !deletion.impact.recentHistory.isEmpty {
+                    Divider()
+                    Text("Recent changes")
+                        .font(.caption.weight(.semibold))
+                    ForEach(deletion.impact.recentHistory.prefix(3)) { entry in
+                        Text(
+                            "\(entry.changeType.editorTitle) · \(entry.createdAt.formatted(date: .abbreviated, time: .shortened))"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                KaosCalTheme.accentSoft,
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+
+            if deletion.original.isRecurring {
+                Label(
+                    "Only this occurrence is removed. The series continues, and Exchange may store a deletion exception.",
+                    systemImage: "arrow.triangle.branch"
+                )
+                .font(.callout)
+                .foregroundStyle(Color.orange)
+            }
+
+            Label(
+                "There is no Undo. The kept Brief will be marked Original deleted in Task Center, where its notes and tasks remain available.",
+                systemImage: "arrow.uturn.backward.circle.badge.exclamationmark"
+            )
+            .font(.callout.weight(.medium))
+            .foregroundStyle(Color.red)
+        }
+        .accessibilityIdentifier("eventEditor.linkedDeletionReview")
+    }
+
     private func impactRow(
         title: String,
         before: String,
@@ -692,7 +822,27 @@ struct EventEditorView: View {
 
     private var footer: some View {
         HStack {
-            if appState.pendingEventMutation != nil {
+            if appState.pendingLinkedOriginalDeletion != nil {
+                Text("Final confirmation deletes the original; the local Brief stays on this Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Back") {
+                    appState.cancelPendingLinkedOriginalDeletion()
+                }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isBusy)
+                Button("Delete Original & Keep Brief", role: .destructive) {
+                    Task {
+                        await appState.confirmPendingLinkedOriginalDeletion()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+                .keyboardShortcut(.defaultAction)
+                .disabled(isBusy)
+                .accessibilityIdentifier("eventEditor.confirmLinkedDeletion")
+            } else if appState.pendingEventMutation != nil {
                 Text("Confirm is the only action that writes this preview.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -749,8 +899,12 @@ struct EventEditorView: View {
     }
 
     private var deleteLocked: Bool {
-        if case .linked = session.mutationContext { return true }
         return isExistingRecurring && mutationScope == nil
+    }
+
+    private var linkedDelete: Bool {
+        if case .linked = session.mutationContext { return true }
+        return false
     }
 
     private var saveDisabled: Bool {
@@ -810,13 +964,13 @@ struct EventEditorView: View {
     }
 
     private var deleteLockMessage: String {
-        if case .linked = session.mutationContext {
-            return "This event has a local Event Brief. Original deletion waits for the Phase 7 orphan review flow so local notes and tasks do not become hidden."
-        }
         return "Choose whether to delete this occurrence or this and future occurrences."
     }
 
     private var deleteConfirmationMessage: String {
+        if linkedDelete {
+            return "This first step writes nothing. Review exactly which local notes and tasks will be kept before the separate final confirmation."
+        }
         if isExistingRecurring {
             switch mutationScope {
             case .thisEvent:
@@ -827,7 +981,7 @@ struct EventEditorView: View {
                 return "Choose the recurring deletion scope before continuing."
             }
         }
-        return "This removes the event through EventKit. A linked Event Brief must use the Phase 7 orphan review flow instead."
+        return "This removes the event through EventKit."
     }
 
     private var recurrenceFrequencyBinding:

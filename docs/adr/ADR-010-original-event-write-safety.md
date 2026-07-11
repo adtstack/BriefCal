@@ -24,9 +24,10 @@ Phase 5부터 KaosCal은 EventKit 원본 일정을 생성·수정·삭제한다.
 - `Keep local time` 결과가 DST gap의 존재하지 않는 시각이거나 fall-back의 중복 시각이면 자동 보정·임의 선택하지 않고 저장을 차단한다.
 - 연결된 비반복 일정의 같은-calendar 제목·시간·종일·time zone·장소·원본 notes 변경은 편집기의 `Save Changes`를 사용자 승인으로 보고 Phase 5에서 허용한다. 성공 receipt로 기존 `contextID`의 link snapshot만 명시적으로 다시 묶고 local notes/tasks는 보존한다.
 - 연결된 일정을 다른 calendar로 옮기는 작업은 Phase 6 safe-move 흐름까지 차단한다. local Brief가 없는 일정만 다른 writable calendar로 옮길 수 있다.
-- 연결된 원본 일정 삭제는 ADR-012의 Phase 7C orphan review까지 차단한다. local Brief가 없는 비반복 일정만 Phase 5에서 삭제한다.
+- Phase 7C는 active link가 있는 원본 삭제를 별도 impact review와 최종 destructive Confirm 뒤에만 연다. 비반복은 `single`, 반복은 선택 occurrence의 `thisEvent`만 허용하며 linked `futureEvents`, attendee meeting과 invitation은 계속 provider 호출 전에 차단한다. local Brief가 없는 일정의 기존 삭제 경로와 이 linked finalize 경로를 섞지 않는다.
 - 반복 생성·수정·삭제와 `EKSpan` 범위 선택은 Phase 6으로 이월한다.
 - EventKit 저장과 SQLite rebind는 원자적이지 않다. EventKit 성공 뒤 local rebind가 실패하면 성공을 되돌린 것처럼 표시하지 않고, 원본 저장 성공·local 갱신 실패·local 데이터 보존을 함께 알린다.
+- linked delete도 같은 외부/local 경계를 따른다. EventKit remove가 성공한 뒤 local finalize가 실패하거나 process가 종료되면 원본 삭제를 자동 복원하거나 같은 Delete를 재시도하지 않는다. editor/review를 닫고 refresh한 뒤 원본 삭제 성공·local finalize 실패·notes/tasks 보존을 함께 알리며, 남은 Brief는 Phase 7B recovery에서 다시 확인할 수 있다.
 - 편집기를 열기 전 pending local notes를 먼저 저장한다. 저장 실패, weak/ambiguous identity, 다른 활성 편집 세션이 있으면 원본 편집을 열지 않는다.
 
 ## 결과
@@ -34,6 +35,7 @@ Phase 5부터 KaosCal은 EventKit 원본 일정을 생성·수정·삭제한다.
 - stale 원본, 반복 occurrence, read-only, 참석자 회의를 잘못 변경할 가능성이 줄어든다.
 - structured EventKit metadata와 외부에서 갱신된 지원 필드는 보수적으로 보존된다.
 - EventKit과 SQLite의 부분 성공을 숨기지 않으므로 사용자가 Calendar.app과 local Brief 상태를 복구할 수 있다.
+- Phase 7C의 성공한 linked delete는 원본만 제거하고 같은 `contextID`의 local Brief를 `cancelled + orphaned` 상태와 unavailable `cancelled` log로 보존한다. deleted-original 표시는 상태쌍만으로 추론하지 않고 현재 link 세대에 이 KaosCal deletion provenance가 있는지 확인하며, 이후 `(created_at, rowid)`상 더 늦은 relink는 과거 provenance를 무효화한다. Delete에는 session Undo를 제공하지 않는다.
 - Phase 5에는 change log schema나 migration을 추가하지 않는다. 같은-calendar 시간 변경의 richer 영향 미리보기와 change log는 Phase 6에서 보강한다.
 - 비반복 `KAOS-TEST` EventKit save/remove와 Outlook server 반영·UTC 정규화는 2026-07-11 signed FinalRelease gate에서 통과했다. 실제 identifier churn, Calendar.app 시각 round-trip, all-day·time-zone·반복·calendar move는 계속 별도 수동 gate다.
 
@@ -44,5 +46,6 @@ Phase 5부터 KaosCal은 EventKit 원본 일정을 생성·수정·삭제한다.
 - AppState create/update/delete, 제한 정책, active-session·권한 회수
 - linked rebind, calendar move/delete 사전 차단, 외부 변경 오류, 부분 성공 안내
 - rebind unique 충돌·missing context transaction rollback
+- Phase 7C fake provider의 read-only impact preparation, final Confirm 전 delete 0회, expected-link 검증, `single`/`thisEvent` delete receipt, irreversible partial-success와 재시도 차단. 실제 Exchange linked delete는 별도 수동 gate다.
 
 EventKit 실제 save/remove와 Calendar.app 반영은 자동 fake-provider 결과와 구분해 compatibility matrix에 기록한다.

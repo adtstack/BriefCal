@@ -164,7 +164,7 @@ After:
 - 종일 종료는 사람이 보는 포함 날짜로 표시하고, EventKit 배타 종료라는 설명을 붙인다.
 - floating toggle 또는 IANA time zone 입력이 실제 draft에 적용되기 전에는 Save를 비활성화한다. Apply 뒤 `Keep local time`/`Keep instant`의 두 결과를 confirmation dialog에서 비교한다.
 - DST gap·overlap처럼 local time이 존재하지 않거나 두 번 생기면 임의로 고르지 않고 field 가까이에 오류를 표시한다.
-- local Brief가 연결된 일정도 calendar picker를 열어 두되, 이동·시간 의미·반복 변경은 impact review에서 확인한 뒤에만 write한다. linked delete는 Phase 7C orphan review 전까지 계속 잠그고 이유를 설명한다.
+- local Brief가 연결된 일정도 calendar picker를 열어 두되, 이동·시간 의미·반복 변경은 impact review에서 확인한 뒤에만 write한다. linked delete는 첫 alert에서 바로 실행하지 않고 Phase 7C의 saved-link impact review와 별도 destructive Confirm으로 전환한다.
 - read-only, attendee meeting/invitation은 inspector에서 원본 편집 대신 잠금 이유를 표시한다. 지원 가능한 반복 occurrence는 명시적 scope로 편집하고, detached·complex rule의 unsafe future/rule 변경만 Calendar.app으로 안내한다. local Brief 편집은 계속 가능하다.
 - 저장 중에는 progress와 interactive-dismiss 차단을 사용한다. stale·identity 모호성은 write 전 복구 가능한 오류로 보여 준다. EventKit save 후 post-save occurrence를 확정하지 못한 부분 성공은 editor/review를 닫고 refresh한 뒤 “Do not retry·Calendar.app에서 확인”을 표시한다. local data는 보존하며 log·Undo를 만들지 않는다.
 - 한 번에 하나의 editor만 허용하고 sheet가 열려 있으면 toolbar와 `⌘N`을 비활성화한다.
@@ -214,6 +214,15 @@ impact confirmation에 표시할 것:
 - confirm 뒤 저장 중에는 dismiss와 중복 명령을 막는다.
 - EventKit만 성공하고 local transaction이 실패하면 “원본은 변경됨 / local 연결·기록 갱신 실패 / local notes와 tasks 보존”을 함께 보여 준다. post-save occurrence receipt가 불확실한 경우는 동일 write 재시도를 세션 상태로 차단하고 Calendar.app 확인을 요청한다.
 - 초기 Phase 6의 linked `이번 이후`에는 Confirm을 제공하지 않는다. 후속 reconciliation을 열더라도 weak·ambiguous·missing이면 계속 Confirm을 제공하지 않는다.
+
+## Phase 7C linked original delete review
+
+- linked Delete의 첫 alert는 `Review Deletion Impact`만 제공하며 EventKit/SQLite를 바꾸지 않는다. editor 안의 final review는 원본 title/date/calendar, single 또는 `This occurrence only` scope, local notes 글자 수와 읽을 수 있는 일부 본문, section별 task 수·제목과 최근 history를 분리해 보여 준다.
+- 원본 영역은 red destructive hierarchy, 보존되는 Local Event Brief 영역은 accent archive hierarchy를 사용한다. `Delete Original & Keep Brief`만 실제 destructive action이고 Back은 원래 editor로 돌아간다.
+- final review에는 “원본만 삭제 / local Brief 유지 / Undo 없음 / 성공 뒤 Task Center에서 `Original deleted · Local Brief kept`로 접근”을 action 가까이에 명시한다.
+- linked recurring은 `This event`만 열고 series가 계속되며 Exchange deletion exception이 생길 수 있음을 알린다. `This and future`, attendee/invitation과 read-only 원본에는 final Confirm을 제공하지 않는다.
+- Confirm 직전 saved link가 stale이면 review를 닫고 다시 준비하게 한다. provider 성공 뒤 local finalize/receipt가 실패하면 editor/review를 닫아 Delete 재시도를 막고, 원본은 이미 삭제됐거나 삭제됐을 수 있음과 local notes/tasks 보존을 전역 오류로 보여 준다. 자동 원본 복원이나 Undo를 제안하지 않는다.
+- Task Center row와 Local Event Briefs section은 일반 orphan과 deleted-original을 구분하되 `cancelled + orphaned`만으로 라벨을 만들지 않는다. current-link-generation unavailable `cancelled` log가 있고 이후 `(created_at, rowid)`상 더 최신 relink가 없을 때만 deleted-original style을 사용한다. deleted-original recovery sheet에서는 Relink와 local Brief 삭제를 제공하되 Keep as orphan은 다시 요구하지 않는다.
 
 금지:
 - 확인 전에 EventKit 변경

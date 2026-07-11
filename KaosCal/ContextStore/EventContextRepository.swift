@@ -5,6 +5,19 @@ struct EventBriefSnapshot: Equatable {
     let context: EventContext
     let link: EventLink
     let tasks: [EventTask]
+    let hasRecordedOriginalDeletion: Bool
+
+    init(
+        context: EventContext,
+        link: EventLink,
+        tasks: [EventTask],
+        hasRecordedOriginalDeletion: Bool = false
+    ) {
+        self.context = context
+        self.link = link
+        self.tasks = tasks
+        self.hasRecordedOriginalDeletion = hasRecordedOriginalDeletion
+    }
 }
 
 enum EventBriefLoadResult: Equatable {
@@ -93,7 +106,12 @@ final class EventContextRepository {
         return EventBriefSnapshot(
             context: context,
             link: link,
-            tasks: tasks
+            tasks: tasks,
+            hasRecordedOriginalDeletion:
+                try Self.hasRecordedOriginalDeletionForCurrentLink(
+                    contextID: contextID,
+                    in: db
+                )
         )
     }
 
@@ -644,6 +662,38 @@ final class EventContextRepository {
             link: link,
             eventSnapshot: eventSnapshot
         )
+    }
+
+    private static func hasRecordedOriginalDeletionForCurrentLink(
+        contextID: String,
+        in db: Database
+    ) throws -> Bool {
+        try Bool.fetchOne(
+            db,
+            sql: """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM event_change_log AS deletion
+                    WHERE deletion.context_id = ?
+                      AND deletion.change_type = 'cancelled'
+                      AND deletion.undo_state = 'unavailable'
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM event_change_log AS relink
+                          WHERE relink.context_id = deletion.context_id
+                            AND relink.change_type = 'relinked'
+                            AND (
+                                relink.created_at > deletion.created_at
+                                OR (
+                                    relink.created_at = deletion.created_at
+                                    AND relink.rowid > deletion.rowid
+                                )
+                            )
+                      )
+                )
+                """,
+            arguments: [contextID]
+        ) ?? false
     }
 
     private static func legacySyntheticSingleMatches(

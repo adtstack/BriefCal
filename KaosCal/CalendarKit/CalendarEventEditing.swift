@@ -382,7 +382,6 @@ enum CalendarEventWriteError: Error, Equatable {
     case localDraftSaveRequired
     case editorAlreadyOpen
     case linkedCalendarMoveDeferred
-    case linkedDeleteDeferred
     case invalidRecurrenceInterval
     case invalidRecurrenceWeekdays
     case invalidRecurrenceEnd
@@ -440,8 +439,6 @@ extension CalendarEventWriteError: LocalizedError {
             "Finish or cancel the current event edit before opening another one."
         case .linkedCalendarMoveDeferred:
             "Moving an event with a local Event Brief requires the linked-impact review."
-        case .linkedDeleteDeferred:
-            "Deleting an event with a local Event Brief needs the Phase 7 orphan review flow."
         case .invalidRecurrenceInterval:
             "A recurrence interval must be a positive number."
         case .invalidRecurrenceWeekdays:

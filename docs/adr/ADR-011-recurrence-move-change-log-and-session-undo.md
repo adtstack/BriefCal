@@ -38,7 +38,7 @@ Phase 6은 반복 occurrence 변경과 local Event Brief가 연결된 일정의 
 - EventKit save는 성공했지만 identifier churn으로 post-save occurrence receipt를 강하게 확정하지 못하면 부분 성공으로 전파한다. UI는 editor/review를 닫고 refresh해 동일 write 재시도를 막으며, “재시도하지 말고 Calendar.app에서 확인”을 안내한다. 이 경로는 local rebind·change log·Undo token을 만들지 않고 기존 Event Brief를 보존한다.
 - 비반복 linked move와 안전하게 식별 가능한 `thisEvent` move는 기존 context 하나를 rebind한다.
 - `futureEvents`가 영향을 주는 local context를 모두 열거하고 각 occurrence를 강하게 재연결할 계획을 만들 수 있어야 linked future-series write를 열 수 있다. Phase 6의 첫 안전 범위는 이 multi-context reconciliation을 제공하지 않으므로 linked `futureEvents`를 모두 provider 호출 전에 차단한다. 후속 구현도 하나라도 weak·ambiguous·missing이거나 series split 뒤 occurrence 대응을 보장할 수 없으면 계속 차단해야 한다.
-- linked 원본 삭제는 반복 범위와 무관하게 ADR-012의 Phase 7C orphan review까지 차단한다. Phase 6의 delete 범위 UI는 local Brief가 없는 반복 일정에만 적용할 수 있다.
+- Phase 7C는 linked 원본도 ADR-012의 별도 delete review와 최종 Confirm을 통과하면 비반복 `single` 또는 반복 occurrence 하나의 `thisEvent`로 삭제할 수 있다. linked `futureEvents`는 여러 context reconciliation이 없으므로 계속 provider 호출 전에 차단한다.
 
 ### 4. change log는 additive local schema다
 
@@ -48,7 +48,7 @@ Phase 6은 반복 occurrence 변경과 local Event Brief가 연결된 일정의 
 - versioned payload는 identifier, calendar/source, title/location/original event notes, 정확한 raw time과 all-day/floating civil components 또는 zoned identifier, recurrence occurrence identity를 담아 확인과 안전한 역방향 write에 사용한다. 이는 이 Mac의 local DB에 저장되는 원본 snapshot이며 계정 자격 증명, 참석자, Event Brief notes/tasks 본문은 담지 않는다.
 - `undo_state`는 `available`, `superseded`, `undone`, `unavailable`로 제한한다. `undo_of_change_id`는 같은 table의 원본 변경을 가리키며 한 변경을 두 번 undo하지 못하도록 unique index를 둔다.
 - `undone` row만 non-null `undone_at`을 가지며, `restored` row는 non-null `undo_of_change_id`와 `unavailable` state를 함께 가져야 한다. 원본 change가 local context와 함께 삭제되면 self-reference도 cascade한다.
-- EventKit 성공 뒤 linked rebind와 change log append는 하나의 SQLite transaction에서 수행한다. transaction이 실패하면 원본 EventKit 성공과 local 갱신 실패를 함께 알리고 local data를 보존한다. 성공하지 않은 local transaction을 change log가 성공으로 위장하면 안 된다.
+- EventKit 성공 뒤 linked rebind와 change log append는 하나의 SQLite transaction에서 수행한다. Phase 7C delete는 context `cancelled`, link `orphaned`, 이전 available Undo supersede와 unavailable `cancelled` log append를 별도의 한 SQLite transaction으로 묶는다. 이 log가 현재 link 세대의 KaosCal deletion provenance이며 `(created_at, rowid)`상 이후 `relinked`가 있으면 과거 provenance로 취급한다. transaction이 실패하면 원본 EventKit 성공과 local 갱신 실패를 함께 알리고 local data를 보존한다. 성공하지 않은 local transaction을 change log가 성공으로 위장하면 안 된다.
 
 ### 5. Undo는 마지막 작업의 세션 내 보조 기능이다
 
@@ -64,7 +64,7 @@ Phase 6은 반복 occurrence 변경과 local Event Brief가 연결된 일정의 
 - series split이나 identifier churn을 안전하게 reconciliation할 수 없는 linked future write는 기능 제공보다 데이터 보존을 우선해 차단된다.
 - change log는 EventKit 성공과 local transaction 성공을 구분하고, Event Brief와 같은 local 수명을 가진다.
 - Undo를 좁게 제한해 외부 동기화나 반복 series를 과거 상태로 덮어쓸 위험을 줄인다.
-- linked 삭제와 orphan lifecycle은 ADR-012의 Phase 7B~7C 범위다.
+- 외부 부재 복구와 KaosCal이 시작한 linked 삭제는 ADR-012의 서로 다른 Phase 7B/7C 경계다. Phase 7C delete는 session Undo 대상이 아니다.
 
 ## 검증 기준
 
@@ -76,5 +76,6 @@ Phase 6은 반복 occurrence 변경과 local Event Brief가 연결된 일정의 
 - EventKit 성공·SQLite 실패의 부분 성공 표시와 false log 방지
 - post-save occurrence receipt 실패 시 editor/review 종료, refresh, 동일 write 재시도 차단, local data·log 불변
 - session Undo token의 생성·무효화·one-shot 역방향 write
+- Phase 7C fake-only gate에서 linked delete 최종 Confirm 전 provider 0회, `single`/`this_event` scope, saved-link 동일 before/after payload, `cancelled + orphaned`와 current-link-generation cancellation provenance, relink의 `(created_at, rowid)` 무효화, no Undo, local failure rollback과 no-retry partial success를 검증. 실제 Exchange 삭제는 미검증
 - 전체 **121 tests, 0 failures, 0 unexpected** 자동 gate 통과
 - 실제 Exchange KC-E4와 calendar move는 별도 수동 gate에서만 pass 판정

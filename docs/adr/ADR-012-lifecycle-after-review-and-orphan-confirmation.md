@@ -2,7 +2,7 @@
 
 > 상태: Accepted
 > 날짜: 2026-07-11
-> 구현 상태: Phase 7A/7B 완료, Phase 7C 잠금 유지
+> 구현 상태: Phase 7A/7B/7C 구현 및 fake-provider 자동 checkpoint 완료, Phase 7C live Exchange 삭제 대기
 
 ## 배경
 
@@ -87,22 +87,53 @@ migration을 추가하지 않았다.
 
 ### Phase 7C: 연결된 원본 삭제
 
-- Phase 7B 완료 뒤에도 linked original delete는 잠금 상태이며 아래 계약은 아직
-  구현을 여는 조건이다.
-- linked original delete는 notes와 section별 task 영향을 먼저 보여 준 뒤
-  별도 Confirm을 요구한다.
-- 성공한 EventKit 삭제는 context를 `cancelled`, link를 `orphaned`로 바꾸되
-  local notes/tasks를 보존한다.
-- 삭제 change log는 저장 link에서 만든 마지막-known snapshot을 사용한다.
-  post-delete 이벤트가 없으므로 `cancelled`의 before/after payload는 같은
-  snapshot이고 `change_type`이 제거 의미를 전달한다.
-- linked 반복의 `futureEvents` 삭제, attendee meeting과 invitation 원본 삭제는
-  계속 차단한다.
+- linked original delete는 active link의 notes 글자 수, Before/During/After task
+  수와 제목, 최근 history, 원본 calendar/time과 반복 scope를 read-only로 준비해
+  보여 준다. 첫 삭제 alert와 review의 Back은 EventKit/SQLite를 바꾸지 않으며
+  `Delete Original & Keep Brief` 최종 Confirm만 write 권한이다.
+- preparation은 저장된 `EventLink`와 여기서 만든 `EventChangeSnapshot`을 함께
+  고정한다. Confirm 직전 현재 link 전체와 saved snapshot이 그대로인지 다시
+  검사하고, EventKit 성공 뒤 local finalize transaction에서도 같은 equality CAS를
+  반복한다. stale/missing/non-active link는 provider 호출 전에 중단한다.
+- 비반복 linked event는 change-log `single`, 반복 occurrence 하나는 `this_event`로
+  삭제한다. linked 반복의 `futureEvents`, attendee meeting, invitation, read-only
+  원본은 계속 provider 호출 전에 차단한다.
+- 성공한 EventKit 삭제는 하나의 SQLite transaction에서 context lifecycle을
+  `cancelled`, link status를 `orphaned`로 바꾸고 이전 available Undo를 supersede한
+  뒤 unavailable `cancelled` log를 append한다. 같은 `contextID`, link의 마지막-known 값,
+  `last_seen_at`, local notes/tasks는 보존한다.
+- 삭제 log는 저장 link에서 만든 snapshot을 before/after에 똑같이 사용한다.
+  post-delete event가 없으므로 `change_type = cancelled`가 제거 의미를 전달한다.
+  v1 link는 원본 EventKit notes를 저장하지 않았으므로 두 payload의
+  `originalNotes`는 `nil`(unavailable)이며 KaosCal local notes를 대입하지 않는다.
+  undo state는 `unavailable`이고 delete용 session Undo token을 만들지 않는다.
+- `Original deleted` provenance는 `cancelled + orphaned` 상태쌍 자체가 아니다.
+  현재 context history에 unavailable `cancelled` log가 있고 그 뒤에 더 최신
+  `relinked` log가 없어야 한다. 최신 판단은 `created_at`을 먼저 비교하고 같은
+  timestamp에서는 SQLite `rowid`를 tie-break로 사용한다. 더 늦은 relink는 과거
+  deletion provenance를 무효화하므로 이후 외부 cancellation/orphan 전이가 같은
+  상태쌍을 만들어도 새 KaosCal deletion log 없이는 deleted-original로 표시하지 않는다.
+- status, `cancelled` change type, `single`/`this_event` scope와 unavailable Undo는
+  기존 v1/v2 schema에 모두 있어 Phase 7C migration을 추가하지 않았다.
+- EventKit remove와 SQLite finalize는 하나의 transaction이 아니다. provider가
+  성공했지만 receipt가 모순되거나 local CAS/log transaction이 실패하면 editor와
+  review를 닫고 refresh하며 같은 Delete를 재시도하지 않도록 한다. 원본은 이미
+  삭제됐거나 삭제됐을 수 있고 local Brief/notes/tasks는 rollback으로 보존됐음을
+  함께 알린다. 두 경계 사이 process 종료도 같은 crash window이며 Phase 7B의
+  보수적 recovery가 fallback이다. 자동으로 원본을 재생성하지 않는다.
+- Task Center와 recovery sheet는 `cancelled + orphaned`에 current-link-generation
+  deletion provenance가 함께 있을 때만 `Original deleted · Local Brief kept`로
+  표시한다. 그 외 같은 상태쌍은 일반 local orphan으로 남기며 Relink 또는 local
+  Brief 삭제 진입점을 유지한다.
 
 ## 결과
 
 Phase 7A는 Exchange 원본을 쓰지 않고도 종료 후 작업 흐름을 제공한다.
 완료된 Phase 7B는 조회 누락을 삭제로 오인하지 않고 원본 일정과 local Brief의
-삭제 권한을 분리한다. 전용 lookup, 두 단계 notFound, 보수적 반복 판정,
-orphan review, 검증된 relink와 local-only delete는 schema 변경 없이 기존 v1/v2
-저장 계약 위에 구현했다. Phase 7C의 linked original delete만 계속 잠겨 있다.
+삭제 권한을 분리한다. Phase 7C는 사용자가 명시적으로 시작한 원본 삭제에만
+positive EventKit receipt를 사용해 `cancelled + orphaned`와 current-link-generation
+unavailable cancellation provenance를 기록한다. 전용 lookup,
+두 단계 notFound, 보수적 반복 판정, 검증된 relink, local-only delete와 linked
+original delete review/finalize는 schema 변경 없이 기존 v1/v2 저장 계약 위에
+구현했다. 자동 checkpoint는 fake provider/local DB 범위이며 실제 Exchange linked
+delete와 Calendar.app/서버 반영은 별도 수동 gate다.

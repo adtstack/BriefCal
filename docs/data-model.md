@@ -28,7 +28,7 @@ KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 ## 표시 모델과 영속 모델
 
-Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연결·맥락만 SQLite에 영속화했다. Phase 6은 이 경계에 impact preview, recurrence scope, additive change log와 process-session Undo token을 구현했다. Phase 7B는 schema를 바꾸지 않고 occurrence-aware lookup 값, 두 단계 missing 확인과 명시적 recovery 명령을 추가했다.
+Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연결·맥락만 SQLite에 영속화했다. Phase 6은 이 경계에 impact preview, recurrence scope, additive change log와 process-session Undo token을 구현했다. Phase 7B는 schema를 바꾸지 않고 occurrence-aware lookup 값, 두 단계 missing 확인과 명시적 recovery 명령을 추가했다. Phase 7C도 기존 v1/v2를 재사용해 linked original delete의 saved-link preview, CAS, `cancelled + orphaned` finalize와 current-link-generation deletion provenance projection을 추가했다.
 
 | 값 | 역할 | 영속 모델과의 차이 |
 | --- | --- | --- |
@@ -45,6 +45,8 @@ Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연�
 | `EventMutationImpact` | local notes 유무·글자 수, section별 task count/title, 최근 change history | `ContextStore`의 side-effect-free read projection이며 scope나 EventKit write 권한이 아님 |
 | `CalendarEventLookupQuery` / `CalendarEventLookupResult` | 저장 link 또는 최종 선택 event의 strong identifiers, occurrence anchor와 마지막-known snapshot으로 전용 조회 | provider read 값이다. 일반 구간 fetch의 부재나 SQLite 상태 자체가 아님 |
 | `LinkedEventRecoverySession` | 첫 missing, recheck, candidate, orphan 확인과 relink 확인을 보관 | AppState의 일시 상태다. expected `EventLink` snapshot은 최종 relink CAS에 사용하지만 별도 DB record는 아님 |
+| `LinkedOriginalDeletionPreparation` / `LinkedOriginalDeletionPreview` | active Brief, notes/tasks/history impact, expected `EventLink`와 saved-link change snapshot을 최종 삭제 review에 고정 | 비영속 read 모델이다. final Confirm 전에는 EventKit과 DB를 바꾸지 않으며 expected link/snapshot은 pre-provider 및 post-provider CAS에 사용 |
+| `EventBriefSnapshot.hasRecordedOriginalDeletion` / `TaskCenterItem.wasOriginalDeletedByKaosCal` | 현재 link 세대에 유효한 KaosCal deletion provenance를 UI에 전달 | 저장 column이 아니다. unavailable `cancelled` log가 있고 `(created_at, rowid)`상 이후 `relinked`가 없을 때만 true |
 | session Undo token | 직전 비반복 `single` write의 change ID와 after snapshot | process 메모리에만 존재. persistent `undo_state`만으로 재실행 뒤 Undo하지 않음 |
 
 영속 Event Brief 연결은 아래 `Identity resolution 순서`로 구현되어 있다. UI ID가 같거나 달라졌다는 사실만으로 local context를 자동 연결·삭제하지 않는다.
@@ -138,7 +140,7 @@ create table app_settings (
 
 첫 GRDB migration `v1_context_store`는 아래 네 테이블만 만든다.
 
-Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immutable v1을 유지하고 아래 `v2_event_change_log` additive migration을 적용했으며 migration·constraint·transaction 회귀 테스트를 통과했다. Phase 7B도 v1의 lifecycle/link status와 v2의 `relinked` type을 그대로 사용해 migration을 추가하지 않았다.
+Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immutable v1을 유지하고 아래 `v2_event_change_log` additive migration을 적용했으며 migration·constraint·transaction 회귀 테스트를 통과했다. Phase 7B는 v1 status와 v2 `relinked`, Phase 7C는 v1의 `cancelled`/`orphaned`와 v2 `cancelled`/scope/unavailable Undo를 그대로 사용해 migration을 추가하지 않았다.
 
 | 테이블 | 현재 책임 |
 | --- | --- |
@@ -167,6 +169,16 @@ Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immuta
 - `Keep as orphan`만 context lifecycle과 link status를 함께 orphaned로 저장한다. orphaned link의 strong-looking live event도 자동 재활성화하지 않고 confirmation candidate로 낮춘다.
 - 명시적 Relink는 선택 event의 최종 provider strong verification, strong-ID 존재, 다른 context 충돌 방지와 선택 시점 `EventLink` 전체 equality CAS를 모두 통과해야 한다. snapshot/lifecycle 갱신, 이전 available Undo supersede와 unavailable `relinked` log insert는 한 SQLite transaction이며 실패하면 모두 rollback된다.
 - `Delete local Brief`는 missing/orphaned context만 허용한다. context, link, event task, change log를 SQLite cascade로 지우되 `CalendarProviding.deleteEvent`를 호출하지 않는다.
+
+### Phase 7C linked original delete
+
+- preparation은 active Brief와 notes/tasks/history impact를 한 consistent read에서 가져오고 `EventChangeSnapshot(link:)`을 미리 검증한다. 이 saved link와 snapshot이 immutable delete preview의 CAS 기준이다.
+- Confirm 직전 `mutationContext`, full expected-link equality와 saved snapshot을 다시 읽어 확인한다. 비반복은 `single`, 반복은 해당 occurrence의 `this_event`만 허용하고 linked `future_events`, attendee/invitation과 read-only 원본은 EventKit 전에 차단한다.
+- 성공한 delete receipt 뒤 `finalizeLinkedOriginalDeletion`은 expected link/snapshot을 다시 CAS하고 context lifecycle `cancelled`, link status `orphaned`, 이전 available Undo supersede와 unavailable `cancelled` log insert를 한 SQLite transaction에서 수행한다. `context_id`, notes/tasks, link identifiers/snapshots/fingerprint와 `last_seen_at`은 유지한다.
+- deletion log의 before/after는 같은 saved-link snapshot이다. post-delete event가 없고 v1 link는 원본 notes를 저장하지 않으므로 `originalNotes = nil`은 unavailable이며 local notes를 대입하지 않는다. scope는 nonrecurring `single` 또는 recurring `this_event`, undo state는 `unavailable`이다.
+- EventKit remove와 local finalize는 원자적이지 않다. receipt가 모순되거나 transaction/CAS가 실패하면 SQLite status/log/Undo supersede는 모두 rollback되지만 원본은 이미 삭제됐거나 삭제됐을 수 있다. UI는 review를 닫고 refresh하며 동일 Delete 재시도를 막고 local Brief 보존을 안내한다. 두 경계 사이 crash도 Phase 7B recovery로 돌아가는 부분 성공이다.
+- deleted-original read projection은 상태쌍만으로 만들지 않는다. 해당 context의 unavailable `cancelled` log 중 더 최신 `relinked`가 없는 row가 있어야 하며 순서는 `created_at`, 동일 timestamp에서는 `rowid`로 판정한다. relink 뒤의 current link generation은 과거 cancellation을 상속하지 않는다. 따라서 이후 provider 관찰이나 수동 상태 전이로 다시 `cancelled + orphaned`가 되어도 새 KaosCal deletion log 없이는 일반 orphan이다.
+- Phase 7C는 새 status, table, column이나 change type을 요구하지 않으므로 schema migration이 없다.
 
 ### Event link temporal and recurrence fields
 
@@ -226,9 +238,9 @@ Personal task due는 생성 뒤 수정하거나 제거할 수 있다. due 없음
 | `undo_of_change_id` | 같은 table의 원본 변경 self foreign key, nullable |
 | `created_at` | UTC millisecond TEXT Date 계약 |
 
-`context_id + created_at DESC` 조회 index와 non-null `undo_of_change_id` partial unique index를 둔다. `undo_state = undone`이면 `undone_at`이 필수이고 다른 state에는 없어야 한다. `restored` row만 non-null `undo_of_change_id`와 `unavailable` state를 가지며 self foreign key 삭제는 cascade한다. live EventKit event에서 만든 versioned payload에는 identifiers, calendar/source/title/location/original event notes, raw start/end, all-day/floating civil components 또는 zoned identifier, recurrence occurrence identity를 포함한다. 다만 Phase 7B relink의 before payload는 원본이 없어 v1 `event_links`의 마지막-known snapshot으로 만든다. v1 link는 원본 EventKit notes를 저장하지 않았으므로 이 경우 `before.originalNotes = nil`은 unavailable을 뜻하며 local Event Brief notes로 대체하지 않는다. 계정 credential, attendee 목록, Event Brief notes/task 본문은 어떤 payload에도 포함하지 않는다.
+`context_id + created_at DESC` 조회 index와 non-null `undo_of_change_id` partial unique index를 둔다. `undo_state = undone`이면 `undone_at`이 필수이고 다른 state에는 없어야 한다. `restored` row만 non-null `undo_of_change_id`와 `unavailable` state를 가지며 self foreign key 삭제는 cascade한다. live EventKit event에서 만든 versioned payload에는 identifiers, calendar/source/title/location/original event notes, raw start/end, all-day/floating civil components 또는 zoned identifier, recurrence occurrence identity를 포함한다. Phase 7B relink의 before와 Phase 7C delete의 before/after는 v1 `event_links`의 마지막-known snapshot으로 만든다. v1 link는 원본 EventKit notes를 저장하지 않았으므로 이 경우 `originalNotes = nil`은 unavailable을 뜻하며 local Event Brief notes로 대체하지 않는다. Phase 7C의 identical before/after에서는 `change_type = cancelled`가 삭제 의미를 전달한다. deleted-original provenance query는 unavailable `cancelled`와 이후 `relinked`의 `(created_at, rowid)` 순서를 사용하며 별도 generation column을 추가하지 않는다. 계정 credential, attendee 목록, Event Brief notes/task 본문은 어떤 payload에도 포함하지 않는다.
 
-linked mutation은 receipt rebind와 log append를 하나의 SQLite transaction으로 수행한다. 취소·validation 실패·provider 실패·no-op에는 row를 만들지 않는다. EventKit 성공 뒤 local transaction이 실패하면 false log를 만들거나 다른 context로 자동 연결하지 않는다.
+linked mutation은 receipt rebind와 log append를 하나의 SQLite transaction으로 수행한다. Phase 7C는 rebind 대신 `cancelled + orphaned`, Undo supersede와 cancellation log를 한 transaction으로 finalize한다. 취소·validation 실패·provider 실패·no-op에는 row를 만들지 않는다. EventKit 성공 뒤 local transaction이 실패하면 false log를 만들거나 다른 context로 자동 연결하지 않는다.
 
 `undo_state = available`은 local repository의 후보 상태일 뿐 UI Undo 권한이 아니다. Undo는 linked calendar/time mutation이 만든 같은 process session의 in-memory token, nonrecurring `single` scope, current event와 logged after snapshot의 exact supported-field match가 모두 있을 때만 시도한다. 같은 context에 새 mutation이 기록되면 이전 available row는 superseded가 되고, 성공한 Undo는 원본을 undone으로 바꾸면서 `restored` row를 atomic append한다.
 
@@ -238,14 +250,14 @@ linked mutation은 receipt rebind와 log append를 하나의 SQLite transaction�
 
 `event_contexts.lifecycle_status`:
 - `scheduled`: 예정된 일정
-- `cancelled`: 전용 lookup이 EventKit canceled status를 강하게 확인했거나, 향후 Phase 7C 원본 삭제가 성공한 일정
+- `cancelled`: 전용 lookup이 EventKit canceled status를 강하게 확인했거나 Phase 7C linked 원본 삭제가 성공한 일정
 - `completed`: 완료 처리된 일정
 - `orphaned`: missing 재확인 뒤 사용자가 Keep as orphan을 승인한 context
 
 `event_links.link_status`:
 - `active`: 원본 이벤트와 연결됨
 - `missing`: 첫 사용자 명시 전용 lookup이 `notFound`였지만 복구 후보와 마지막-known snapshot이 남아 있음
-- `orphaned`: missing 재확인 뒤 사용자가 Keep as orphan을 승인한 보관 상태
+- `orphaned`: missing 재확인 뒤 사용자가 Keep as orphan을 승인했거나 Phase 7C가 원본 삭제 성공 뒤 local Brief를 보관한 상태. lifecycle `cancelled`와 함께인 것만으로 deleted-original은 아니며 current-link-generation unavailable `cancelled` log도 필요하다.
 
 `event_tasks.section`:
 - `before`
@@ -280,7 +292,7 @@ linked mutation은 receipt rebind와 log append를 하나의 SQLite transaction�
 
 ## Swift domain model
 
-실제 record는 String ID를 사용하는 `EventContext`, `EventLink`, `EventTask`, `PersonalTask`다. `EventBriefSnapshot`은 context+link+tasks 조회 결과이며 별도 테이블이 아니다. `TaskCenterItem`도 event/personal record를 합친 파생값이라 저장하지 않는다. lookup query/result와 recovery session도 비영속 값이며 missing/orphaned 구분은 기존 link/context status만으로 재구성한다.
+실제 record는 String ID를 사용하는 `EventContext`, `EventLink`, `EventTask`, `PersonalTask`다. `EventBriefSnapshot`은 context+link+tasks와 current-link-generation deletion provenance 조회 결과이며 별도 테이블이 아니다. `TaskCenterItem`도 event/personal record와 같은 provenance를 합친 파생값이라 저장하지 않는다. lookup query/result와 recovery session도 비영속 값이다. missing/orphaned는 link/context status로 재구성하지만 deleted-original label은 history ordering까지 요구한다.
 
 첫 non-empty notes 또는 event task가 context와 link를 함께 만든다. 단순 선택과 빈 notes는 row를 만들지 않는다. 첫 저장의 resolve/create와 linked snapshot 갱신은 하나의 write transaction에서 수행한다.
 
@@ -311,7 +323,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 
 1~4의 강한 연결만 EventKit fetch 관찰 시 title/time/source/identifier/`last_seen_at` snapshot을 자동 갱신한다. missing link가 다시 강하게 관찰되면 active로 복구할 수 있지만 orphaned link는 같은 강한 ID가 보여도 confirmation candidate로 낮춘다. 예외적으로 과거 synthetic occurrence anchor 버그가 recurring으로 저장한 single link는 1~3의 강한 identifier에 더해 calendar/title/location/start/end/time semantics/local components/fingerprint/anchor가 모두 정확히 같을 때만 기존 `context_id`를 유지하며 `single:v1`로 갱신한다. legacy 구조와 strong identifier는 맞지만 snapshot이 다르면 `legacySyntheticSingle` confirmation candidate로 반환하고 자동 갱신하지 않는다. identifier가 없으면 기존 5~6 candidate 정책을 사용한다. 모든 candidate/ambiguous는 사용자 확인 전에는 쓰지 않는다.
 
-반대 방향의 전용 provider lookup은 저장 link에서 query를 만들고 strong identifiers와 occurrence anchor를 함께 검사한다. recurring은 bounded anchor search 안에서 exact zoned instant 또는 civil occurrence를 증명해야 한다. 어느 calendar에서든 strong seed만 보이고 저장 recurrence/occurrence를 증명하지 못하면 inconclusive이며 `notFound`로 상태를 진행하지 않는다. 살아 있는 series의 one-off 삭제와 범위 밖 detached move는 이 read 경계에서 구분할 수 없어 manual exact relink만 제공한다. active의 첫 명시적 `notFound`만 missing, missing의 두 번째 명시적 `notFound`만 orphan review를 연다.
+반대 방향의 전용 provider lookup은 저장 link에서 query를 만들고 strong identifiers와 occurrence anchor를 함께 검사한다. recurring은 bounded anchor search 안에서 exact zoned instant 또는 civil occurrence를 증명해야 한다. 어느 calendar에서든 strong seed만 보이고 저장 recurrence/occurrence를 증명하지 못하면 inconclusive이며 `notFound`로 상태를 진행하지 않는다. 살아 있는 series의 외부 one-off 삭제와 범위 밖 detached move는 이 read 경계에서 구분할 수 없어 manual exact relink만 제공한다. 반면 Phase 7C가 직접 시작한 `this_event` 삭제는 successful delete receipt가 positive evidence라 exact context를 `cancelled + orphaned`로 finalize할 수 있다. active의 첫 명시적 `notFound`만 missing, missing의 두 번째 명시적 `notFound`만 orphan review를 연다.
 
 ## Repository 책임
 
@@ -325,6 +337,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - context와 link를 함께 가져오는 query
 - strong+exact legacy synthetic-single 판정. schema migration 없이 정상 load/observe 시 link snapshot만 single identity로 갱신
 - missing/orphan status 전이, recovery Brief 조회, orphan의 자동 재활성화 차단과 relink lifecycle reset primitive
+- unavailable `cancelled` 뒤 더 최신 `relinked`가 없는지 `(created_at, rowid)`로 판정해 `EventBriefSnapshot.hasRecordedOriginalDeletion`을 파생
 
 `ContextStore`:
 - identity resolution과 첫 context/link 생성의 transaction 경계
@@ -341,6 +354,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - 저장 link lookup target 생성, 첫 missing과 explicit orphan 보관, cancellation/positive recovery 상태 전이
 - 최종 provider verification 뒤 expected-link CAS를 통과한 explicit relink의 snapshot/lifecycle/log atomic 처리
 - missing/orphaned local Brief의 SQLite-only cascade delete
+- linked original delete preparation/validation의 saved-link snapshot, pre-provider CAS와 성공 receipt 뒤 `finalizeLinkedOriginalDeletion`의 status/Undo/log atomic 처리
 
 `EventTaskRepository`:
 - task 생성, 수정, 삭제
@@ -359,6 +373,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - `Upcoming`: 미완료이며 내일 시작 이후 due. completed context는 After section만 포함
 - `After Review`: completed context의 미완료 After만 포함하고 personal task는 제외
 - `Completed`: event/personal 완료 항목을 완료 시각 역순으로 결합
+- deleted-original source prefix는 `cancelled + orphaned`와 함께 current-link-generation KaosCal deletion provenance가 있을 때만 표시. 이후 relink는 과거 deletion source를 무효화
 
 `ContextStore.refreshTemporalLifecycle`은 Task Center refresh 전에 같은 DB에서 active context 상태를 갱신한다. `TaskCenterRepository`도 전달받은 `now`와 calendar로 같은 lifecycle을 projection 시점에 계산해, direct read나 clock/time-zone 경계에서도 stale Before/During 작업을 노출하지 않는다. 어떤 경로도 숨긴 작업 row를 삭제하거나 완료 처리하지 않는다.
 
@@ -380,6 +395,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - schema 변경은 새 migration으로 추가한다.
 - Phase 6 change log는 `v2_event_change_log`라는 additive migration으로만 추가하며 v1 SQL을 고쳐 쓰지 않는다.
 - Phase 7B는 v1/v2의 기존 status, snapshot, foreign key와 `relinked` type만 사용하므로 migration을 추가하지 않는다.
+- Phase 7C는 v1의 `cancelled`/`orphaned`, v2의 `cancelled`, 기존 scope와 unavailable Undo를 재사용하므로 migration을 추가하지 않는다.
 - destructive migration은 v1에서 금지한다.
 - migration 전 자동 backup 또는 복구 안내를 검토한다.
 
