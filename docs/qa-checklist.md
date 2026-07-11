@@ -28,6 +28,8 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 2026-07-11 run `20260711-1512-7C4E`의 서버 baseline은 source create-fetch-update, destination independent write, Pacific→Korea UTC normalization, finite weekly 5 occurrences, `this_instance` exception, exact 네 fixture cleanup과 세 번의 residue `0/0` 확인까지 pass다. `this_and_following`은 connector의 `originalStart` 누락으로 mutation 전에 fail해 재시도하지 않았고, actual cross-calendar move와 all-day는 각각 move API와 `isAllDay` create 입력이 없어 not tested다. MSA에서 search가 지원되지 않아 bounded list fallback을 사용했다. 이 baseline으로 Exchange Online이나 local EventKit pass를 선언하지 않는다.
 
+2026-07-11 signed FinalRelease/EventKit run `20260711-1626-B7D2`에서는 full access, sidebar의 exact-name `KAOS-TEST`·`일정` `Exchange` 표시와 lock 없는 writable 상태를 확인했다. `KAOS-TEST`에 비반복 fixture를 생성하고 서버에서 한 개의 `singleInstance`, recurrence null과 UTC 정규화를 확인한 뒤, 앱 재실행·refetch에서도 반복 badge나 scope 없이 single로 유지되는 것을 검증했다. 같은 fixture를 한 번 수정해 서버 recurrence null 유지를 확인하고 scope 없는 single delete로 정리했으며 최종 marker 잔여는 source/destination `0/0`이다. Calendar.app visual round-trip, all-day, time-zone 변경, 실제 recurrence·future split, calendar move는 이 run에서 실행하지 않았다.
+
 ## 수동 테스트 시나리오
 
 ### 1. 첫 실행과 full access 허용
@@ -47,8 +49,9 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - `Reload events`는 EventKit 재조회이며 원격 동기화 버튼으로 해석하지 않는다.
 
 현재 증거 주의:
-- 사용자는 2026-07-11 macOS 전체 캘린더 접근을 허용했다고 보고했다.
-- 최신 서명 EventKit host는 authorization `notDetermined`였고 권한 prompt UI를 사용할 수 없어 local write 0회로 중단했다. 사용자 보고나 Outlook connector 결과만으로 `Full calendar access`, EventKit fetch, `.exchange` source와 `allowsContentModifications`를 pass 처리하지 않는다.
+- 이전 signed host의 `notDetermined` gate 기록은 Exchange compatibility 문서에 역사적 증거로 보존한다.
+- recurrence-fix FinalRelease run `20260711-1626-B7D2`(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서는 `Full calendar access`, EventKit fetch와 재실행 후 refetch, 두 exact-name calendar의 `Exchange`·writable 표시를 직접 확인했다.
+- 이 결과만으로 backend를 Exchange Online이라고 판정하거나 Calendar.app visual round-trip을 통과 처리하지 않는다.
 
 ### 2. 권한 거부
 
@@ -301,6 +304,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - orphaned context는 사용자 선택 없이 자동 삭제하지 않는다.
 - EventKit 변경 알림 뒤에는 마지막 loaded interval을 다시 fetch하고 stale event object를 저장하지 않는다.
 - 원본 update/delete는 같은 store에서 다시 찾은 strong match와 fresh snapshot에만 실행한다. 반복 write는 지원 가능한 rule과 명시적 scope·Confirm을 추가로 요구한다.
+- 반복 소속은 `hasRecurrenceRules || isDetached`로만 판정한다. `occurrenceDate`는 반복 identity anchor이며 비반복 display event에서는 `nil`이어야 한다. 새 single `EKEvent`의 synthetic `occurrenceDate == startDate`가 반복 badge·scope·write route를 만들지 않는지 회귀 테스트한다.
 - no-op은 EventKit save를 호출하지 않고, 변경 필드만 patch한다.
 - EventKit 성공과 SQLite rebind 실패를 전체 실패로 숨기거나 local data 삭제로 보정하지 않는다.
 - recurrence scope와 impact Confirm 전에는 provider와 change log를 호출하지 않는다.
@@ -394,6 +398,18 @@ Phase 6에서 구현·통과한 자동 gate:
 - detached ordinary edit의 과거 recurrence end 허용과 all-day/floating reference-zone drift에서 변경하지 않은 recurrence end 보존
 - 전체 **121 tests, 0 failures, 0 unexpected**, unsigned Release·ad-hoc signed Debug·strict codesign 통과
 - 자동 test 전후 production DB 불변. signed app bootstrap에서는 sandbox DB에 `v2_event_change_log`가 additive 적용되고 integrity/FK 정상·change log 0행임을 별도로 확인
+
+Phase 6 signed FinalRelease corrective live gate:
+
+- 새 비반복 `EKEvent`가 recurrence rule 없이도 `occurrenceDate == startDate`를 노출하는 실동작을 재현하고, occurrence date를 반복 membership으로 사용해 잘못된 badge·scope가 생기는 원인을 수정
+- 반복 membership을 `hasRecurrenceRules || isDetached`로 통일하고, `occurrenceDate`는 반복 identity anchor로만 유지하며 single display event에서는 `nil`로 정규화
+- synthetic occurrence date single, 순수 membership matrix, protocol default scope routing, legacy Brief 정상화를 포함해 전체 **132 tests, 1 intentional skip, 0 failures**
+- 최종 build-only compatibility Release CDHash `511a11258d95a49c826b49dc463a79039707807e`, `codesign --verify --deep --strict`·hardened runtime **pass**. 아래 live run은 직전 recurrence-fix artifact CDHash `63ded03a9d704976c4ba45340f2748eda9892382`에서 수행
+- live run `20260711-1626-B7D2`: full access, `KAOS-TEST`·`일정` Exchange/writable 표시, `KAOS-TEST` nonrecurring create, server `singleInstance`·recurrence null·UTC normalization, app restart/refetch single 표시, single update와 server recurrence null 유지, single delete **pass**
+- exact marker cleanup 뒤 source/destination 잔여 `0/0`
+- full test와 live QA 전후 direct/sandbox production DB 및 각 `-wal`·`-shm` 상태 **불변**
+- 과거 synthetic anchor 오분류로 recurring identity가 저장된 Brief는 strong identifier와 calendar/title/location/time/fingerprint/anchor가 모두 같은 single에만 자동 연결하고 `single:v1`로 갱신. notes/tasks 보존, navigation read-only. legacy 구조와 strong identifier는 맞지만 snapshot이 달라졌으면 자동 연결 없이 확인 필요 후보, identifier가 없으면 기존 exact/fingerprint 후보 정책 유지
+- Calendar.app visual round-trip, live all-day, time-zone 변경, recurrence occurrence·future split, calendar move는 이 gate에서 **not tested**이며 beta 지원 근거로 올리지 않음
 
 상세 명령·artifact·DB 수치와 실계정 미검증 상태는 구현 로그와 Exchange compatibility 문서에 기록한다.
 

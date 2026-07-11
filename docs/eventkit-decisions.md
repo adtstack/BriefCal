@@ -72,6 +72,9 @@ UI:
 - 시간대 변경 전에는 `현지 시각 유지`와 `동일 시점 유지` 결과를 미리 보여 준다.
 - 모든 반복 occurrence를 표시한다.
 - 기본 일·주·월·년 반복, interval, 종료, 주간 요일을 손실 없이 표현할 수 있을 때만 생성·편집한다.
+- EventKit은 비반복 `EKEvent`에도 `startDate` 지정 뒤 `occurrenceDate == startDate`를 합성할 수 있다. 따라서 raw `occurrenceDate` 존재 여부는 반복 판정 근거가 아니다.
+- provider 경계에서 `DisplayEvent.isRecurring = EKEvent.hasRecurrenceRules || EKEvent.isDetached`로 판정하고, 비반복이면 `DisplayEvent.occurrenceDate`를 `nil`로 정규화한다. 이후 반복 소속·scope 요구·write routing은 `DisplayEvent.isRecurring`만 사용한다.
+- `occurrenceDate`는 반복 경로에 들어간 뒤 occurrence lookup·identity reconciliation에만 사용한다. detached occurrence는 recurrence rule이 없어도 반복 series의 occurrence이므로 `isDetached`로 반복에 포함한다.
 - 반복 변경 범위는 EventKit의 의미에 맞춰 `이번 일정` 또는 `이번 이후`로 표시하고 명시적 선택 전에는 write하지 않는다.
 - KaosCal이 안전하게 표현할 수 없는 복잡한 서버 규칙은 읽고 보존한다. 해당 occurrence의 일반 필드는 `이번 일정`으로 rule을 건드리지 않고 수정할 수 있지만, rule 자체와 `이번 이후` 변경은 Calendar.app으로 안내한다.
 - Event Brief는 기본적으로 occurrence별이다.
@@ -104,7 +107,7 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - is_all_day, time_semantics, time_zone_identifier
 - recurrence series identifier, occurrence date, occurrence identity key, occurrence local components, is_detached
 
-구현된 영속 resolver는 zoned 반복 occurrence를 절대 시점 키로, all-day/floating occurrence를 canonical civil-components 키로 구분한다. 강한 identifier match만 자동 연결·snapshot 갱신하고 exact snapshot/fingerprint는 사용자 확인 후보로만 반환한다. 세부 계약은 [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md)을 따른다.
+구현된 영속 resolver는 zoned 반복 occurrence를 절대 시점 키로, all-day/floating occurrence를 canonical civil-components 키로 구분한다. 강한 identifier match만 자동 연결·snapshot 갱신하고 exact snapshot/fingerprint는 사용자 확인 후보로만 반환한다. 과거 synthetic occurrence anchor 오분류로 recurring identity가 저장된 single은 강한 identifier와 전체 snapshot/anchor까지 같은 경우에만 `single:v1`로 정상화한다. legacy 구조와 강한 identifier는 맞지만 snapshot이 달라졌으면 자동 연결하지 않고 confirmation candidate로만 노출한다. 세부 계약은 [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md)을 따른다.
 
 ## Phase 1 체크리스트
 
@@ -165,5 +168,6 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 - EventKit save 후 identifier churn으로 post-save occurrence를 강하게 재탐색하지 못하면 `CalendarEventMutationPartialSuccess`로 전파한다. UI는 editor/review를 닫고 refresh하며 동일 명령을 재시도하지 말고 Calendar.app에서 확인하도록 안내한다. local rebind·log·Undo는 수행하지 않고 Event Brief를 보존한다.
 - change log scope는 `single`, `this_event`, `future_events`를 구분한다. 실패·취소·단순 관찰은 기록하지 않는다.
 - persistent log는 audit/history이며 Undo 권한 자체가 아니다. Undo는 같은 process session의 직전 linked nonrecurring `single` calendar/time mutation 한 건만, 현재 원본이 logged after snapshot과 같을 때 역방향 write로 실행한다. unlinked·details-only·반복·detached·delete는 Undo하지 않는다.
+- provider 경계에서는 `isRecurring`이 canonical 판정이지만 persisted Undo payload를 복원·검증하는 경로의 recurrence·detached·occurrence 중복 검사는 과거 데이터와 불일치에 대비한 방어 조건으로 유지한다. 이 중복 검사를 일반 scope routing의 판정 규칙으로 역전파하지 않는다.
 
 세부 schema, 확인 기준과 무효화 조건은 [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md)을 따른다. Exchange `EKSpan`·series split·identifier churn은 `KC-E4` 수동 결과 전까지 지원 통과로 선언하지 않는다.

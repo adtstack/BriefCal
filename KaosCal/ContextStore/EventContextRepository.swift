@@ -39,6 +39,7 @@ enum EventIdentityMatchBasis: Equatable {
     case calendarItemIdentifier
     case externalIdentifierAndOccurrence
     case recurrenceSeriesAndOccurrence
+    case legacySyntheticSingle
     case exactSnapshot
     case fingerprint
 }
@@ -135,8 +136,7 @@ final class EventContextRepository {
                 $0.eventIdentifier == identifier
                     && Self.occurrenceMatches(
                         link: $0,
-                        eventIsRecurring: event.isRecurring,
-                        occurrenceIdentityKey: snapshot.occurrenceIdentityKey
+                        eventSnapshot: snapshot
                     )
             }
             if let resolution = Self.strongResolution(
@@ -150,8 +150,7 @@ final class EventContextRepository {
                 $0.calendarItemIdentifier == identifier
                     && Self.occurrenceMatches(
                         link: $0,
-                        eventIsRecurring: event.isRecurring,
-                        occurrenceIdentityKey: snapshot.occurrenceIdentityKey
+                        eventSnapshot: snapshot
                     )
             }
             if let resolution = Self.strongResolution(
@@ -167,8 +166,7 @@ final class EventContextRepository {
                     && $0.calendarIdentifier == event.calendarIdentifier
                     && Self.occurrenceMatches(
                         link: $0,
-                        eventIsRecurring: event.isRecurring,
-                        occurrenceIdentityKey: snapshot.occurrenceIdentityKey
+                        eventSnapshot: snapshot
                     )
             }
             if let resolution = Self.strongResolution(
@@ -189,6 +187,21 @@ final class EventContextRepository {
                 matches,
                 basis: .recurrenceSeriesAndOccurrence
             ) { return resolution }
+        }
+
+        if !event.isRecurring {
+            let matches = links.filter {
+                Self.legacySyntheticSingleCandidateMatches(
+                    link: $0,
+                    eventSnapshot: snapshot
+                )
+            }
+            if !matches.isEmpty {
+                return Self.weakResolution(
+                    matches,
+                    basis: .legacySyntheticSingle
+                )
+            }
         }
 
         let exactSnapshotMatches = links.filter {
@@ -231,9 +244,7 @@ final class EventContextRepository {
                 $0.snapshot.eventIdentifier == identifier
                     && Self.occurrenceMatches(
                         link: link,
-                        eventIsRecurring: $0.event.isRecurring,
-                        occurrenceIdentityKey:
-                            $0.snapshot.occurrenceIdentityKey
+                        eventSnapshot: $0.snapshot
                     )
             }
             if let resolution = Self.strongNavigationResolution(
@@ -248,9 +259,7 @@ final class EventContextRepository {
                 $0.snapshot.calendarItemIdentifier == identifier
                     && Self.occurrenceMatches(
                         link: link,
-                        eventIsRecurring: $0.event.isRecurring,
-                        occurrenceIdentityKey:
-                            $0.snapshot.occurrenceIdentityKey
+                        eventSnapshot: $0.snapshot
                     )
             }
             if let resolution = Self.strongNavigationResolution(
@@ -267,9 +276,7 @@ final class EventContextRepository {
                         == link.calendarIdentifier
                     && Self.occurrenceMatches(
                         link: link,
-                        eventIsRecurring: $0.event.isRecurring,
-                        occurrenceIdentityKey:
-                            $0.snapshot.occurrenceIdentityKey
+                        eventSnapshot: $0.snapshot
                     )
             }
             if let resolution = Self.strongNavigationResolution(
@@ -292,6 +299,21 @@ final class EventContextRepository {
                 matches,
                 basis: .recurrenceSeriesAndOccurrence
             ) { return resolution }
+        }
+
+        if link.isRecurring {
+            let matches = candidates.filter {
+                Self.legacySyntheticSingleCandidateMatches(
+                    link: link,
+                    eventSnapshot: $0.snapshot
+                )
+            }
+            if !matches.isEmpty {
+                return Self.weakNavigationResolution(
+                    matches,
+                    basis: .legacySyntheticSingle
+                )
+            }
         }
 
         let exactSnapshotMatches = candidates.filter {
@@ -451,15 +473,115 @@ final class EventContextRepository {
 
     private static func occurrenceMatches(
         link: EventLink,
-        eventIsRecurring: Bool,
-        occurrenceIdentityKey: String
+        eventSnapshot: EventLinkSnapshot
     ) -> Bool {
-        if eventIsRecurring {
+        if eventSnapshot.isRecurring {
             return link.isRecurring
-                && link.occurrenceIdentityKey == occurrenceIdentityKey
+                && link.occurrenceIdentityKey
+                    == eventSnapshot.occurrenceIdentityKey
         }
-        return !link.isRecurring
-            && link.occurrenceIdentityKey == "single:v1"
+        if !link.isRecurring {
+            return link.occurrenceIdentityKey == "single:v1"
+        }
+        return legacySyntheticSingleMatches(
+            link: link,
+            eventSnapshot: eventSnapshot
+        )
+    }
+
+    private static func legacySyntheticSingleMatches(
+        link: EventLink,
+        eventSnapshot: EventLinkSnapshot
+    ) -> Bool {
+        guard legacySyntheticSingleCandidateMatches(
+                link: link,
+                eventSnapshot: eventSnapshot
+              ),
+              link.titleSnapshot == eventSnapshot.title,
+              link.locationSnapshot == eventSnapshot.location,
+              sameInstant(link.startSnapshot, eventSnapshot.startDate),
+              sameInstant(link.endSnapshot, eventSnapshot.endDate),
+              link.isAllDay == eventSnapshot.isAllDay,
+              link.timeSemantics == eventSnapshot.timeSemantics,
+              link.timeZoneIdentifier == eventSnapshot.timeZoneIdentifier,
+              link.startLocalComponents
+                == eventSnapshot.startLocalComponents,
+              link.endLocalComponents == eventSnapshot.endLocalComponents,
+              link.fingerprint == eventSnapshot.fingerprint,
+              let expectedSeriesIdentifier =
+                EventIdentityFingerprint.firstNonEmpty(
+                    eventSnapshot.calendarItemExternalIdentifier,
+                    eventSnapshot.calendarItemIdentifier
+                ),
+              link.recurrenceSeriesIdentifier == expectedSeriesIdentifier else {
+            return false
+        }
+
+        return true
+    }
+
+    private static func legacySyntheticSingleCandidateMatches(
+        link: EventLink,
+        eventSnapshot: EventLinkSnapshot
+    ) -> Bool {
+        guard !eventSnapshot.isRecurring,
+              !eventSnapshot.isDetached,
+              eventSnapshot.occurrenceIdentityKey == "single:v1",
+              link.isRecurring,
+              !link.isDetached,
+              link.calendarIdentifier == eventSnapshot.calendarIdentifier,
+              strongIdentifierMatches(
+                link: link,
+                eventSnapshot: eventSnapshot
+              ),
+              let storedSeriesIdentifier =
+                EventIdentityFingerprint.firstNonEmpty(
+                    link.calendarItemExternalIdentifier,
+                    link.calendarItemIdentifier
+                ),
+              link.recurrenceSeriesIdentifier == storedSeriesIdentifier,
+              link.seriesFingerprint != nil,
+              sameInstant(link.occurrenceDate, link.startSnapshot) else {
+            return false
+        }
+
+        switch link.timeSemantics {
+        case .zoned:
+            let milliseconds = Int64(
+                (link.startSnapshot.timeIntervalSince1970 * 1_000).rounded()
+            )
+            return link.occurrenceIdentityKey
+                == "instant:v1:\(milliseconds)"
+        case .allDay, .floating:
+            guard let startLocalComponents = link.startLocalComponents else {
+                return false
+            }
+            return link.occurrenceLocalComponents == startLocalComponents
+                && link.occurrenceIdentityKey
+                    == "local:v1:\(startLocalComponents)"
+        }
+    }
+
+    private static func strongIdentifierMatches(
+        link: EventLink,
+        eventSnapshot: EventLinkSnapshot
+    ) -> Bool {
+        if let identifier = eventSnapshot.eventIdentifier,
+           !identifier.isEmpty,
+           link.eventIdentifier == identifier {
+            return true
+        }
+        if let identifier = eventSnapshot.calendarItemIdentifier,
+           !identifier.isEmpty,
+           link.calendarItemIdentifier == identifier {
+            return true
+        }
+        if let identifier = eventSnapshot.calendarItemExternalIdentifier,
+           !identifier.isEmpty,
+           link.calendarItemExternalIdentifier == identifier {
+            return true
+        }
+        return false
     }
 
     private static func sameInstant(_ lhs: Date?, _ rhs: Date?) -> Bool {

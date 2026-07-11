@@ -21,7 +21,9 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 | Task Center | 이벤트 작업을 모아 보고, 이벤트에 연결되지 않은 가벼운 개인 작업을 추가 | 오늘·예정·완료 목록에서 작업 출처와 연결 일정을 명확히 보여 준다. |
 | 안전성 | read-only 구분, recurrence/move impact 확인, 좁은 session Undo, orphan 보존, 백업/복원 | 원본 일정과 KaosCal 데이터의 삭제·복원이 서로 영향을 주지 않고 unsafe future-series write를 사전에 차단한다. |
 
-현재 구현 단계는 범위 자체와 구분한다. Phase 5의 비반복 원본 편집 97-test checkpoint 위에 Phase 6의 기본 반복 규칙, 명시적 scope, impact Confirm, linked safe move, additive change log, session-only Undo를 구현했고 전체 **121 tests, 0 failures, 0 unexpected** 자동 회귀를 통과했다. 사용자는 2026-07-11 macOS 전체 캘린더 접근을 허용했다고 보고했지만 최신 서명 앱 창, `KAOS-TEST` EventKit source/writable, Calendar.app round-trip은 독립 확인 대기이므로 Exchange 지원 완료로 선언하지 않는다. linked 삭제·orphan review는 Phase 7에서 구현·검증한다.
+현재 구현 단계는 범위 자체와 구분한다. Phase 5의 비반복 원본 편집 97-test checkpoint 위에 Phase 6의 기본 반복 규칙, 명시적 scope, impact Confirm, linked safe move, additive change log, session-only Undo를 구현했다. 121-test 구현 checkpoint와 122-test read-only gate를 보존하면서 현재 자동 회귀는 **132 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**이고 테스트·live QA 전후 운영 Context DB는 불변이다. 최신 signed Release는 strict codesign과 hardened runtime 검증을 통과했다.
+
+2026-07-11 live FinalRelease run `20260711-1626-B7D2`에서 full access, `KAOS-TEST`·`일정`의 writable Exchange 표시, `KAOS-TEST` 비반복 create→앱 재실행/refetch→scope 없는 update→single delete를 확인했다. 서버에서도 생성·수정 뒤 모두 `singleInstance`이고 recurrence가 없었으며 source/destination residue는 `0/0`이었다. EventKit이 단일 일정에도 `occurrenceDate == startDate`를 줄 수 있는 실제 동작은 반복 소속을 `hasRecurrenceRules || isDetached`로만 판정하고 비반복 occurrence date를 `nil`로 정규화하는 회귀 수정에 반영했다. 과거 오분류 build가 만든 Brief는 강한 식별자와 전체 snapshot/anchor가 정확히 일치할 때만 `single:v1`로 런타임 정상화하며, weak match는 자동 연결하지 않는다. 다만 Calendar.app 시각 round-trip, live all-day, 반복/future split, calendar move는 독립 확인 대기이므로 Exchange Online 전체 지원 완료로 선언하지 않는다. linked 삭제·orphan review는 Phase 7에서 구현·검증한다.
 
 복잡한 recurrence는 rule을 보존한다. 선택 occurrence의 일반 필드는 `이번 일정`에서 recurrence rule을 쓰지 않는 조건으로 편집할 수 있지만, `이번 이후`와 rule 자체 변경은 Calendar.app 전용이다.
 
@@ -31,7 +33,7 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 - 수정 가능 여부는 계정 종류가 아니라 EventKit이 보고하는 캘린더별 권한을 따른다.
 - 온프레미스 Exchange는 별도 호환성 검증 전까지 지원을 약속하지 않는다.
 - KaosCal은 Microsoft Graph, EWS, 자체 동기화 엔진, 계정 자격 증명을 사용하지 않는다.
-- macOS permission 허용 사용자 보고와 실제 EventKit source/writable/round-trip pass는 별도 증거로 관리한다.
+- macOS permission, EventKit source/writable, 앱 CRUD, 서버 fetch, Calendar.app 시각 round-trip은 각각 별도 증거로 관리한다.
 
 ## 초대 일정 정책
 

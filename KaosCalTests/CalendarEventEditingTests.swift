@@ -189,6 +189,71 @@ final class CalendarEventEditingTests: XCTestCase {
         }
     }
 
+    func testEventKitSingleEventNormalizesSyntheticOccurrenceDate() {
+        let eventStore = EKEventStore()
+        let provider = EventKitProvider(eventStore: eventStore)
+        let event = EKEvent(eventStore: eventStore)
+        event.startDate = date(2026, 7, 10, 9)
+        event.endDate = date(2026, 7, 10, 10)
+
+        if let syntheticOccurrenceDate = event.occurrenceDate {
+            XCTAssertEqual(syntheticOccurrenceDate, event.startDate)
+        }
+        let classification = provider.recurrenceClassification(for: event)
+        XCTAssertFalse(classification.isRecurring)
+        XCTAssertNil(classification.occurrenceDate)
+        XCTAssertEqual(provider.recurrenceRepresentation(for: event), .none)
+    }
+
+    func testEventKitRecurrenceClassificationUsesMembershipSignalsOnly() {
+        let anchor = date(2026, 7, 10, 9)
+
+        XCTAssertEqual(
+            EventKitProvider.classifyRecurrence(
+                hasRecurrenceRules: false,
+                isDetached: false,
+                rawOccurrenceDate: anchor
+            ),
+            EventKitRecurrenceClassification(
+                isRecurring: false,
+                occurrenceDate: nil
+            )
+        )
+        XCTAssertEqual(
+            EventKitProvider.classifyRecurrence(
+                hasRecurrenceRules: true,
+                isDetached: false,
+                rawOccurrenceDate: anchor
+            ),
+            EventKitRecurrenceClassification(
+                isRecurring: true,
+                occurrenceDate: anchor
+            )
+        )
+        XCTAssertEqual(
+            EventKitProvider.classifyRecurrence(
+                hasRecurrenceRules: false,
+                isDetached: true,
+                rawOccurrenceDate: anchor
+            ),
+            EventKitRecurrenceClassification(
+                isRecurring: true,
+                occurrenceDate: anchor
+            )
+        )
+        XCTAssertEqual(
+            EventKitProvider.classifyRecurrence(
+                hasRecurrenceRules: true,
+                isDetached: false,
+                rawOccurrenceDate: nil
+            ),
+            EventKitRecurrenceClassification(
+                isRecurring: true,
+                occurrenceDate: nil
+            )
+        )
+    }
+
     func testEventKitComplexAndMultipleRecurrencesStayUnsupported() throws {
         let eventStore = EKEventStore()
         let provider = EventKitProvider(eventStore: eventStore)
@@ -357,6 +422,114 @@ final class CalendarEventEditingTests: XCTestCase {
         XCTAssertTrue(receipt.changedFields.isEmpty)
         XCTAssertEqual(receipt.event, original)
         XCTAssertEqual(provider.events, [original])
+    }
+
+    func testSingleEventMutationIgnoresSyntheticOccurrenceAnchor() throws {
+        let syntheticAnchor = date(2026, 7, 10, 9)
+        let original = makeEvent(
+            id: "single-with-synthetic-anchor",
+            occurrenceDate: syntheticAnchor
+        )
+        let provider = makeProvider(events: [original])
+        var draft = CalendarEventDraft(event: original, calendar: calendar)
+        draft.title = "Updated single event"
+
+        XCTAssertFalse(original.isRecurring)
+        XCTAssertEqual(original.occurrenceDate, syntheticAnchor)
+        let updated = try provider.updateEvent(original, with: draft)
+        XCTAssertEqual(updated.title, "Updated single event")
+        XCTAssertEqual(provider.lastUpdateScope, .thisEvent)
+
+        try provider.deleteEvent(updated)
+        XCTAssertEqual(provider.lastDeleteScope, .thisEvent)
+        XCTAssertTrue(provider.events.isEmpty)
+    }
+
+    func testDefaultScopedProviderRoutesSyntheticSingleUpdateAndDelete() throws {
+        let syntheticAnchor = date(2026, 7, 10, 9)
+        let original = makeEvent(
+            id: "default-single-with-anchor",
+            occurrenceDate: syntheticAnchor
+        )
+        let provider = DefaultScopedCalendarProviderSpy()
+        var draft = CalendarEventDraft(event: original, calendar: calendar)
+        draft.title = "Updated through default scope"
+
+        let update = try provider.updateEvent(
+            original,
+            with: draft,
+            scope: .thisEvent
+        )
+        XCTAssertEqual(provider.updateCallCount, 1)
+        XCTAssertTrue(update.didWrite)
+        XCTAssertEqual(update.scope, .thisEvent)
+        XCTAssertEqual(update.changedFields, [.title])
+
+        let deletion = try provider.deleteEvent(
+            original,
+            scope: .thisEvent
+        )
+        XCTAssertEqual(provider.deleteCallCount, 1)
+        XCTAssertEqual(deletion.scope, .thisEvent)
+        XCTAssertEqual(deletion.changedFields, [.deletion])
+    }
+
+    func testDefaultScopedProviderRejectsInvalidRecurrenceScopes() {
+        let provider = DefaultScopedCalendarProviderSpy()
+        let recurring = makeEvent(
+            id: "default-recurring",
+            isRecurring: true
+        )
+        let single = makeEvent(id: "default-single")
+        let recurringDraft = CalendarEventDraft(
+            event: recurring,
+            calendar: calendar
+        )
+        let singleDraft = CalendarEventDraft(
+            event: single,
+            calendar: calendar
+        )
+
+        XCTAssertThrowsError(try provider.updateEvent(
+            recurring,
+            with: recurringDraft,
+            scope: .thisEvent
+        )) { error in
+            XCTAssertEqual(
+                error as? CalendarEventWriteError,
+                .recurringScopeRequired
+            )
+        }
+        XCTAssertThrowsError(try provider.deleteEvent(
+            recurring,
+            scope: .thisEvent
+        )) { error in
+            XCTAssertEqual(
+                error as? CalendarEventWriteError,
+                .recurringScopeRequired
+            )
+        }
+        XCTAssertThrowsError(try provider.updateEvent(
+            single,
+            with: singleDraft,
+            scope: .futureEvents
+        )) { error in
+            XCTAssertEqual(
+                error as? CalendarEventWriteError,
+                .unsupportedRecurrence
+            )
+        }
+        XCTAssertThrowsError(try provider.deleteEvent(
+            single,
+            scope: .futureEvents
+        )) { error in
+            XCTAssertEqual(
+                error as? CalendarEventWriteError,
+                .unsupportedRecurrence
+            )
+        }
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.deleteCallCount, 0)
     }
 
     func testAllDayValidationUsesExclusiveEndAndNoTimeZone() throws {
@@ -1215,5 +1388,34 @@ final class CalendarEventEditingTests: XCTestCase {
             timeZoneIdentifier: timeZoneIdentifier,
             referenceTimeZoneIdentifier: calendar.timeZone.identifier
         )
+    }
+}
+
+@MainActor
+private final class DefaultScopedCalendarProviderSpy: CalendarProviding {
+    var authorizationState = CalendarAuthorizationState.fullAccess
+    var storeChangeHandler: (() -> Void)?
+    private(set) var updateCallCount = 0
+    private(set) var deleteCallCount = 0
+
+    func requestFullAccess() async throws -> Bool { true }
+    func listCalendars() throws -> [CalendarSource] { [] }
+    func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] { [] }
+    func defaultCalendarIdentifierForNewEvents() -> String? { nil }
+
+    func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent {
+        throw FakeCalendarProviderError.failed
+    }
+
+    func updateEvent(
+        _ original: DisplayEvent,
+        with draft: CalendarEventDraft
+    ) throws -> DisplayEvent {
+        updateCallCount += 1
+        return original
+    }
+
+    func deleteEvent(_ original: DisplayEvent) throws {
+        deleteCallCount += 1
     }
 }

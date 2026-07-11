@@ -14,11 +14,13 @@ Exchange 일정은 종일, floating time, 고정 시간대, 반복 occurrence를
 - 시간대 변경 UI는 항상 새 시간을 미리 보여 주고 `현지 시각 유지`와 `동일 시점 유지`를 명시적으로 선택하게 한다.
 - 반복 일정은 모든 occurrence를 표시한다. 기본 일·주·월·년 규칙과 interval, 종료, 주간 요일을 편집한다.
 - 반복 변경 범위는 `이번 일정` 또는 `이번 이후`로 표시한다. 안전하게 표현할 수 없는 복잡한 서버 규칙은 보존·표시하고 Calendar.app 편집으로 안내한다.
+- EventKit은 비반복 `EKEvent`도 `startDate`를 지정한 뒤 `occurrenceDate == startDate`를 반환할 수 있으므로 `occurrenceDate` 존재 여부로 반복 일정을 판정하지 않는다.
+- provider 경계의 반복 판정은 `hasRecurrenceRules || isDetached`로 고정한다. 비반복 일정의 `occurrenceDate`는 `nil`로 정규화하고, 이후 scope·routing은 `DisplayEvent.isRecurring`만 사용한다. `occurrenceDate`는 반복 경로 안에서 occurrence identity anchor로만 사용한다.
 - Event Brief는 기본적으로 occurrence별이다.
 
 ## 결과
 
-이벤트 연결 정보에는 all-day 여부, 시간 의미, 시간대 ID, recurrence master/occurrence 날짜, detached 여부와 snapshot이 필요하다. 정확한 Exchange 변경 범위는 실계정 테스트를 통과한 뒤 열어 간다.
+이벤트 연결 정보에는 all-day 여부, 시간 의미, 시간대 ID, recurrence master/occurrence 날짜, detached 여부와 snapshot이 필요하다. 다만 occurrence 날짜는 반복 소속 여부가 아니라 이미 반복으로 판정된 일정의 식별 보조값이다. 정확한 Exchange 변경 범위는 실계정 테스트를 통과한 뒤 열어 간다.
 
 ## 근거
 

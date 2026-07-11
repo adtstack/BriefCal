@@ -35,7 +35,7 @@ Phase 5부터 KaosCal은 EventKit 원본 일정을 생성·수정·삭제한다.
 - structured EventKit metadata와 외부에서 갱신된 지원 필드는 보수적으로 보존된다.
 - EventKit과 SQLite의 부분 성공을 숨기지 않으므로 사용자가 Calendar.app과 local Brief 상태를 복구할 수 있다.
 - Phase 5에는 change log schema나 migration을 추가하지 않는다. 같은-calendar 시간 변경의 richer 영향 미리보기와 change log는 Phase 6에서 보강한다.
-- 실제 identifier churn, Exchange save/remove, 서버 정규화는 `KAOS-TEST` 수동 gate가 끝날 때까지 미검증이다.
+- 비반복 `KAOS-TEST` EventKit save/remove와 Outlook server 반영·UTC 정규화는 2026-07-11 signed FinalRelease gate에서 통과했다. 실제 identifier churn, Calendar.app 시각 round-trip, all-day·time-zone·반복·calendar move는 계속 별도 수동 gate다.
 
 ## 자동 검증
 

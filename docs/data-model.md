@@ -32,7 +32,7 @@ Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연�
 
 | 값 | 역할 | 영속 모델과의 차이 |
 | --- | --- | --- |
-| `DisplayEvent` | title, source, calendar color, raw date, read-only, meeting/invitation, representable/unsupported recurrence snapshot, 원본 notes를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음. `originalNotes`는 Event Brief notes가 아님 |
+| `DisplayEvent` | title, source, calendar color, raw date, read-only, meeting/invitation, canonical `isRecurring`, 정규화된 occurrence anchor, representable/unsupported recurrence snapshot, 원본 notes를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음. `originalNotes`는 Event Brief notes가 아님 |
 | `EventTimeSemantics` | `allDay`, `floating`, `zoned` 구분 | `event_links.time_semantics`와 local component snapshot으로 변환 |
 | `LocalDateTimeComponents` | 원 calendar identifier와 civil components 보존 | all-day/floating 표시·due·반복 occurrence 재구성에 사용 |
 | `DisplayEventIdentity` | SwiftUI selection과 occurrence별 card identity | `external → calendar item → event` 우선순위, local occurrence anchor 사용; 영속 resolver와 목적이 다름 |
@@ -46,6 +46,8 @@ Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연�
 | session Undo token | 직전 비반복 `single` write의 change ID와 after snapshot | process 메모리에만 존재. persistent `undo_state`만으로 재실행 뒤 Undo하지 않음 |
 
 영속 Event Brief 연결은 아래 `Identity resolution 순서`로 구현되어 있다. UI ID가 같거나 달라졌다는 사실만으로 local context를 자동 연결·삭제하지 않는다.
+
+`DisplayEvent.isRecurring`은 provider 경계에서 `hasRecurrenceRules || isDetached`로 만든 반복 소속의 canonical 값이다. EventKit은 비반복 이벤트에도 `occurrenceDate == startDate`를 합성할 수 있으므로 raw `occurrenceDate` 존재 여부는 반복 소속을 뜻하지 않는다. provider는 비반복 occurrence anchor를 `nil`로 정규화하며, downstream scope·routing은 `isRecurring`만 사용한다. `occurrenceDate`는 반복으로 판정된 뒤 identity lookup에만 사용한다.
 
 ## Historical draft: Schema v0
 
@@ -162,7 +164,7 @@ Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immuta
 | `time_zone_identifier` | 고정 시간대 의미 보존, floating은 null |
 | `start_local_components`, `end_local_components` | 종일·floating 일정의 안정적인 비교 |
 | `recurrence_series_identifier` | 반복 series 후보 연결. EventKit이 master 객체를 보장한다는 의미를 쓰지 않음 |
-| `occurrence_date` | occurrence별 Event Brief 연결 |
+| `occurrence_date` | 반복 occurrence별 Event Brief 연결과 identity anchor. 이 값의 존재만으로 반복 소속을 판정하지 않음 |
 | `occurrence_local_components` | all-day/floating의 원래 civil occurrence 보존 |
 | `occurrence_identity_key` | non-recurring, zoned instant, local occurrence를 구분하는 canonical key |
 | `is_detached` | 단일 occurrence 예외 여부 |
@@ -214,6 +216,8 @@ Personal task due는 생성 뒤 수정하거나 제거할 수 있다. due 없음
 linked mutation은 receipt rebind와 log append를 하나의 SQLite transaction으로 수행한다. 취소·validation 실패·provider 실패·no-op에는 row를 만들지 않는다. EventKit 성공 뒤 local transaction이 실패하면 false log를 만들거나 다른 context로 자동 연결하지 않는다.
 
 `undo_state = available`은 local repository의 후보 상태일 뿐 UI Undo 권한이 아니다. Undo는 linked calendar/time mutation이 만든 같은 process session의 in-memory token, nonrecurring `single` scope, current event와 logged after snapshot의 exact supported-field match가 모두 있을 때만 시도한다. 같은 context에 새 mutation이 기록되면 이전 available row는 superseded가 되고, 성공한 Undo는 원본을 undone으로 바꾸면서 `restored` row를 atomic append한다.
+
+런타임 provider/scope routing은 canonical `DisplayEvent.isRecurring`만 사용하지만, persisted Undo payload 복원 경로의 recurrence·detached·occurrence 중복 검사는 방어적으로 유지한다. 이는 오래된 record나 모순된 snapshot을 single Undo 후보로 잘못 해석하지 않기 위한 저장 경계 안전장치다.
 
 ## Status values
 
@@ -290,7 +294,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 6. fingerprint 후보 검색
 7. 현재는 `notFound`를 반환한다. missing/orphaned lifecycle 전환은 Phase 6~7에서 구현한다.
 
-1~4의 강한 연결만 EventKit fetch 관찰 시 title/time/source/identifier/`last_seen_at` snapshot을 자동 갱신한다. 5~6은 `candidate` 또는 `ambiguous`로 반환해 사용자 확인 전에는 쓰지 않는다.
+1~4의 강한 연결만 EventKit fetch 관찰 시 title/time/source/identifier/`last_seen_at` snapshot을 자동 갱신한다. 예외적으로 과거 synthetic occurrence anchor 버그가 recurring으로 저장한 single link는 1~3의 강한 identifier에 더해 calendar/title/location/start/end/time semantics/local components/fingerprint/anchor가 모두 정확히 같을 때만 기존 `context_id`를 유지하며 `single:v1`로 갱신한다. legacy 구조와 strong identifier는 맞지만 snapshot이 다르면 `legacySyntheticSingle` confirmation candidate로 반환하고 자동 갱신하지 않는다. identifier가 없으면 기존 5~6 candidate 정책을 사용한다. 모든 candidate/ambiguous는 사용자 확인 전에는 쓰지 않는다.
 
 ## Repository 책임
 
@@ -302,6 +306,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 `EventContextRepository`:
 - context/link/brief 조회와 snapshot 갱신 primitive
 - context와 link를 함께 가져오는 query
+- strong+exact legacy synthetic-single 판정. schema migration 없이 정상 load/observe 시 link snapshot만 single identity로 갱신
 
 `ContextStore`:
 - identity resolution과 첫 context/link 생성의 transaction 경계

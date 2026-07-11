@@ -35,9 +35,7 @@ extension CalendarProviding {
         guard scope == .thisEvent else {
             throw CalendarEventWriteError.unsupportedRecurrence
         }
-        if original.isRecurring
-            || original.occurrenceDate != nil
-            || original.isDetached {
+        if original.isRecurring {
             throw CalendarEventWriteError.recurringScopeRequired
         }
         let updated = try updateEvent(original, with: draft)
@@ -61,9 +59,7 @@ extension CalendarProviding {
         guard scope == .thisEvent else {
             throw CalendarEventWriteError.unsupportedRecurrence
         }
-        if original.isRecurring
-            || original.occurrenceDate != nil
-            || original.isDetached {
+        if original.isRecurring {
             throw CalendarEventWriteError.recurringScopeRequired
         }
         try deleteEvent(original)

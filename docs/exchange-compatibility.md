@@ -1,8 +1,8 @@
 # Exchange Compatibility
 
-> 상태: Phase 6 recurrence·safe-move·change-log·session Undo 자동·Release·ad-hoc 서명 checkpoint / Outlook 서버 측 부분 통과·로컬 EventKit TCC gate 대기
+> 상태: Phase 6 recurrence·safe-move·change-log·session Undo 자동·Release·ad-hoc 서명 checkpoint / Outlook 서버 측 부분 통과·서명 FinalRelease 로컬 EventKit 비반복 CRUD 통과
 > 제품 대상: macOS Calendar에 구성된 Exchange Online
-> 현재 테스트 환경: backend 종류 미확인. Outlook connector run `20260711-1512-7C4E`에서 `KAOS-TEST`(source)·`일정`(destination)이 각각 exact-name 1개, editable, distinct, same owner로 관찰됐지만 connector의 MSA 제한 때문에 Exchange Online 또는 로컬 EventKit `.exchange` source라고 판정하지 않는다. 최신 서명 EventKit host는 authorization `notDetermined`이고 권한 UI를 사용할 수 없어 local write 0회로 중단
+> 현재 테스트 환경: backend 종류 미확인. Outlook connector run `20260711-1512-7C4E`에서 `KAOS-TEST`(source)·`일정`(destination)이 각각 exact-name 1개, editable, distinct, same owner로 관찰됐고, signed FinalRelease/EventKit run `20260711-1626-B7D2`에서 full access와 두 calendar의 `Exchange`·writable 표시 및 `KAOS-TEST` 비반복 CRUD를 확인했다. 이는 Calendar.app visual round-trip이나 backend의 Exchange Online 판정 증거가 아니다.
 > 마지막 갱신: 2026-07-11
 
 ## 지원 선언 기준
@@ -11,14 +11,14 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 
 | 기능 | 현재 테스트 환경 | 상태 | 증거 |
 | --- | --- | --- | --- |
-| full calendar access | 사용자는 허용을 보고했지만 최신 서명 host는 `notDetermined` | 로컬 blocked / 수동 대기 | 권한 prompt 승인 뒤 동일 host의 `Full calendar access`, EventKit fetch와 재실행 유지 증거 필요; local write 0회 |
-| Exchange source·calendar 식별 | 서버 connector에서 두 exact-name calendar를 구분 | 서버 확인 / EventKit 대기 | `KAOS-TEST`·`일정` 각각 1개·distinct·same owner. 로컬 `.exchange`, sidebar/color는 별도 확인 필요 |
-| editable calendar 확인 | 서버 connector에서 두 calendar 모두 editable | 서버 확인 / EventKit 대기 | 실제 EventKit 노출과 `allowsContentModifications` 확인 필요 |
+| full calendar access | signed FinalRelease에서 full access와 재실행 후 EventKit refetch 확인 | 로컬 통과 | run `20260711-1626-B7D2`; 권한 철회·재허용 회귀는 별도 |
+| Exchange source·calendar 식별 | 서버 connector에서 두 exact-name calendar를 구분하고 FinalRelease sidebar에서 둘 다 `Exchange`로 표시 | 서버·EventKit 통과 / backend 미판정 | `KAOS-TEST`·`일정`을 distinct calendar로 확인. 이 표시만으로 Exchange Online backend라고 추론하지 않음 |
+| editable calendar 확인 | FinalRelease에서 두 calendar 모두 lock 없이 writable로 표시 | 서버·EventKit 통과 | `KAOS-TEST` 실제 create/update/delete 통과; `일정`은 이번 local run에서 mutation하지 않음 |
 | read-only 구분 | `allowsContentModifications` mapping·unit state 구현 | blocked | Viewer calendar 미준비, Phase 8 전 해소 |
-| 시간 일정 조회 | 서버 fixture create/fetch와 bounded list 확인 | 서버 통과 / EventKit 대기 | source create-fetch-update pass; local KC-E1 표시 필요 |
-| 비반복 일정 생성 | writable/default calendar 선택·draft validation·receipt focus unit 통과 | 서버 통과 / EventKit 대기 | source create pass, destination independent write pass; KaosCal·Calendar.app 확인 필요 |
-| 비반복 일정 수정 | strong re-fetch, fresh snapshot, changed-field patch, linked rebind unit 통과 | 서버 통과 / EventKit 대기 | source fetch-update pass; KaosCal KC-E1 round-trip 필요 |
-| 비반복 일정 삭제 | local Brief 없는 일정만 remove하도록 AppState unit 통과 | 서버 cleanup 통과 / EventKit 대기 | 생성한 네 fixture exact cleanup과 잔여 0/0 확인; KaosCal remove는 별도 |
+| 시간 일정 조회 | 서버 fixture와 signed FinalRelease create·재실행·refetch 확인 | 서버·EventKit 통과 | local fixture가 재실행 후에도 단일 일정으로 표시되고 서버에서 `singleInstance`·recurrence null·UTC 정규화 확인 |
+| 비반복 일정 생성 | FinalRelease에서 `KAOS-TEST`에 실제 생성 | 서버·EventKit 통과 / Calendar.app 대기 | 서버에서 단일 instance와 recurrence null 확인; Calendar.app visual round-trip은 미실행 |
+| 비반복 일정 수정 | FinalRelease에서 동일 fixture를 한 번 수정하고 refetch | 서버·EventKit 통과 / Calendar.app 대기 | 재실행 후 잘못된 반복 badge/scope 없이 single update, 서버 recurrence null 유지 |
+| 비반복 일정 삭제 | FinalRelease에서 동일 fixture를 single delete | 서버·EventKit 통과 / Calendar.app 대기 | 최종 marker 잔여 source/destination `0/0` |
 | calendar 간 이동 | local Brief 없는 move와 linked safe move·impact Confirm·context rebind 자동 통과 | 미검증 | connector에 move API가 없어 `KAOS-TEST`→`일정` actual move를 실행하지 않음; create+delete를 move 증거로 사용하지 않음 |
 | 종일·다일 일정 조회 | 자정/`23:59:59` raw end 정규화, 배타 범위·all-day span unit 통과 | 실계정 대기 | connector create schema에 `isAllDay`가 없어 server run도 수행하지 않음 |
 | 종일 일정 생성·편집 | 포함 종료↔배타 종료, 자정 변환, reference time zone unit 통과 | 실계정 대기 | server·EventKit·Calendar.app KC-E2 모두 미검증 |
@@ -51,6 +51,7 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 - `allowsContentModifications == false`인 경우 원본 일정 변경 UI를 제공하지 않는다.
 - attendee가 있는 meeting은 사용자가 organizer여도 v1 원본 변경 UI를 제공하지 않는다.
 - 기존 원본 write는 strong identifier로 최신 event를 다시 찾고 지원 필드의 stale snapshot이 같을 때만 실행한다.
+- 반복 소속 판정은 `hasRecurrenceRules || isDetached`만 사용한다. 새 비반복 `EKEvent`도 `occurrenceDate == startDate`를 노출할 수 있으므로 `occurrenceDate`는 반복 identity anchor일 뿐이며 비반복 display event에서는 `nil`로 정규화한다.
 - 반복 write는 명시적 `이번 일정`/`이번 이후`와 최종 impact Confirm 전에는 실행하지 않는다.
 - detached occurrence의 `이번 이후`, complex recurrence의 future/rule 변경, 모든 linked `이번 이후`는 초기 Phase 6에서 write 전에 차단한다. complex recurrence의 `이번 일정` ordinary-field patch는 rule을 그대로 보존해야 한다.
 - linked delete는 Phase 7 orphan review 전까지 실행하지 않는다.
@@ -115,6 +116,33 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 - cleanup: run에서 생성한 exact 네 fixture만 응답 식별자로 삭제 **pass**. 두 차례 즉시 확인과 최종 지연 재확인을 포함한 세 번의 bounded residue 확인 모두 source/destination `0/0`
 - local EventKit: 최신 서명 host authorization은 `notDetermined`; 권한 prompt UI를 사용할 수 없어 요청 run을 중단했고 local fixture write는 0회. TCC full access, `.exchange` source, `allowsContentModifications`, Calendar.app round-trip은 **blocked / pending**
 - 판정: 서버 측 제한된 CRUD·time-zone·recurrence·cleanup은 통과했다. 실제 cross-calendar move, all-day, `this_and_following`, local EventKit/Calendar.app은 통과로 표시하지 않으며 Exchange 지원 완료를 선언하지 않는다.
+
+## 2026-07-11 signed FinalRelease EventKit 비반복 CRUD gate
+
+- run: `20260711-1626-B7D2`
+- host: ad-hoc signed Release, CDHash `63ded03a9d704976c4ba45340f2748eda9892382`; `codesign --verify --deep --strict` **pass**
+- 권한·calendar preflight: `Full calendar access` 확인. sidebar에서 `KAOS-TEST`와 `일정`이 모두 `Exchange`이며 lock 없이 writable로 표시됨
+- create: `KAOS-TEST`에 attendee·recurrence 없는 고유 marker fixture를 KaosCal UI로 생성 **pass**
+- server observation: 한 개의 `singleInstance`, recurrence null, 입력한 현지 시각에 대응하는 UTC 정규화 확인 **pass**
+- restart/refetch: 앱을 종료·재실행해 fixture를 다시 조회했을 때 반복 badge와 recurrence scope 선택 없이 비반복 일정으로 표시 **pass**
+- update: 동일 fixture의 지원 필드를 한 번 수정 **pass**. 서버에서도 단일 instance와 recurrence null 유지
+- delete: recurrence scope 없이 single delete **pass**
+- cleanup: 최종 marker 잔여 source/destination `0/0`
+- 발견·수정한 회귀: 새 비반복 `EKEvent`에서도 EventKit이 `occurrenceDate == startDate`를 노출할 수 있어 이를 반복 소속으로 해석하면 잘못된 반복 badge·scope가 나타났다. 반복 소속은 `hasRecurrenceRules || isDetached`로 한정하고 `occurrenceDate`는 반복 identity anchor로만 사용하며 single에서는 `nil`로 정규화했다.
+- 자동 회귀: **124 tests, 1 intentional skip, 0 failures**
+- 데이터 안전 gate: full test와 live QA 전후 direct/sandbox production DB 및 각각의 `-wal`·`-shm` 상태가 모두 불변
+- 이번 run에서 통과로 표시하지 않는 항목: Calendar.app visual round-trip, all-day, time-zone 변경, 실제 recurrence occurrence·`이번 이후` split, `KAOS-TEST`→`일정` move. 기존 서버 run의 recurrence/time-zone 결과는 이 local run의 대체 증거로 합치지 않음
+- 판정: signed FinalRelease의 full access, 두 Exchange calendar의 writable 표시, `KAOS-TEST` 비반복 create→restart/refetch→single update→single delete와 exact cleanup은 **pass**. 위 미실행 항목과 backend의 Exchange Online 판정은 계속 pending이다.
+
+## 2026-07-11 legacy Brief compatibility 후속 checkpoint
+
+- live run `20260711-1626-B7D2` 뒤 최종 코드 검토에서, 오분류 build가 만든 single Event Brief link가 recurring identity로 남아 수정 mapper의 `single:v1`과 강한 ID 단계에서도 불일치할 수 있음을 확인했다.
+- runtime 호환 경로는 현재 single과 legacy link가 강한 identifier 및 calendar/title/location/time/local-components/fingerprint/series/occurrence anchor까지 모두 정확히 같을 때만 기존 context를 연결하고 `single:v1`로 snapshot을 정상화한다. notes/tasks는 유지한다.
+- navigation은 read-only다. legacy 구조와 strong identifier가 맞지만 snapshot이 다르면 confirmation-required candidate로만 노출하고, identifier가 없으면 기존 exact/fingerprint candidate 정책을 유지해 다른 recurrence occurrence를 자동 연결하지 않는다.
+- 이 Mac의 direct/sandbox production DB는 검토 시 `event_links` 0행이었지만, 업그레이드 안전성은 별도 회귀로 보강했다.
+- 자동 gate: **132 tests, 1 intentional skip, 0 failures, 0 unexpected**. 테스트 전후 두 production DB와 WAL/SHM 상태는 완전히 동일했다.
+- 최종 build-only artifact: `/private/tmp/KaosCalFinalReleaseCompat/Build/Products/Release/KaosCal.app`, CDHash `511a11258d95a49c826b49dc463a79039707807e`. strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description 통과; get-task-allow와 XCTest plug-in/link 없음.
+- 이 후속 artifact에는 새 Exchange fixture write를 실행하지 않았다. 따라서 실계정 CRUD pass는 직전 live artifact에, legacy normalization과 최종 서명/build pass는 이 artifact에 각각 귀속한다. 남은 Calendar.app, all-day, time-zone 변경, recurrence/future split, calendar move 판정은 그대로 pending이다.
 
 ## 테스트 기록 형식
 

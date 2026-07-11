@@ -19,6 +19,7 @@ Event Brief 메모와 작업은 Exchange 원본 일정과 수명이 다르다. E
 - EventKit fetch 결과를 관찰할 때 강한 식별자로 연결된 context만 같은 transaction에서 최신 title/time/source/identifier/`last_seen_at` snapshot으로 갱신한다. exact snapshot과 fingerprint는 후보만 반환하고 자동 연결하거나 갱신하지 않는다.
 - 영속 연결 우선순위는 `event_identifier` → `calendar_item_identifier` → calendar+external identifier → series+occurrence identity → exact snapshot 후보 → fingerprint 후보 순서다.
 - occurrence identity는 non-recurring의 `single:v1`, zoned 반복의 절대 시점 키, all-day/floating 반복의 canonical local-components 키로 구분한다. detached occurrence는 이동된 start가 아니라 원래 occurrence local components를 사용한다. UI selection identity도 local occurrence anchor를 사용해 시간대 변경에 안정적으로 유지한다.
+- 과거 build가 synthetic `occurrenceDate == startDate`만으로 실제 single을 recurring으로 저장한 호환성은 schema migration이나 broad weak relink로 처리하지 않는다. 현재 이벤트가 single이고 저장 link가 non-detached recurring이며, 1~3단계 강한 identifier와 calendar/title/location/start/end/all-day/time semantics/time zone/local components/fingerprint/series/occurrence anchor가 모두 정확히 일치할 때만 같은 context로 인정한다. 정상 load/observe가 link를 `is_recurring = false`, occurrence/series 값 없음, `single:v1`로 원자적으로 갱신한다. legacy 구조와 강한 identifier는 맞지만 snapshot이 달라졌으면 자동 연결하지 않고 별도 confirmation candidate로 노출한다. navigation match는 읽기 전용이고 identifier 없음은 기존 exact/fingerprint candidate 정책을 유지한다.
 - fingerprint는 versioned SHA-256 값이다. calendar/title/location을 정규화하고 zoned는 절대 시점, all-day/floating은 local components를 입력으로 사용한다. fingerprint 일치는 사용자 확인이 필요한 후보이며 자동 relink 근거가 아니다.
 - 모든 `Date` column은 GRDB의 `.deferredToDate`를 명시해 UTC `YYYY-MM-DD HH:MM:SS.SSS` TEXT로 저장한다. 일반 GRDB `Date` binding과 같은 표현을 사용한다.
 - relative event-task due는 `before_start`, `at_start`, `at_end`, `after_end` anchor와 0 이상 2,628,000분 이하 offset으로 저장한다. due가 없으면 Before/During은 일정 시작, After는 일정 종료를 파생 due로 사용한다. all-day/floating due는 조회 시 표시 calendar에서 local components를 재구성하고 fixed due만 절대 시점으로 취급한다.
@@ -31,6 +32,7 @@ Event Brief 메모와 작업은 Exchange 원본 일정과 수명이 다르다. E
 - 일정 이동이나 일부 EventKit identifier 변경 뒤에도 다른 강한 식별자로 연결이 유지되면 기존 notes/task를 보존하면서 snapshot과 상대 기한이 갱신된다.
 - 반복 종일·floating occurrence는 Mac 시간대가 달라져 raw `Date`가 바뀌어도 같은 civil occurrence에 연결된다.
 - weak identity가 같은 서로 다른 일정을 자동 병합하지 않는다.
+- synthetic-anchor 오분류 build에서 만든 notes/tasks도 안전한 strong+exact 조건이면 schema 변경 없이 정상 single Brief로 복구된다.
 - v1 schema는 CHECK, foreign key, unique/index 계약을 가진 immutable baseline이 된다. 이후 변경은 새 migration으로만 추가한다.
 
 ## 검토한 대안

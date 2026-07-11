@@ -426,6 +426,78 @@
 - 변경 문서: README, phase plan, developer setup, Exchange compatibility, QA checklist, implementation log, ADR-001
 - 결과: 서버 측 제한된 CRUD·time-zone·recurrence·cleanup은 통과했다. 서버 pass와 로컬 EventKit pass는 별도이며, 실제 move·all-day·`this_and_following`과 EventKit/Calendar.app이 남아 있어 Exchange 지원 완료를 선언하지 않는다.
 
+## 2026-07-11 — FinalRelease 로컬 EventKit 실사용 gate와 단일 일정 반복 오분류 수정
+
+- 관련 ADR: ADR-001, ADR-003, ADR-005, ADR-010, ADR-011
+- 사전 확인 artifact:
+  - `/private/tmp/KaosCalFinalRelease/Build/Products/Release/KaosCal.app`
+  - CDHash `d5268c733173a42927690013f4441f3004dfa6b8`
+  - 앱에서 `Full calendar access`와 `KAOS-TEST`, `일정`이 각각 Exchange source이며 writable인 상태를 실화면으로 확인했다.
+- 최초 live run `20260711-1542-A1C9`:
+  - `KAOS-TEST`에 `Does not repeat`, Asia/Seoul인 고유 timed fixture를 앱으로 생성했다.
+  - 생성 직후와 앱 재시작·재조회 뒤 모두 앱이 반복 배지와 `Recurring occurrence`를 표시하고 편집 시 반복 범위를 요구했다. 비반복 일정이므로 **fail**로 판정했다.
+  - 정확한 fixture를 앱에서 삭제했고 bounded Outlook 확인에서 `KAOS-TEST`/`일정` 잔여가 `0/0`이었다. 삭제 전 connector가 이 fixture를 관찰하지 못했으므로 이 최초 run은 원격 동기화 증거로 사용하지 않는다.
+  - Calendar.app AppleScript 읽기는 automation 응답이 없어 중단했으며 mutation은 하지 않았다.
+- 원인과 계약 수정:
+  - 새 비반복 `EKEvent`도 `startDate` 설정 뒤 `occurrenceDate == startDate`를 반환할 수 있는데, 기존 mapper가 `occurrenceDate != nil`을 반복 membership으로 해석했다.
+  - provider 경계의 반복 membership을 `hasRecurrenceRules || isDetached`로 한정하고, 비반복 event의 `occurrenceDate`는 `nil`로 정규화한다.
+  - 이후 UI·mutation scope·resolve routing은 `DisplayEvent.isRecurring`만 membership 기준으로 사용한다. `occurrenceDate`는 반복 경로 안에서 occurrence identity anchor로만 사용한다.
+  - 영속 Undo snapshot의 중복 안전 검사는 손상·구버전 데이터 방어를 위해 유지했다.
+- 변경 코드와 회귀:
+  - `CalendarProvider`, `EventKitProvider`, `FakeCalendarProvider`의 단일/반복 dispatch를 같은 계약으로 통일했다.
+  - macOS의 synthetic occurrence anchor를 재현하는 EventKit 회귀와 noisy anchor가 있는 단일 일정의 no-scope update/delete 회귀를 추가했다.
+  - 집중 `CalendarEventEditingTests`: **30 tests, 0 failures**.
+  - 전체 **124 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. skip은 read-only 수동 EventKit gate다.
+  - 전체 test 전후와 아래 live QA 종료 뒤 direct/sandbox production DB 및 각각의 `-wal`/`-shm` 존재 여부, mtime, size, SHA-256이 모두 동일했다.
+- 수정 FinalRelease gate:
+  - artifact: `/private/tmp/KaosCalFinalReleaseRecurrenceFix/Build/Products/Release/KaosCal.app`
+  - CDHash: `63ded03a9d704976c4ba45340f2748eda9892382`
+  - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` ad-hoc Release build, hardened runtime, `codesign --verify --deep --strict`: **pass**.
+  - entitlement는 app sandbox와 Calendar access만 포함하고 `get-task-allow`는 없다. XCTest plug-in·link도 없다. full-access usage description도 확인했다.
+- 수정 후 live run `20260711-1626-B7D2`:
+  - 새 CDHash의 macOS full-calendar-access prompt를 사용자가 승인한 범위에서 허용한 뒤 `KAOS-TEST`에 2026-07-11 16:30–17:30 Asia/Seoul, `Does not repeat` fixture를 앱으로 생성했다.
+  - 앱 생성 응답: 반복 배지·문구 없음, `Exchange · KAOS-TEST`, `Calendar event · Editable`, Asia/Seoul: **pass**.
+  - Outlook server bounded 조회: 같은 고유 표식을 `singleInstance`, `recurrence: null`, 07:30–08:30 UTC로 관찰: **pass**.
+  - 앱을 완전히 종료·재시작한 뒤 EventKit에서 다시 읽은 카드·상세·tooltip에도 반복 표시가 없었고, 원본 편집기는 `Does not repeat`와 단일 `Save Changes`만 제공하며 scope 선택을 요구하지 않았다: **pass**.
+  - 제목을 단일 일정으로 수정했고 Outlook server에서도 변경 제목, `singleInstance`, `recurrence: null` 유지 확인: **pass**.
+  - 편집기에서 scope 선택 없이 `Delete Original Event`를 확인·실행했다. 앱 event count는 0, 지연된 bounded server 확인에서 `KAOS-TEST`/`일정` 고유 표식 잔여는 `0/0`: **pass**.
+  - 종료 시 모든 KaosCal 검증 프로세스가 없음을 확인했다.
+- 증거·비밀정보 경계:
+  - password, MFA, token, account/email, raw calendar/event ID를 저장소나 문서에 기록하지 않았다.
+  - 두 run에서 만든 고유 fixture 외 기존 일정은 수정·삭제하지 않았다.
+- 남은 경계:
+  - 이 run은 signed local EventKit에서 비반복 timed create/refetch/update/delete와 Outlook server 반영을 입증한다.
+  - Calendar.app 실화면 round-trip, live all-day, live time-zone change, 실제 반복 series/exception/`this_and_following`, calendar 간 move는 아직 별도 수동 gate가 필요하다.
+  - connector의 mailbox 제약 때문에 이 결과만으로 Exchange Online backend 종류를 단정하지 않으며 전체 Exchange 지원 완료도 선언하지 않는다.
+- 결과: 최초 live gate가 발견한 실제 오분류를 수정했고, 새 FinalRelease의 단일 Exchange 일정 local→server→local CRUD와 exact cleanup은 통과했다.
+
+## 2026-07-11 — Legacy synthetic-single Brief 호환성과 최종 Release checkpoint
+
+- 관련 ADR: ADR-003, ADR-008, ADR-010
+- 최종 검토에서 발견한 업그레이드 경계:
+  - 이전 recurrence-fix 전 build가 실제 single Event Brief를 `is_recurring = true`와 occurrence key로 저장했을 수 있다.
+  - 수정된 mapper는 같은 이벤트를 `isRecurring = false`, `single:v1`로 읽으므로 기존 strict occurrence match만 두면 강한 identifier가 같아도 notes/tasks가 confirmation-required 상태에 남는다.
+  - 이 Mac의 direct/sandbox production DB는 검토 시 `event_links` 0행이어서 현재 사용자 데이터에는 영향이 없었지만, 배포 호환성 자체는 코드로 보완했다.
+- 호환성 결정과 구현:
+  - schema migration이나 broad weak relink를 추가하지 않는다.
+  - 현재 이벤트가 single이고 legacy link가 non-detached recurring이며, event/item/external 강한 identifier 필터 안에서 calendar/title/location/start/end/all-day/time semantics/time zone/local components/fingerprint/series/occurrence anchor가 모두 정확히 같을 때만 기존 context를 연결한다.
+  - 정상 load/observe 시 같은 transaction에서 link를 nonrecurring, occurrence/series 없음, `single:v1`로 갱신하고 notes/tasks를 유지한다. navigation match는 read-only다.
+  - legacy 구조와 strong identifier가 맞지만 snapshot이 달라졌으면 confirmation-required candidate로 노출하고 자동 연결하지 않는다. identifier 없음은 기존 exact/fingerprint candidate 정책을 유지한다.
+- 결정적 회귀 보강:
+  - raw `(hasRules, isDetached, occurrenceDate)` 순수 분류 matrix로 synthetic anchor와 membership을 OS 동작과 무관하게 고정했다.
+  - scoped overload를 구현하지 않는 최소 provider spy로 `CalendarProviding` 기본 update/delete routing과 recurrence scope 차단을 직접 검증했다.
+  - zoned/all-day legacy link 정상화, notes/tasks 보존, navigation read-only, identifier 없음 candidate, snapshot drift의 confirmation-required 반환과 자동 연결 차단을 검증했다.
+  - 집중 `CalendarEventEditingTests` **33 tests**, `CalendarEventEditingTests + ContextStoreTests` **72 tests**, 모두 0 failures.
+  - 전체 **132 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 최종 결과 bundle은 `/private/tmp/KaosCalRecurrenceCompatFinal.xcresult`다.
+  - 전체 test 직전·직후 direct/sandbox production DB와 각각의 `-wal`/`-shm` 존재 여부, mtime, size, SHA-256이 완전히 동일했다.
+- 최종 Release gate:
+  - artifact: `/private/tmp/KaosCalFinalReleaseCompat/Build/Products/Release/KaosCal.app`
+  - CDHash: `511a11258d95a49c826b49dc463a79039707807e`
+  - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` ad-hoc Release, hardened runtime, `codesign --verify --deep --strict`: **pass**.
+  - entitlement는 app sandbox와 Calendar access만 포함하고 `get-task-allow`는 없다. XCTest plug-in·link 없음, full-access usage description도 확인했다.
+  - Exchange fixture write를 다시 만들지 않았다. 실계정 비반복 CRUD 증거는 직전 CDHash `63ded03a9d704976c4ba45340f2748eda9892382` run `20260711-1626-B7D2`에 귀속하고, 최종 artifact의 build/자동 gate와 구분한다.
+- 결과: live에서 발견한 recurrence membership 수정에 deterministic test와 legacy Brief upgrade 경로를 더했고, 최종 서명 산출물과 운영 DB 격리 gate를 통과했다. Calendar.app·all-day·실제 recurrence/future split·calendar move의 남은 live 판정은 변하지 않는다.
+
 ## 다음 항목 템플릿
 
 ```markdown

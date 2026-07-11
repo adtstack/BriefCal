@@ -170,6 +170,15 @@ Phase 1은 read-only 경계와 `EventKitProvider` 하나로 시작했고 Phase 5
 
 Provider는 long-lived `EKEventStore`를 소유하지만 UI에 `EKEvent`를 전달하지 않는다. source, identifier, 시간, 종일, 반복, 초대, 수정 가능 상태를 값 타입 snapshot으로 만든다. 연속 store change 알림은 AppState에서 250ms 병합하고 다시 fetch한다.
 
+반복 소속은 provider 경계에서 아래처럼 한 번 정규화한다. EventKit은 비반복 `EKEvent`도 `startDate` 지정 뒤 `occurrenceDate == startDate`를 반환할 수 있으므로 raw occurrence anchor의 존재 여부를 분류에 사용하지 않는다.
+
+```swift
+let isRecurring = event.hasRecurrenceRules || event.isDetached
+let occurrenceDate = isRecurring ? event.occurrenceDate : nil
+```
+
+이후 UI·scope 요구·single/recurring write routing은 `DisplayEvent.isRecurring`만 canonical 판정으로 사용한다. 정규화된 `occurrenceDate`는 recurring route 안의 lookup·identity reconciliation anchor일 뿐이다. 회귀 테스트는 synthetic `occurrenceDate`가 있는 비반복 `EKEvent`를 single로 유지하고 anchor를 `nil`로 정규화하는 계약을 고정한다.
+
 ## Phase 5 원본 일정 쓰기 파이프라인(역사적 baseline)
 
 ```text
@@ -216,6 +225,7 @@ EventEditor draft + selected occurrence
 - EventKit save 성공 뒤 identifier churn으로 post-save occurrence receipt를 강하게 확정할 수 없으면 부분 성공으로 처리한다. editor/review를 닫아 동일 변경을 재시도하지 못하게 하고, refresh 후 “Do not retry·Calendar.app에서 확인”을 안내한다. local rebind·log·Undo는 만들지 않고 기존 Event Brief를 보존한다.
 - `v2_event_change_log`는 immutable v1 뒤에 추가하는 migration이다. `mutationImpact`, `changeHistory`, mutation rebind+record, undo rebind+record 같은 use-case API가 provider 명령과 local transaction 사이의 경계를 담당한다.
 - persistent log의 `undo_state = available`만으로 앱 재실행 뒤 Undo를 허용하지 않는다. UI Undo 권한은 현재 process의 one-shot token, provider의 fresh after-snapshot match, 권한과 strong identity를 모두 요구한다. 일반 EventKit refresh는 자체 save 알림과 외부 알림을 구분할 수 없어 token을 즉시 지우지 않지만, 외부 변경·missing·read-only는 역방향 write 전에 provider stale check로 차단한다. 이후 성공한 KaosCal mutation은 token을 폐기하며 반복 scope, detached, delete는 token을 만들지 않는다.
+- `DisplayEvent.isRecurring`이 런타임 scope routing의 단일 기준이어도 persisted Undo snapshot을 복원하는 recurrence·detached·occurrence 중복 검사는 방어적으로 유지한다. 오래된 payload나 불일치 snapshot을 single Undo로 잘못 승격하지 않기 위한 별도 안전장치다.
 
 세부 결정은 [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md)을 따른다. 이 파이프라인은 121-test 자동 gate를 통과했지만 실계정 Exchange·`KAOS-TEST` 통과 증거는 아니다.
 
@@ -255,6 +265,7 @@ KaosCalApp / AppBootstrap
 - 앱 시작 DB open/migration 실패는 in-memory fallback 없이 전역 복구 화면으로 전환한다. 기존 DB를 삭제하거나 덮어쓰지 않는다.
 - 첫 non-empty notes 또는 event task 저장만 context+link를 만들며, resolve부터 insert/update까지 하나의 write transaction이다.
 - EventKit fetch 관찰은 강한 ID로 이미 연결된 record만 갱신한다. exact snapshot과 versioned fingerprint는 확인이 필요한 후보다.
+- 과거 synthetic `occurrenceDate` 오분류 build가 recurring으로 저장한 실제 single link는 일반 weak relink로 풀지 않는다. 현재 single과 강한 identifier가 맞고 calendar/title/location/time/local-components/fingerprint와 저장 occurrence anchor까지 모두 정확히 같은 경우에만 기존 context를 연결한 뒤 `single:v1` snapshot으로 원자적으로 정상화한다. legacy 구조와 strong identifier는 맞지만 snapshot이 바뀌었으면 자동 연결하지 않고 confirmation candidate로만 노출한다. navigation lookup 자체는 read-only다.
 - 반복 identity는 zoned absolute occurrence와 all-day/floating civil occurrence를 분리한다. identifier+occurrence unique index가 동시 중복 생성을 막는다.
 - all-day/floating relative task due는 저장된 local components를 조회 calendar에서 재구성한다. personal task와 event task는 한 consistent read에서 Today/Upcoming/Completed item으로 합친다.
 - 날짜는 UTC millisecond TEXT 계약을 명시한다. details와 선택 근거는 [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md)을 따른다.
@@ -283,7 +294,7 @@ EventKit의 eventIdentifier는 영구 절대값으로 취급하지 않는다. �
 6. title/start/end/location 기반 fingerprint 후보
 7. 실패 시 `notFound`로 유지
 
-1~4만 strong match로 자동 연결하고 관찰 snapshot을 갱신한다. 5~6은 candidate/ambiguous이며 자동 relink하지 않는다. `missing`/`orphaned` 상태 전환과 사용자 relink UI는 Phase 6~7 범위다.
+1~4만 strong match로 자동 연결하고 관찰 snapshot을 갱신한다. 단, legacy synthetic-single 호환 경로는 1~3의 강한 identifier 필터 안에서 전체 snapshot과 anchor가 정확히 같은 경우에만 recurring 저장값을 single로 정상화한다. legacy 구조와 1~3 strong identifier는 맞지만 snapshot이 달라졌으면 별도 confirmation candidate로 반환하고 자동 갱신하지 않는다. 5~6도 candidate/ambiguous이며 자동 relink하지 않는다. `missing`/`orphaned` 상태 전환과 사용자 relink UI는 Phase 6~7 범위다.
 
 ## 권한과 read-only 상태
 

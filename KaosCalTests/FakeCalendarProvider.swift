@@ -88,9 +88,7 @@ final class FakeCalendarProvider: CalendarProviding {
         _ original: DisplayEvent,
         with draft: CalendarEventDraft
     ) throws -> DisplayEvent {
-        if original.isRecurring
-            || original.occurrenceDate != nil
-            || original.isDetached {
+        if original.isRecurring {
             throw CalendarEventWriteError.recurringScopeRequired
         }
         return try updateEvent(
@@ -147,9 +145,7 @@ final class FakeCalendarProvider: CalendarProviding {
     }
 
     func deleteEvent(_ original: DisplayEvent) throws {
-        if original.isRecurring
-            || original.occurrenceDate != nil
-            || original.isDetached {
+        if original.isRecurring {
             throw CalendarEventWriteError.recurringScopeRequired
         }
         _ = try deleteEvent(original, scope: .thisEvent)

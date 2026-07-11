@@ -37,7 +37,7 @@ Day, Week, Agenda가 같은 EventKit snapshot을 사용해도 날짜 경계, DST
 
 ## 남은 검증
 
-- macOS full calendar access와 `KAOS-TEST`의 실제 EventKit 노출
+- Calendar.app의 시각 round-trip과 권한 철회·복구 UI
 - Exchange backend 종류
 - Exchange `KC-E2` 종일·다일, `KC-E3` DST, `KC-E4` 반복 occurrence
 - 실제 창에서의 키보드·VoiceOver·스크롤 상호작용

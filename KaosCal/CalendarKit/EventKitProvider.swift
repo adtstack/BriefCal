@@ -2,6 +2,11 @@ import AppKit
 import EventKit
 import Foundation
 
+struct EventKitRecurrenceClassification: Equatable {
+    let isRecurring: Bool
+    let occurrenceDate: Date?
+}
+
 @MainActor
 final class EventKitProvider: CalendarProviding {
     private let eventStore: EKEventStore
@@ -115,9 +120,7 @@ final class EventKitProvider: CalendarProviding {
         _ original: DisplayEvent,
         with draft: CalendarEventDraft
     ) throws -> DisplayEvent {
-        if original.isRecurring
-            || original.occurrenceDate != nil
-            || original.isDetached {
+        if original.isRecurring {
             throw CalendarEventWriteError.recurringScopeRequired
         }
         return try updateEvent(
@@ -210,9 +213,7 @@ final class EventKitProvider: CalendarProviding {
     }
 
     func deleteEvent(_ original: DisplayEvent) throws {
-        if original.isRecurring
-            || original.occurrenceDate != nil
-            || original.isDetached {
+        if original.isRecurring {
             throw CalendarEventWriteError.recurringScopeRequired
         }
         _ = try deleteEvent(original, scope: .thisEvent)
@@ -248,9 +249,9 @@ final class EventKitProvider: CalendarProviding {
 
     private func makeDisplayEvent(_ event: EKEvent) -> DisplayEvent {
         let title = event.title.flatMap { $0.isEmpty ? nil : $0 } ?? "Untitled event"
-        let isRecurring = event.hasRecurrenceRules
-            || event.occurrenceDate != nil
-            || event.isDetached
+        let classification = recurrenceClassification(for: event)
+        let isRecurring = classification.isRecurring
+        let occurrenceDate = classification.occurrenceDate
         let recurrence = makeRecurrenceRepresentation(
             event,
             isRecurring: isRecurring
@@ -267,7 +268,7 @@ final class EventKitProvider: CalendarProviding {
             calendarItemIdentifier: event.calendarItemIdentifier,
             eventIdentifier: event.eventIdentifier,
             isRecurring: isRecurring,
-            occurrenceDate: event.occurrenceDate,
+            occurrenceDate: occurrenceDate,
             occurrenceLocalComponents: occurrenceLocalComponents,
             startDate: event.startDate,
             endDate: event.endDate,
@@ -292,7 +293,7 @@ final class EventKitProvider: CalendarProviding {
             timeZoneIdentifier: event.timeZone?.identifier,
             timeSemantics: timeSemantics,
             isRecurring: isRecurring,
-            occurrenceDate: event.occurrenceDate,
+            occurrenceDate: occurrenceDate,
             occurrenceLocalComponents: occurrenceLocalComponents,
             isDetached: event.isDetached,
             isReadOnly: !event.calendar.allowsContentModifications,
@@ -320,7 +321,7 @@ final class EventKitProvider: CalendarProviding {
             throw CalendarEventWriteError.readOnlyCalendar
         }
         if scope == .futureEvents {
-            guard event.isRecurring || event.occurrenceDate != nil else {
+            guard event.isRecurring else {
                 throw CalendarEventWriteError.futureScopeRequiresRecurringEvent
             }
             if event.isDetached {
@@ -344,7 +345,7 @@ final class EventKitProvider: CalendarProviding {
         }
         if scope == .futureEvents {
             let current = makeDisplayEvent(event)
-            guard current.isRecurring || current.occurrenceDate != nil else {
+            guard current.isRecurring else {
                 throw CalendarEventWriteError.futureScopeRequiresRecurringEvent
             }
             if current.isDetached {
@@ -390,9 +391,7 @@ final class EventKitProvider: CalendarProviding {
     }
 
     private func resolveEvent(for original: DisplayEvent) throws -> EKEvent {
-        if original.isRecurring
-            || original.occurrenceDate != nil
-            || original.isDetached {
+        if original.isRecurring {
             return try resolveRecurringEvent(for: original)
         }
 
@@ -523,9 +522,7 @@ final class EventKitProvider: CalendarProviding {
         matchesCalendarOf original: DisplayEvent
     ) -> Bool {
         event.calendar.calendarIdentifier == original.calendarIdentifier
-            && !event.hasRecurrenceRules
-            && event.occurrenceDate == nil
-            && !event.isDetached
+            && !recurrenceClassification(for: event).isRecurring
     }
 
     private func recurringEventCandidate(
@@ -537,9 +534,7 @@ final class EventKitProvider: CalendarProviding {
             return false
         }
         let candidate = makeDisplayEvent(event)
-        guard candidate.isRecurring
-                || candidate.occurrenceDate != nil
-                || candidate.isDetached else {
+        guard candidate.isRecurring else {
             return false
         }
         return semanticOccurrenceMatches(candidate, original)
@@ -810,9 +805,29 @@ final class EventKitProvider: CalendarProviding {
     ) -> CalendarEventRecurrence {
         makeRecurrenceRepresentation(
             event,
-            isRecurring: event.hasRecurrenceRules
-                || event.occurrenceDate != nil
-                || event.isDetached
+            isRecurring: recurrenceClassification(for: event).isRecurring
+        )
+    }
+
+    func recurrenceClassification(
+        for event: EKEvent
+    ) -> EventKitRecurrenceClassification {
+        Self.classifyRecurrence(
+            hasRecurrenceRules: event.hasRecurrenceRules,
+            isDetached: event.isDetached,
+            rawOccurrenceDate: event.occurrenceDate
+        )
+    }
+
+    static func classifyRecurrence(
+        hasRecurrenceRules: Bool,
+        isDetached: Bool,
+        rawOccurrenceDate: Date?
+    ) -> EventKitRecurrenceClassification {
+        let isRecurring = hasRecurrenceRules || isDetached
+        return EventKitRecurrenceClassification(
+            isRecurring: isRecurring,
+            occurrenceDate: isRecurring ? rawOccurrenceDate : nil
         )
     }
 

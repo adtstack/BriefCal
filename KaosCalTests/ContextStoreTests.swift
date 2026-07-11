@@ -349,6 +349,188 @@ final class ContextStoreTests: XCTestCase {
         )
     }
 
+    func testLegacySyntheticSingleBriefNormalizesWithoutDataLoss() throws {
+        let harness = try makeHarness()
+        let legacyEvent = makeEvent(
+            id: "legacy-single",
+            externalIdentifier: "legacy-single-external",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9)
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: legacyEvent, notes: "Keep this brief")
+        )
+        let task = try harness.store.appendEventTask(
+            for: legacyEvent,
+            section: .before,
+            title: "Keep this task"
+        )
+        let correctedSingle = makeEvent(
+            id: "legacy-single",
+            externalIdentifier: "legacy-single-external"
+        )
+
+        guard case let .loaded(snapshot, basis) = try harness.store.loadBrief(
+            for: correctedSingle
+        ) else {
+            return XCTFail("Expected the legacy single brief to normalize")
+        }
+        XCTAssertEqual(basis, .eventIdentifier)
+        XCTAssertEqual(snapshot.context.id, context.id)
+        XCTAssertEqual(snapshot.context.notes, "Keep this brief")
+        XCTAssertEqual(snapshot.tasks.map(\.id), [task.id])
+        XCTAssertFalse(snapshot.link.isRecurring)
+        XCTAssertNil(snapshot.link.occurrenceDate)
+        XCTAssertNil(snapshot.link.occurrenceLocalComponents)
+        XCTAssertEqual(snapshot.link.occurrenceIdentityKey, "single:v1")
+        XCTAssertNil(snapshot.link.recurrenceSeriesIdentifier)
+        XCTAssertNil(snapshot.link.seriesFingerprint)
+    }
+
+    func testLegacySyntheticSingleNavigationStaysReadOnlyUntilLoad() throws {
+        let harness = try makeHarness()
+        let legacyEvent = makeEvent(
+            id: "legacy-navigation",
+            externalIdentifier: "legacy-navigation-external",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9)
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: legacyEvent, notes: "Navigate")
+        )
+        let correctedSingle = makeEvent(
+            id: "legacy-navigation",
+            externalIdentifier: "legacy-navigation-external"
+        )
+
+        XCTAssertEqual(
+            try harness.store.matchLinkedEvent(
+                contextID: context.id,
+                among: [correctedSingle]
+            ),
+            .linked(event: correctedSingle, basis: .eventIdentifier)
+        )
+        XCTAssertTrue(try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        ).link.isRecurring)
+
+        guard case .loaded = try harness.store.loadBrief(
+            for: correctedSingle
+        ) else {
+            return XCTFail("Expected load to normalize the legacy link")
+        }
+        XCTAssertFalse(try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        ).link.isRecurring)
+    }
+
+    func testLegacySyntheticSingleSnapshotDriftRequiresConfirmation() throws {
+        let harness = try makeHarness()
+        let legacyEvent = makeEvent(
+            id: "legacy-mismatch",
+            externalIdentifier: "legacy-mismatch-external",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9)
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: legacyEvent, notes: "Do not move")
+        )
+        let changedSingle = makeEvent(
+            id: "legacy-mismatch",
+            title: "Changed outside KaosCal",
+            start: date(2026, 7, 10, 11),
+            end: date(2026, 7, 10, 12),
+            externalIdentifier: "legacy-mismatch-external"
+        )
+
+        XCTAssertEqual(
+            try harness.store.loadBrief(for: changedSingle),
+            .confirmationRequired(
+                contextIDs: [context.id],
+                basis: .legacySyntheticSingle
+            )
+        )
+        XCTAssertTrue(try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        ).link.isRecurring)
+        XCTAssertEqual(
+            try harness.store.matchLinkedEvent(
+                contextID: context.id,
+                among: [changedSingle]
+            ),
+            .confirmationRequired(
+                eventIDs: [changedSingle.id],
+                basis: .legacySyntheticSingle
+            )
+        )
+    }
+
+    func testLegacySyntheticSingleWithoutIdentifiersRequiresConfirmation() throws {
+        let harness = try makeHarness()
+        let legacyEvent = makeEvent(
+            id: "legacy-no-identifiers",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 9),
+            includeIdentifiers: false
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: legacyEvent, notes: "Confirm me")
+        )
+        let correctedSingle = makeEvent(
+            id: "legacy-no-identifiers",
+            includeIdentifiers: false
+        )
+
+        XCTAssertEqual(
+            try harness.store.loadBrief(for: correctedSingle),
+            .confirmationRequired(
+                contextIDs: [context.id],
+                basis: .exactSnapshot
+            )
+        )
+    }
+
+    func testLegacySyntheticAllDaySingleUsesLocalAnchorNormalization() throws {
+        let harness = try makeHarness()
+        let start = localComponents(2026, 7, 10)
+        let end = localComponents(2026, 7, 11)
+        let semantics = EventTimeSemantics.allDay(
+            start: start,
+            endExclusive: end
+        )
+        let legacyEvent = makeEvent(
+            id: "legacy-all-day",
+            start: date(2026, 7, 10),
+            end: date(2026, 7, 11),
+            externalIdentifier: "legacy-all-day-external",
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10),
+            occurrenceLocalComponents: start,
+            isAllDay: true,
+            timeSemantics: semantics
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(for: legacyEvent, notes: "All day")
+        )
+        let correctedSingle = makeEvent(
+            id: "legacy-all-day",
+            start: date(2026, 7, 10),
+            end: date(2026, 7, 11),
+            externalIdentifier: "legacy-all-day-external",
+            isAllDay: true,
+            timeSemantics: semantics
+        )
+
+        guard case let .loaded(snapshot, _) = try harness.store.loadBrief(
+            for: correctedSingle
+        ) else {
+            return XCTFail("Expected local-anchor legacy normalization")
+        }
+        XCTAssertEqual(snapshot.context.id, context.id)
+        XCTAssertFalse(snapshot.link.isRecurring)
+        XCTAssertEqual(snapshot.link.occurrenceIdentityKey, "single:v1")
+    }
+
     func testFirstNotesCreateContextAndLinkTogether() throws {
         let harness = try makeHarness()
         let event = makeEvent(id: "event")
