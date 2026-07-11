@@ -2646,6 +2646,370 @@ final class ContextStoreTests: XCTestCase {
         }
     }
 
+    func testMissingOrphanAndExplicitRelinkPreserveLocalBrief() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(id: "recovery-original")
+        let context = try XCTUnwrap(harness.store.saveNotes(
+            for: original,
+            notes: "Keep recovery notes"
+        ))
+        let task = try harness.store.appendEventTask(
+            for: original,
+            section: .after,
+            title: "Keep recovery task"
+        )
+        let initial = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+
+        let missing = try harness.store.markLinkedEventMissing(
+            contextID: context.id
+        )
+
+        XCTAssertEqual(missing.link.linkStatus, .missing)
+        XCTAssertEqual(missing.context.lifecycleStatus, .scheduled)
+        XCTAssertEqual(missing.link.lastSeenAt, initial.link.lastSeenAt)
+        XCTAssertEqual(missing.context.notes, "Keep recovery notes")
+        XCTAssertEqual(missing.tasks.map(\.id), [task.id])
+        XCTAssertEqual(
+            try harness.store.fetchRecoveryBriefs().map(\.context.id),
+            [context.id]
+        )
+
+        let orphan = try harness.store.keepLocalBriefAsOrphan(
+            contextID: context.id
+        )
+        XCTAssertEqual(orphan.link.linkStatus, .orphaned)
+        XCTAssertEqual(orphan.context.lifecycleStatus, .orphaned)
+
+        let observed = try harness.store.observe(events: [original])
+        guard case let .candidate(contextIDs, _) = observed.first else {
+            return XCTFail("An orphan must require explicit relink")
+        }
+        XCTAssertEqual(contextIDs, [context.id])
+        let stillOrphan = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(stillOrphan.link.linkStatus, .orphaned)
+        XCTAssertEqual(stillOrphan.context.lifecycleStatus, .orphaned)
+        XCTAssertThrowsError(try harness.store.saveNotes(
+            for: original,
+            notes: "Must not create a duplicate"
+        )) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .identityConfirmationRequired([context.id])
+            )
+        }
+        XCTAssertEqual(try harness.store.eventContexts.count(), 1)
+
+        let replacement = makeEvent(
+            id: "recovery-replacement",
+            title: original.title,
+            location: original.location,
+            start: original.startDate,
+            end: original.endDate,
+            calendarIdentifier: "replacement-calendar"
+        )
+        let relinked = try harness.store.relinkLocalBrief(
+            contextID: context.id,
+            to: replacement,
+            expectedLink: orphan.link,
+            at: harness.now,
+            calendar: testCalendar
+        )
+
+        XCTAssertEqual(relinked.link.linkStatus, .active)
+        XCTAssertEqual(relinked.context.lifecycleStatus, .completed)
+        XCTAssertEqual(relinked.link.calendarIdentifier, "replacement-calendar")
+        XCTAssertEqual(relinked.context.notes, "Keep recovery notes")
+        XCTAssertEqual(relinked.tasks.map(\.id), [task.id])
+        let relinkChange = try XCTUnwrap(
+            harness.store.changeHistory(contextID: context.id).first
+        )
+        XCTAssertEqual(relinkChange.changeType, .relinked)
+        XCTAssertNil(relinkChange.before.originalNotes)
+    }
+
+    func testExplicitRelinkCollisionRollsBackMissingBrief() throws {
+        let harness = try makeHarness()
+        let first = makeEvent(id: "relink-collision-first")
+        let second = makeEvent(
+            id: "relink-collision-second",
+            title: "Second linked event",
+            start: date(2026, 7, 10, 11),
+            end: date(2026, 7, 10, 12)
+        )
+        let firstContext = try XCTUnwrap(harness.store.saveNotes(
+            for: first,
+            notes: "First notes"
+        ))
+        let secondContext = try XCTUnwrap(harness.store.saveNotes(
+            for: second,
+            notes: "Second notes"
+        ))
+        let missing = try harness.store.markLinkedEventMissing(
+            contextID: firstContext.id
+        )
+
+        XCTAssertThrowsError(try harness.store.relinkLocalBrief(
+            contextID: firstContext.id,
+            to: second,
+            expectedLink: missing.link,
+            at: harness.now,
+            calendar: testCalendar
+        )) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .eventAlreadyLinked(secondContext.id)
+            )
+        }
+
+        let firstAfter = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: firstContext.id)
+        )
+        let secondAfter = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: secondContext.id)
+        )
+        XCTAssertEqual(firstAfter.link.linkStatus, .missing)
+        XCTAssertEqual(firstAfter.context.notes, "First notes")
+        XCTAssertEqual(secondAfter.link.eventIdentifier, second.eventIdentifier)
+        XCTAssertEqual(secondAfter.context.notes, "Second notes")
+        XCTAssertTrue(
+            try harness.store.changeHistory(contextID: firstContext.id).isEmpty
+        )
+    }
+
+    func testDeleteLocalBriefRequiresRecoveryStatusAndCascadesHistory() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(id: "local-delete")
+        let context = try XCTUnwrap(harness.store.saveNotes(
+            for: original,
+            notes: "Delete locally"
+        ))
+        let task = try harness.store.appendEventTask(
+            for: original,
+            section: .before,
+            title: "Cascaded task"
+        )
+
+        XCTAssertThrowsError(try harness.store.deleteLocalBrief(
+            contextID: context.id
+        )) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .invalidEventLinkTransition
+            )
+        }
+
+        let missing = try harness.store.markLinkedEventMissing(
+            contextID: context.id
+        )
+        let replacement = makeEvent(
+            id: "local-delete-relinked",
+            title: original.title,
+            location: original.location,
+            start: original.startDate,
+            end: original.endDate
+        )
+        _ = try harness.store.relinkLocalBrief(
+            contextID: context.id,
+            to: replacement,
+            expectedLink: missing.link,
+            at: harness.now,
+            calendar: testCalendar
+        )
+        _ = try harness.store.markLinkedEventMissing(contextID: context.id)
+        XCTAssertFalse(
+            try harness.store.changeHistory(contextID: context.id).isEmpty
+        )
+
+        try harness.store.deleteLocalBrief(contextID: context.id)
+
+        XCTAssertNil(try harness.store.eventContexts.fetch(id: context.id))
+        XCTAssertNil(try harness.store.eventTasks.fetch(id: task.id))
+        XCTAssertTrue(
+            try harness.store.changeHistory(contextID: context.id).isEmpty
+        )
+    }
+
+    func testExplicitRelinkRejectsStaleLinkVersionWithoutMutation() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(id: "stale-relink-original")
+        let context = try XCTUnwrap(harness.store.saveNotes(
+            for: original,
+            notes: "Do not overwrite recovered link"
+        ))
+        let missing = try harness.store.markLinkedEventMissing(
+            contextID: context.id
+        )
+        let recovered = makeEvent(
+            id: original.id,
+            title: "Recovered by normal observation",
+            location: original.location,
+            start: date(2026, 7, 10, 13),
+            end: date(2026, 7, 10, 14)
+        )
+        let refreshed = try harness.store.refreshStrongLookup(
+            contextID: context.id,
+            event: recovered,
+            at: harness.now,
+            calendar: testCalendar
+        )
+        let staleCandidate = makeEvent(
+            id: "stale-manual-candidate",
+            title: "Stale manual candidate",
+            start: date(2026, 7, 11, 9),
+            end: date(2026, 7, 11, 10)
+        )
+
+        XCTAssertThrowsError(try harness.store.relinkLocalBrief(
+            contextID: context.id,
+            to: staleCandidate,
+            expectedLink: missing.link,
+            at: harness.now,
+            calendar: testCalendar
+        )) { error in
+            XCTAssertEqual(
+                error as? ContextStoreError,
+                .invalidEventLinkTransition
+            )
+        }
+
+        let after = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(after.link, refreshed.link)
+        XCTAssertEqual(after.context.notes, "Do not overwrite recovered link")
+        XCTAssertTrue(
+            try harness.store.changeHistory(contextID: context.id).isEmpty
+        )
+    }
+
+    func testExplicitRelinkRejectsIdentifierlessCandidate() throws {
+        let harness = try makeHarness()
+        let original = makeEvent(id: "identifierless-original")
+        let context = try XCTUnwrap(harness.store.saveNotes(
+            for: original,
+            notes: "Strong identity required"
+        ))
+        let missing = try harness.store.markLinkedEventMissing(
+            contextID: context.id
+        )
+        let identifierless = makeEvent(
+            id: "identifierless-candidate",
+            title: "Identifierless",
+            includeIdentifiers: false
+        )
+
+        XCTAssertThrowsError(try harness.store.relinkLocalBrief(
+            contextID: context.id,
+            to: identifierless,
+            expectedLink: missing.link,
+            at: harness.now,
+            calendar: testCalendar
+        )) { error in
+            XCTAssertEqual(
+                error as? CalendarEventLookupError,
+                .missingStrongIdentifier
+            )
+        }
+
+        let after = try XCTUnwrap(
+            harness.store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(after.link, missing.link)
+        XCTAssertEqual(after.context.notes, "Strong identity required")
+        XCTAssertTrue(
+            try harness.store.changeHistory(contextID: context.id).isEmpty
+        )
+    }
+
+    func testRelinkLogFailureRollsBackLinkAndLifecycle() throws {
+        let database = try AppDatabase.inMemory()
+        let timestamp = date(2026, 7, 10, 12)
+        let store = ContextStore(
+            database: database,
+            now: { timestamp },
+            makeID: IDSequence((1...20).map { "rollback-\($0)" }).next
+        )
+        let original = makeEvent(id: "relink-log-rollback")
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Rollback notes"
+        ))
+        let missing = try store.markLinkedEventMissing(contextID: context.id)
+        let candidate = makeEvent(
+            id: "relink-log-candidate",
+            title: "Verified candidate",
+            start: date(2026, 7, 11, 9),
+            end: date(2026, 7, 11, 10)
+        )
+        try database.write { db in
+            try db.execute(sql: """
+                CREATE TRIGGER reject_relink_log
+                BEFORE INSERT ON event_change_log
+                WHEN NEW.change_type = 'relinked'
+                BEGIN
+                    SELECT RAISE(ABORT, 'relink log rejected');
+                END
+                """)
+        }
+
+        XCTAssertThrowsError(try store.relinkLocalBrief(
+            contextID: context.id,
+            to: candidate,
+            expectedLink: missing.link,
+            at: timestamp,
+            calendar: testCalendar
+        ))
+
+        let after = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(after.link, missing.link)
+        XCTAssertEqual(after.context.lifecycleStatus, missing.context.lifecycleStatus)
+        XCTAssertEqual(after.context.notes, "Rollback notes")
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+    }
+
+    func testStoredLookupQueryKeepsRecurringCivilAndInstantAnchors() throws {
+        let harness = try makeHarness()
+        let instant = date(2026, 7, 10, 9)
+        let zoned = makeEvent(
+            id: "lookup-zoned",
+            start: instant,
+            isRecurring: true,
+            occurrenceDate: instant
+        )
+        let zonedContext = try XCTUnwrap(
+            harness.store.saveNotes(for: zoned, notes: "Zoned")
+        )
+        let zonedQuery = try harness.store.linkedEventLookupTarget(
+            contextID: zonedContext.id
+        ).query
+        XCTAssertEqual(zonedQuery.occurrence, .instant(instant))
+
+        let civilStart = localComponents(2026, 7, 10, 9)
+        let civilEnd = localComponents(2026, 7, 10, 10)
+        let floating = makeEvent(
+            id: "lookup-floating",
+            start: date(2026, 7, 10, 16),
+            end: date(2026, 7, 10, 17),
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 16),
+            occurrenceLocalComponents: civilStart,
+            timeSemantics: .floating(start: civilStart, end: civilEnd)
+        )
+        let floatingContext = try XCTUnwrap(
+            harness.store.saveNotes(for: floating, notes: "Floating")
+        )
+        let floatingQuery = try harness.store.linkedEventLookupTarget(
+            contextID: floatingContext.id
+        ).query
+        XCTAssertEqual(floatingQuery.occurrence, .floating(civilStart))
+    }
+
     private struct Harness {
         let store: ContextStore
         let now: Date

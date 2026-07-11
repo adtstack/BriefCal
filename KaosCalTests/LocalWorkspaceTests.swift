@@ -511,6 +511,409 @@ final class LocalWorkspaceTests: XCTestCase {
         XCTAssertEqual(snapshot.tasks.map(\.title), ["Send follow-up"])
     }
 
+    func testTaskCenterListsActiveNotesOnlyBriefForLaterRecovery() async throws {
+        let event = makeEvent(
+            id: "active-notes-only",
+            start: date(2026, 7, 10, 14)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: event,
+            notes: "A note without any tasks"
+        ))
+        let state = makeState(events: [event], store: store)
+
+        await state.loadCalendarStatus()
+
+        XCTAssertEqual(state.recoveryBriefs.map(\.context.id), [context.id])
+        XCTAssertEqual(state.recoveryBriefs.first?.link.linkStatus, .active)
+        XCTAssertEqual(
+            state.recoveryBriefs.first?.context.notes,
+            "A note without any tasks"
+        )
+    }
+
+    func testFirstMissingCanEnterManualAgendaRelinkSelection() async throws {
+        let event = makeEvent(
+            id: "first-missing-manual",
+            start: date(2026, 7, 10, 15)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: event,
+            notes: "Choose manually"
+        ))
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .notFound
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        await state.openOriginalEvent(contextID: context.id)
+
+        XCTAssertEqual(state.linkedEventRecoverySession?.stage, .firstMissing)
+
+        state.beginSelectingRelinkCandidate()
+
+        XCTAssertNil(state.linkedEventRecoverySession)
+        XCTAssertEqual(state.pendingRelinkContextID, context.id)
+        XCTAssertEqual(state.selectedSection, .agenda)
+        XCTAssertEqual(
+            state.focusedDate,
+            testCalendar.startOfDay(for: event.startDate)
+        )
+    }
+
+    func testInconclusiveLookupOffersManualRelinkWithoutMissingEvidence() async throws {
+        let event = makeEvent(
+            id: "inconclusive-manual",
+            start: date(2026, 7, 10, 15)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: event,
+            notes: "Do not mark missing"
+        ))
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .inconclusive(.recurringOccurrenceUnavailable)
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        await state.openOriginalEvent(contextID: context.id)
+
+        XCTAssertEqual(state.linkedEventRecoverySession?.stage, .manualRelink)
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id)?.link.linkStatus,
+            .active
+        )
+        XCTAssertNotNil(state.localOperationError)
+    }
+
+    func testDedicatedNotFoundNeedsExplicitRecheckBeforeOrphanChoice() async throws {
+        let event = makeEvent(
+            id: "missing-review",
+            start: date(2026, 7, 10, 15)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: event,
+            notes: "Notes-only recovery Brief"
+        ))
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .notFound
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        await state.openOriginalEvent(contextID: context.id)
+
+        XCTAssertEqual(provider.lookupCallCount, 1)
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id)?.link.linkStatus,
+            .missing
+        )
+        XCTAssertEqual(
+            state.linkedEventRecoverySession?.stage,
+            .firstMissing
+        )
+        XCTAssertEqual(state.recoveryBriefs.map(\.context.id), [context.id])
+        XCTAssertEqual(provider.deleteCallCount, 0)
+
+        await state.refreshCalendarData()
+        XCTAssertEqual(provider.lookupCallCount, 1)
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id)?.link.linkStatus,
+            .missing
+        )
+
+        provider.error = FakeCalendarProviderError.failed
+        await state.recheckMissingLinkedEvent()
+        XCTAssertEqual(provider.lookupCallCount, 2)
+        XCTAssertEqual(
+            state.linkedEventRecoverySession?.stage,
+            .firstMissing
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id)?.link.linkStatus,
+            .missing
+        )
+
+        provider.error = nil
+        await state.recheckMissingLinkedEvent()
+        XCTAssertEqual(provider.lookupCallCount, 3)
+        XCTAssertEqual(
+            state.linkedEventRecoverySession?.stage,
+            .orphanConfirmation
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id)?.link.linkStatus,
+            .missing
+        )
+
+        XCTAssertTrue(state.keepLinkedEventAsOrphan())
+        let orphan = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(orphan.link.linkStatus, .orphaned)
+        XCTAssertEqual(orphan.context.lifecycleStatus, .orphaned)
+        XCTAssertEqual(orphan.context.notes, "Notes-only recovery Brief")
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
+    func testBackgroundStrongRecoveryDismissesStaleOrphanConfirmation() async throws {
+        let event = makeEvent(
+            id: "background-strong-recovery",
+            start: date(2026, 7, 10, 15)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: event,
+            notes: "Keep while the sheet is open"
+        ))
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .notFound
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        await state.openOriginalEvent(contextID: context.id)
+        await state.recheckMissingLinkedEvent()
+        XCTAssertEqual(
+            state.linkedEventRecoverySession?.stage,
+            .orphanConfirmation
+        )
+
+        provider.events = [event]
+        await state.refreshCalendarData()
+
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id)?.link.linkStatus,
+            .active
+        )
+        XCTAssertNil(state.linkedEventRecoverySession)
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: context.id)?.notes,
+            "Keep while the sheet is open"
+        )
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
+    func testDeleteRecoverableLocalBriefNeverCallsCalendarDelete() async throws {
+        let event = makeEvent(
+            id: "local-brief-delete",
+            start: date(2026, 7, 10, 15)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let task = try store.appendEventTask(
+            for: event,
+            section: .after,
+            title: "Delete only locally"
+        )
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .notFound
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        await state.openOriginalEvent(contextID: task.contextID)
+        await state.recheckMissingLinkedEvent()
+
+        XCTAssertTrue(state.deleteRecoverableLocalBrief())
+
+        XCTAssertNil(try store.eventContexts.fetch(id: task.contextID))
+        XCTAssertNil(try store.eventTasks.fetch(id: task.id))
+        XCTAssertEqual(provider.deleteCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.createCallCount, 0)
+    }
+
+    func testCandidateRelinkIsExplicitAndPreservesLocalData() async throws {
+        let original = makeEvent(
+            id: "candidate-original",
+            start: date(2026, 7, 10, 15)
+        )
+        let replacement = makeEvent(
+            id: "candidate-replacement",
+            start: original.startDate
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Relink notes"
+        ))
+        let task = try store.appendEventTask(
+            for: original,
+            section: .during,
+            title: "Relink task"
+        )
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .candidates([
+            CalendarEventLookupMatch(
+                event: replacement,
+                basis: .exactSnapshot
+            )
+        ])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        await state.openOriginalEvent(contextID: context.id)
+
+        guard case let .candidates(matches) = state
+            .linkedEventRecoverySession?.stage else {
+            return XCTFail("Expected explicit candidate review")
+        }
+        XCTAssertEqual(matches.map(\.event.id), [replacement.id])
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id)?.link.eventIdentifier,
+            original.eventIdentifier
+        )
+
+        state.chooseLinkedEventCandidate(replacement)
+        provider.lookupResult = .found(CalendarEventLookupMatch(
+            event: replacement,
+            basis: .externalIdentifierAndOccurrence
+        ))
+        provider.eventsForInterval = { interval in
+            interval.contains(replacement.startDate) ? [replacement] : []
+        }
+        let didRelink = await state.confirmLinkedEventRelink()
+        XCTAssertTrue(didRelink)
+
+        let relinked = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(relinked.link.eventIdentifier, replacement.eventIdentifier)
+        XCTAssertEqual(relinked.context.notes, "Relink notes")
+        XCTAssertEqual(relinked.tasks.map(\.id), [task.id])
+        XCTAssertEqual(
+            try store.changeHistory(contextID: context.id).first?.changeType,
+            .relinked
+        )
+        guard case let .loaded(visibleBrief) = state.eventBriefState else {
+            return XCTFail("Relink must immediately reload the Event Brief")
+        }
+        XCTAssertEqual(visibleBrief.context.notes, "Relink notes")
+        XCTAssertEqual(visibleBrief.tasks.map(\.id), [task.id])
+        XCTAssertEqual(state.selectedEventNotes, "Relink notes")
+        XCTAssertEqual(provider.deleteCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+    }
+
+    func testStrongRecheckReactivatesMissingAndFocusesExactEvent() async throws {
+        let event = makeEvent(
+            id: "strong-recovery",
+            start: date(2027, 2, 4, 13)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: event,
+            notes: "Strong recovery"
+        ))
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .notFound
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        await state.openOriginalEvent(contextID: context.id)
+
+        provider.lookupResult = .found(CalendarEventLookupMatch(
+            event: event,
+            basis: .externalIdentifierAndOccurrence
+        ))
+        provider.eventsForInterval = { interval in
+            interval.contains(event.startDate) ? [event] : []
+        }
+        await state.recheckMissingLinkedEvent()
+
+        XCTAssertEqual(
+            try store.eventContexts.fetchBrief(contextID: context.id)?.link.linkStatus,
+            .active
+        )
+        XCTAssertNil(state.linkedEventRecoverySession)
+        XCTAssertEqual(state.selectedSection, .day)
+        XCTAssertEqual(state.selectedEventID, event.id)
+        XCTAssertNil(state.localOperationError)
+    }
+
+    func testFinalRelinkVerificationBlocksStaleCandidate() async throws {
+        let original = makeEvent(
+            id: "stale-provider-original",
+            start: date(2026, 7, 10, 15)
+        )
+        let candidate = makeEvent(
+            id: "stale-provider-candidate",
+            start: date(2026, 7, 11, 15)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: original,
+            notes: "Keep on failed verification"
+        ))
+        let before = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .candidates([
+            CalendarEventLookupMatch(event: candidate, basis: .exactSnapshot)
+        ])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        await state.openOriginalEvent(contextID: context.id)
+        state.chooseLinkedEventCandidate(candidate)
+
+        provider.lookupResult = .notFound
+        let didRelink = await state.confirmLinkedEventRelink()
+        XCTAssertFalse(didRelink)
+
+        let after = try XCTUnwrap(
+            store.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(after.link, before.link)
+        XCTAssertEqual(after.context.notes, "Keep on failed verification")
+        XCTAssertTrue(try store.changeHistory(contextID: context.id).isEmpty)
+        XCTAssertNotNil(state.linkedEventRecoverySession)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+    }
+
+    func testProviderCancellationAndLaterFoundRecoveryUpdateLifecycle() async throws {
+        let event = makeEvent(
+            id: "provider-cancelled",
+            start: date(2026, 7, 10, 15)
+        )
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let context = try XCTUnwrap(store.saveNotes(
+            for: event,
+            notes: "Keep through cancellation"
+        ))
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.lookupResult = .cancelled(CalendarEventLookupMatch(
+            event: event,
+            basis: .externalIdentifierAndOccurrence,
+            isCancelled: true
+        ))
+        provider.eventsForInterval = { interval in
+            interval.contains(event.startDate) ? [event] : []
+        }
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        await state.openOriginalEvent(contextID: context.id)
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: context.id)?.lifecycleStatus,
+            .cancelled
+        )
+        XCTAssertEqual(provider.deleteCallCount, 0)
+
+        provider.lookupResult = .found(CalendarEventLookupMatch(
+            event: event,
+            basis: .externalIdentifierAndOccurrence
+        ))
+        await state.openOriginalEvent(contextID: context.id)
+
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: context.id)?.lifecycleStatus,
+            .scheduled
+        )
+        XCTAssertEqual(
+            try store.eventContexts.fetch(id: context.id)?.notes,
+            "Keep through cancellation"
+        )
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
     private var testCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

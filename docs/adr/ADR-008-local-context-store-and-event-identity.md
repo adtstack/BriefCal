@@ -2,6 +2,7 @@
 
 > 상태: Accepted
 > 날짜: 2026-07-10
+> Phase 7B 확장: ADR-012가 전용 lookup, missing/orphan과 검증된 relink를 구현함
 > 관계: ADR-003, ADR-004, ADR-006을 구체화하며 대체하지 않음
 
 ## 배경
@@ -48,4 +49,4 @@ Event Brief 메모와 작업은 Exchange 원본 일정과 수명이 다르다. E
 - 실제 `KAOS-TEST` Exchange 일정에서 identifier 변화·detached occurrence 관찰
 - 실제 앱 종료/재실행 뒤 Phase 4 Event Brief와 Task Center UI 유지 확인
 - 손상 DB와 migration 실패의 backup/export 복구 흐름은 Phase 9에서 완성
-- orphan lifecycle과 change log는 Phase 6~7에서 additive migration으로 구현
+- change log는 Phase 6의 additive v2 migration으로 구현했고, orphan lifecycle은 Phase 7B에서 기존 v1 status를 재사용해 migration 없이 구현했다. 실제 Exchange identifier churn과 surviving-series occurrence 삭제는 계속 수동 검증한다.

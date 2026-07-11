@@ -583,6 +583,40 @@
   - exact Release가 onscreen 1512×949 창을 만들고 정상 종료 뒤 process 0임을 확인했다. direct DB `1783704658|126976`, sandbox DB `1783700481|126976`, 양쪽 SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 WAL/SHM 부재가 test·bootstrap 전후 동일했다.
 - 결과: 사용자 브랜드 입력 없이 식별 가능한 KaosCal 표식과 macOS 14/15 legacy `.icns` alpha fallback을 구현하고 최종 자동·Release·bootstrap·운영 DB 격리 gate를 통과했다. 실제 macOS 14/15/최신 Finder·Dock wallpaper contrast와 Icon Composer variant는 이후 clean-machine beta gate다.
 
+## 2026-07-12 — Phase 7B missing·orphan·relink 복구
+
+- 관련 ADR: ADR-004, ADR-005, ADR-008, ADR-009, ADR-011, ADR-012
+- 완성도 재평가:
+  - Phase 7A 이후 가장 큰 local-data 안전 공백은 외부에서 원본이 사라졌을 때 일반 fetch 누락을 삭제로 오인하지 않으면서 Brief를 복구하는 경로였다.
+  - Phase 7B는 이 경로를 구현했고, KaosCal에서 linked 원본 삭제를 시작하는 Phase 7C와 분리했다. 현재 사용자 입력 없이 자동·Release gate까지 진행할 수 있다.
+- provider lookup:
+  - 저장 link에서 calendar/item/event/external identifier, recurrence membership, zoned instant 또는 all-day/floating civil occurrence anchor와 마지막 관찰 snapshot을 가진 전용 query를 만든다.
+  - direct identifier seed와 anchor 주변 bounded predicate를 함께 사용하되 same-calendar strong identifier와 occurrence 의미가 일치할 때만 exact found/cancelled다. 약한 snapshot, 다른 calendar, legacy synthetic recurring→single은 confirmation candidate로만 반환한다.
+  - 어느 calendar에서든 strong identifier seed의 recurrence/occurrence가 저장 anchor와 맞지 않으면 `strongIdentifierOccurrenceMismatch` 또는 `recurringOccurrenceUnavailable` inconclusive다. bounded search로 멀리 이동한 detached occurrence를 확정할 수 없거나 recurring seed가 불완전하면 false orphan을 막고 ordinary range fetch 부재도 상태 전이에 사용하지 않는다.
+  - 살아 있는 series의 one-off 삭제와 검색 범위 밖 detached move는 EventKit의 first-occurrence seed로 구분할 수 없으므로 automatic orphan을 주장하지 않고 manual exact relink만 제공하는 제한을 문서화했다.
+- 두 단계 복구와 UI:
+  - 첫 전용 `notFound`는 link만 missing으로 만들고 `Check Again` 전에는 orphan action을 열지 않는다. 별도 재확인의 두 번째 `notFound` 뒤에만 Keep as orphan, manual/exact relink, Delete local Brief를 제공한다.
+  - error, candidate, ambiguous, inconclusive는 miss로 세지 않는다. Task Center의 `Local Event Briefs`는 active notes-only와 missing/orphan Brief를 모두 보여 원본 event가 현재 range에 없어도 복구 진입점을 유지한다.
+  - 삭제 확인에는 notes/tasks 영향과 Exchange/calendar 원본 불변을 표시한다. local 삭제는 SQLite FK cascade만 사용하며 provider write를 호출하지 않는다.
+- transaction과 lifecycle:
+  - orphan 보관, strong refresh, cancelled 관찰, explicit relink와 local delete는 각각 단일 GRDB write 경계 안에서 수행한다.
+  - relink는 strong identifier, fresh provider exact verification, expected `EventLink` 전체 CAS와 unique preflight를 요구한다. context ID·notes·tasks를 보존하고 `relinked` log를 append하며 이전 session Undo를 supersede한다. stale/deleted/ambiguous/inconclusive 후보와 unique/log insert 실패는 local row와 log를 하나도 바꾸지 않는다.
+  - v1 `EventLink`는 original EventKit notes를 저장하지 않았으므로 relink 전 change snapshot의 `originalNotes`는 unavailable(`nil`)로 기록하고 local Brief notes를 원본 notes처럼 대체하지 않는다. schema migration은 추가하지 않았다.
+  - provider cancelled evidence는 context cancelled를 보존하며, 이후 동일 occurrence의 fresh exact found는 새 positive evidence로 scheduled/completed를 다시 계산한다. 시간 경과만으로 cancelled/orphaned를 자동 덮어쓰는 규칙은 그대로 금지한다.
+- 자동 검증:
+  - 최종 전체 **175 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**.
+  - result bundle: `/private/tmp/KaosCalPhase7BFinal-20260712-0155.xcresult`.
+  - occurrence matcher, cross-calendar/shape mismatch guard, 첫/두 번째 miss, error/candidate/inconclusive, cancellation recovery, stale expected-link CAS, stale sheet reconciliation, notes-only entry, manual selection, 식별자 없는 후보, unique/log insert rollback, notes/tasks 보존, immediate Event Brief reload, local delete provider write 0회를 포함한다.
+- Release·데이터 안전 gate:
+  - artifact: `/private/tmp/KaosCalPhase7BFinalRelease/Build/Products/Release/KaosCal.app`.
+  - CDHash: `f3b30718434641dbbd2dbec90f82581342d47506`.
+  - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` ad-hoc Release, hardened runtime, `codesign --verify --deep --strict`: **pass**. entitlement는 app sandbox와 Calendar access만 포함하고 get-task-allow·XCTest plug-in/link는 없다.
+  - exact artifact가 1482×931 onscreen 창을 만들었고 Apple event로 정상 종료한 뒤 process 0이었다.
+  - direct DB `1783704658|126976`, sandbox DB `1783700481|126976`, 양쪽 SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 WAL/SHM 부재가 전체 test 및 exact Release bootstrap 전후 동일했다. 두 DB 모두 integrity `ok`, foreign-key violation 0, migration `v1_context_store`·`v2_event_change_log`를 확인했다.
+- 남은 gate:
+  - 실제 Exchange/Calendar.app 외부 삭제·동기화 지연·identifier churn, candidate 재연결과 recovery sheet 전체 시각 상호작용은 수동 gate다. live fixture write는 이번 자동 checkpoint에서 실행하지 않았다.
+  - KaosCal 내 linked original delete, 저장 link 기반 delete change snapshot과 EventKit 성공 뒤 local 부분 성공 처리는 Phase 7C까지 잠겨 있다.
+
 ## 다음 항목 템플릿
 
 ```markdown

@@ -14,7 +14,7 @@
 - Event Brief는 사용자가 처음 메모나 작업을 저장할 때 지연 생성한다.
 - 연결 복구는 event ID, calendar item ID, external ID, calendar ID, recurrence occurrence 정보, snapshot, fingerprint 순서로 보수적으로 수행한다.
 - 후보가 둘 이상이면 자동 relink하지 않고 사용자에게 확인을 요청한다.
-- 원본이 한 번 안 보였다고 context를 삭제하지 않는다. missing 재확인 뒤 orphan으로 전환하고 사용자가 보관·재연결·삭제를 선택한다.
+- 원본이 한 번 안 보였다고 context를 삭제하지 않는다. 첫 전용 `notFound`는 missing만 기록하고, missing 재확인의 두 번째 `notFound`는 review만 연다. 사용자가 `Keep as orphan`을 승인한 뒤에만 context/link를 orphaned로 전환하며 재연결·local 삭제는 별도 명령이다.
 
 ## 결과
 

@@ -72,6 +72,22 @@ enum EventBriefState: Equatable {
     case failed(String)
 }
 
+enum LinkedEventRecoveryStage: Equatable {
+    case firstMissing
+    case orphanConfirmation
+    case orphaned
+    case manualRelink
+    case candidates([CalendarEventLookupMatch])
+    case confirmRelink(DisplayEvent)
+}
+
+struct LinkedEventRecoverySession: Equatable, Identifiable {
+    let brief: EventBriefSnapshot
+    let stage: LinkedEventRecoveryStage
+
+    var id: String { brief.context.id }
+}
+
 enum NotesSaveState: Equatable {
     case idle
     case pending
@@ -190,6 +206,10 @@ final class AppState: ObservableObject {
     @Published private(set) var selectedEventNotes = ""
     @Published private(set) var notesSaveState: NotesSaveState = .idle
     @Published private(set) var taskCenterState: TaskCenterState = .unavailable
+    @Published private(set) var recoveryBriefs: [EventBriefSnapshot] = []
+    @Published private(set) var linkedEventRecoverySession: LinkedEventRecoverySession?
+    @Published private(set) var pendingRelinkContextID: String?
+    @Published private(set) var isCheckingLinkedEvent = false
     @Published private(set) var localOperationError: String?
     @Published private(set) var eventEditorSession: CalendarEventEditorSession?
     @Published private(set) var eventEditorOperationState: CalendarEventEditorOperationState = .idle
@@ -351,9 +371,56 @@ final class AppState: ObservableObject {
         loadSelectedEventBrief()
     }
 
+    func userSelectEvent(_ id: String?) {
+        selectEvent(id)
+        guard let contextID = pendingRelinkContextID,
+              let event = id.flatMap({ requestedID in
+                  events.first { $0.id == requestedID }
+              }),
+              let contextStore else {
+            return
+        }
+        do {
+            guard let brief = try contextStore.eventContexts.fetchBrief(
+                contextID: contextID
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            pendingRelinkContextID = nil
+            linkedEventRecoverySession = LinkedEventRecoverySession(
+                brief: brief,
+                stage: .confirmRelink(event)
+            )
+        } catch {
+            pendingRelinkContextID = nil
+            localOperationError = Self.message(for: error)
+        }
+    }
+
     func reloadSelectedEventBrief() {
         flushPendingEventNotes()
         loadSelectedEventBrief()
+    }
+
+    func reviewSelectedEventRelinkCandidate(contextID: String) {
+        guard let event = activeBriefEvent,
+              let contextStore else {
+            return
+        }
+        localOperationError = nil
+        do {
+            guard let brief = try contextStore.eventContexts.fetchBrief(
+                contextID: contextID
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            linkedEventRecoverySession = LinkedEventRecoverySession(
+                brief: brief,
+                stage: .confirmRelink(event)
+            )
+        } catch {
+            localOperationError = Self.message(for: error)
+        }
     }
 
     func updateSelectedEventNotes(_ notes: String) {
@@ -622,64 +689,350 @@ final class AppState: ObservableObject {
 
     func openOriginalEvent(contextID: String) async {
         localOperationError = nil
-        guard calendarAuthorizationState.canReadEvents else {
-            localOperationError = "Full calendar access is required to open the original event. The local task was kept."
-            return
-        }
         guard let contextStore else {
             localOperationError = "Local task storage is unavailable."
             return
         }
 
         do {
-            guard let target = try contextStore.navigationTarget(
+            guard let brief = try contextStore.eventContexts.fetchBrief(
                 contextID: contextID
             ) else {
                 throw ContextStoreError.missingContext(contextID)
             }
-            let effectiveRange = target.link.effectiveDateRange(
-                calendar: calendar
-            )
-            let targetDay = calendar.startOfDay(for: effectiveRange.start)
-            let targetEnd = calendar.date(
-                byAdding: .day,
-                value: 1,
-                to: targetDay
-            ) ?? effectiveRange.end
-            let targetInterval = expandedFetchInterval(
-                around: DateInterval(start: targetDay, end: targetEnd)
-            )
-
-            rangeLoadTask?.cancel()
-            rangeLoadTask = nil
-            await refreshCalendarData(in: targetInterval)
-            guard calendarContentState == .loaded
-                    || calendarContentState == .empty else {
-                localOperationError = "The original calendar event could not be loaded. The local task was kept."
+            switch brief.link.linkStatus {
+            case .missing:
+                linkedEventRecoverySession = LinkedEventRecoverySession(
+                    brief: brief,
+                    stage: .firstMissing
+                )
+                return
+            case .orphaned:
+                linkedEventRecoverySession = LinkedEventRecoverySession(
+                    brief: brief,
+                    stage: .orphaned
+                )
+                return
+            case .active:
+                break
+            }
+            guard calendarAuthorizationState.canReadEvents else {
+                localOperationError = "Full calendar access is required to check the original event. The local Event Brief was kept."
                 return
             }
-
-            switch try contextStore.matchLinkedEvent(
-                contextID: contextID,
-                among: events
-            ) {
-            case let .linked(event, _):
-                focusedDate = calendar.startOfDay(
-                    for: CalendarEventDateFormatting.effectiveDateRange(
-                        for: event,
-                        calendar: calendar
-                    ).start
+            let target = try contextStore.linkedEventLookupTarget(
+                contextID: contextID
+            )
+            await performLinkedEventLookup(
+                target: target,
+                explicitRecheck: false
+            )
+        } catch {
+            localOperationError = Self.message(for: error)
+            if error is CalendarEventLookupError,
+               let brief = try? contextStore.eventContexts.fetchBrief(
+                contextID: contextID
+               ) {
+                linkedEventRecoverySession = LinkedEventRecoverySession(
+                    brief: brief,
+                    stage: .manualRelink
                 )
-                selectedSection = .day
-                selectEvent(event.id)
-            case .confirmationRequired, .ambiguous:
-                localOperationError = "KaosCal found similar events but will not choose one automatically. The local task was kept."
+            }
+        }
+    }
+
+    func recheckMissingLinkedEvent() async {
+        localOperationError = nil
+        guard let session = linkedEventRecoverySession,
+              session.brief.link.linkStatus == .missing,
+              let contextStore else {
+            return
+        }
+        guard calendarAuthorizationState.canReadEvents else {
+            localOperationError = "Full calendar access is required to check again. This did not change the missing link or local Event Brief."
+            return
+        }
+        do {
+            let target = try contextStore.linkedEventLookupTarget(
+                contextID: session.brief.context.id
+            )
+            guard target.brief.link.linkStatus == .missing else {
+                switch target.brief.link.linkStatus {
+                case .active:
+                    linkedEventRecoverySession = nil
+                    await performLinkedEventLookup(
+                        target: target,
+                        explicitRecheck: false
+                    )
+                case .orphaned:
+                    linkedEventRecoverySession = LinkedEventRecoverySession(
+                        brief: target.brief,
+                        stage: .orphaned
+                    )
+                case .missing:
+                    break
+                }
+                return
+            }
+            await performLinkedEventLookup(
+                target: target,
+                explicitRecheck: true
+            )
+        } catch {
+            localOperationError = Self.message(for: error)
+        }
+    }
+
+    func dismissLinkedEventRecovery() {
+        linkedEventRecoverySession = nil
+    }
+
+    func beginSelectingRelinkCandidate() {
+        guard let session = linkedEventRecoverySession else { return }
+        pendingRelinkContextID = session.brief.context.id
+        focusedDate = calendar.startOfDay(
+            for: session.brief.link.effectiveDateRange(
+                calendar: calendar
+            ).start
+        )
+        linkedEventRecoverySession = nil
+        select(.agenda)
+    }
+
+    func cancelRelinkSelection() {
+        pendingRelinkContextID = nil
+    }
+
+    func chooseLinkedEventCandidate(_ event: DisplayEvent) {
+        guard let session = linkedEventRecoverySession else { return }
+        linkedEventRecoverySession = LinkedEventRecoverySession(
+            brief: session.brief,
+            stage: .confirmRelink(event)
+        )
+    }
+
+    @discardableResult
+    func confirmLinkedEventRelink() async -> Bool {
+        guard let session = linkedEventRecoverySession,
+              case let .confirmRelink(event) = session.stage,
+              let contextStore else {
+            return false
+        }
+        localOperationError = nil
+        guard calendarAuthorizationState.canReadEvents else {
+            localOperationError = "Full calendar access is required to verify the replacement event. No local or calendar data was changed."
+            return false
+        }
+        isCheckingLinkedEvent = true
+        defer { isCheckingLinkedEvent = false }
+        do {
+            let result = try calendarProvider.lookupEvent(
+                CalendarEventLookupQuery(event: event)
+            )
+            let match: CalendarEventLookupMatch
+            let isCancelled: Bool
+            switch result {
+            case let .found(found):
+                match = found
+                isCancelled = false
+            case let .cancelled(cancelled):
+                match = cancelled
+                isCancelled = true
+            case .candidates, .ambiguous:
+                localOperationError = "The replacement event is no longer an exact strong match. Review and choose it again; nothing was relinked."
+                return false
             case .notFound:
-                localOperationError = "Calendar event unavailable in the stored date range. The local task was kept."
+                localOperationError = "The replacement event could not be found during final verification. Nothing was relinked."
+                return false
+            case .inconclusive:
+                localOperationError = "The replacement event could not be verified conclusively. Nothing was relinked."
+                return false
+            }
+            _ = try contextStore.relinkLocalBrief(
+                contextID: session.brief.context.id,
+                to: match.event,
+                expectedLink: session.brief.link,
+                calendarStatusIsCancelled: isCancelled,
+                at: now(),
+                calendar: calendar
+            )
+            linkedEventRecoverySession = nil
+            pendingRelinkContextID = nil
+            refreshTaskCenter()
+            await focusLinkedEvent(
+                match.event,
+                contextID: session.brief.context.id
+            )
+            if let refreshedEvent = events.first(where: {
+                $0.id == match.event.id
+            }) {
+                selectedEventID = refreshedEvent.id
+                activeBriefEvent = refreshedEvent
+                loadSelectedEventBrief()
+            }
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func keepLinkedEventAsOrphan() -> Bool {
+        guard let session = linkedEventRecoverySession,
+              let contextStore else {
+            return false
+        }
+        localOperationError = nil
+        do {
+            _ = try contextStore.keepLocalBriefAsOrphan(
+                contextID: session.brief.context.id
+            )
+            linkedEventRecoverySession = nil
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func deleteRecoverableLocalBrief() -> Bool {
+        guard let session = linkedEventRecoverySession,
+              let contextStore else {
+            return false
+        }
+        localOperationError = nil
+        do {
+            try contextStore.deleteLocalBrief(
+                contextID: session.brief.context.id
+            )
+            linkedEventRecoverySession = nil
+            pendingRelinkContextID = nil
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    private func performLinkedEventLookup(
+        target: LinkedEventLookupTarget,
+        explicitRecheck: Bool
+    ) async {
+        guard let contextStore else { return }
+        isCheckingLinkedEvent = true
+        defer { isCheckingLinkedEvent = false }
+
+        do {
+            switch try calendarProvider.lookupEvent(target.query) {
+            case let .found(match):
+                _ = try contextStore.refreshStrongLookup(
+                    contextID: target.brief.context.id,
+                    event: match.event,
+                    at: now(),
+                    calendar: calendar
+                )
+                linkedEventRecoverySession = nil
+                refreshTaskCenter()
+                await focusLinkedEvent(match.event, contextID: target.brief.context.id)
+            case let .cancelled(match):
+                _ = try contextStore.markCalendarEventCancelled(
+                    contextID: target.brief.context.id,
+                    event: match.event,
+                    at: now()
+                )
+                linkedEventRecoverySession = nil
+                refreshTaskCenter()
+                await focusLinkedEvent(match.event, contextID: target.brief.context.id)
+                localOperationError = "Calendar reports that this event is cancelled. The local Event Brief was kept and no calendar data was changed."
+            case let .candidates(matches), let .ambiguous(matches):
+                linkedEventRecoverySession = LinkedEventRecoverySession(
+                    brief: target.brief,
+                    stage: .candidates(matches)
+                )
+            case .notFound:
+                if explicitRecheck {
+                    linkedEventRecoverySession = LinkedEventRecoverySession(
+                        brief: target.brief,
+                        stage: .orphanConfirmation
+                    )
+                } else {
+                    let missing = try contextStore.markLinkedEventMissing(
+                        contextID: target.brief.context.id
+                    )
+                    linkedEventRecoverySession = LinkedEventRecoverySession(
+                        brief: missing,
+                        stage: .firstMissing
+                    )
+                    refreshTaskCenter()
+                }
+            case let .inconclusive(issue):
+                switch issue {
+                case .calendarUnavailable:
+                    localOperationError = "The saved calendar is currently unavailable, so KaosCal did not count this as a missing event. The local Event Brief was kept."
+                case .invalidStoredLink:
+                    localOperationError = "The saved link could not be checked safely. Choose a calendar event to relink the local Brief manually."
+                case .recurringOccurrenceUnavailable:
+                    localOperationError = "The recurring series is visible, but the exact occurrence could not be proven inside the safe search bounds. KaosCal did not mark it missing. Choose the occurrence manually if it moved."
+                case .strongIdentifierOccurrenceMismatch:
+                    localOperationError = "A strongly identified calendar item still exists, but its recurrence or occurrence no longer matches the saved link. KaosCal did not mark it missing. Choose the exact occurrence manually."
+                }
+                linkedEventRecoverySession = LinkedEventRecoverySession(
+                    brief: target.brief,
+                    stage: .manualRelink
+                )
             }
         } catch {
             localOperationError = Self.message(for: error)
         }
+    }
+
+    private func focusLinkedEvent(
+        _ event: DisplayEvent,
+        contextID: String
+    ) async {
+        let range = CalendarEventDateFormatting.effectiveDateRange(
+            for: event,
+            calendar: calendar
+        )
+        let targetDay = calendar.startOfDay(for: range.start)
+        let targetEnd = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: targetDay
+        ) ?? range.end
+        rangeLoadTask?.cancel()
+        rangeLoadTask = nil
+        await refreshCalendarData(in: expandedFetchInterval(
+            around: DateInterval(start: targetDay, end: targetEnd)
+        ))
+
+        var resolvedEvent = events.first(where: { $0.id == event.id })
+        if resolvedEvent == nil,
+           let contextStore,
+           let resolution = try? contextStore.matchLinkedEvent(
+            contextID: contextID,
+            among: events
+           ),
+           case let .linked(candidate, _) = resolution {
+            resolvedEvent = candidate
+        }
+
+        guard let resolvedEvent else {
+            localOperationError = "The dedicated lookup found the event, but the calendar view has not received it yet. The link remains active; try opening it again after sync finishes."
+            return
+        }
+        focusedDate = calendar.startOfDay(
+            for: CalendarEventDateFormatting.effectiveDateRange(
+                for: resolvedEvent,
+                calendar: calendar
+            ).start
+        )
+        selectedSection = .day
+        selectEvent(resolvedEvent.id)
     }
 
     func beginCreatingEvent() {
@@ -1357,6 +1710,7 @@ final class AppState: ObservableObject {
     func refreshTaskCenter() {
         guard let contextStore else {
             taskCenterState = .unavailable
+            recoveryBriefs = []
             return
         }
         taskCenterState = .loading
@@ -1378,12 +1732,54 @@ final class AppState: ObservableObject {
                 calendar: calendar
             )
             taskCenterState = .loaded(items)
+            recoveryBriefs = try contextStore.fetchRecoveryBriefs()
+            reconcileLinkedEventRecoverySession(with: recoveryBriefs)
             if case let .loaded(snapshot) = eventBriefState,
                changedContextIDs.contains(snapshot.context.id) {
                 refreshSelectedBriefPreservingDraft()
             }
         } catch {
             taskCenterState = .failed(Self.message(for: error))
+            recoveryBriefs = []
+        }
+    }
+
+    private func reconcileLinkedEventRecoverySession(
+        with briefs: [EventBriefSnapshot]
+    ) {
+        guard let session = linkedEventRecoverySession else { return }
+        let contextID = session.brief.context.id
+        guard let refreshed = briefs.first(where: {
+            $0.context.id == contextID
+        }) else {
+            linkedEventRecoverySession = nil
+            if pendingRelinkContextID == contextID {
+                pendingRelinkContextID = nil
+            }
+            return
+        }
+
+        if refreshed.link == session.brief.link {
+            linkedEventRecoverySession = LinkedEventRecoverySession(
+                brief: refreshed,
+                stage: session.stage
+            )
+            return
+        }
+
+        switch refreshed.link.linkStatus {
+        case .active:
+            linkedEventRecoverySession = nil
+        case .missing:
+            linkedEventRecoverySession = LinkedEventRecoverySession(
+                brief: refreshed,
+                stage: .firstMissing
+            )
+        case .orphaned:
+            linkedEventRecoverySession = LinkedEventRecoverySession(
+                brief: refreshed,
+                stage: .orphaned
+            )
         }
     }
 

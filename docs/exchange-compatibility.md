@@ -1,9 +1,9 @@
 # Exchange Compatibility
 
-> 상태: Phase 7A lifecycle·After Review 자동·Release·ad-hoc 서명 checkpoint / Outlook 서버 측 부분 통과·서명 FinalRelease 로컬 EventKit 비반복 CRUD 통과
+> 상태: Phase 7B missing·orphan·relink 자동·Release checkpoint / Outlook 서버 측 부분 통과·서명 FinalRelease 로컬 EventKit 비반복 CRUD 통과
 > 제품 대상: macOS Calendar에 구성된 Exchange Online
 > 현재 테스트 환경: backend 종류 미확인. Outlook connector run `20260711-1512-7C4E`에서 `KAOS-TEST`(source)·`일정`(destination)이 각각 exact-name 1개, editable, distinct, same owner로 관찰됐고, signed FinalRelease/EventKit run `20260711-1626-B7D2`에서 full access와 두 calendar의 `Exchange`·writable 표시 및 `KAOS-TEST` 비반복 CRUD를 확인했다. 이는 Calendar.app visual round-trip이나 backend의 Exchange Online 판정 증거가 아니다.
-> 마지막 갱신: 2026-07-11
+> 마지막 갱신: 2026-07-12
 
 ## 지원 선언 기준
 
@@ -30,6 +30,7 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 | linked future-series reconciliation | 초기 Phase 6의 linked `futureEvents` provider 사전 차단·local 불변 자동 통과 | 자동 통과 / 실계정 negative gate 대기 | 실제 KC-E4에서 write control 차단 확인 필요 |
 | local change log·session Undo | additive migration, atomic rebind+log, linked nonrecurring single calendar/time one-shot Undo 자동 통과 | 로컬 구현 통과 / 수동 UI 대기 | 실제 move 한 건의 history/restore 확인; Exchange 지원 증거와 구분 |
 | 외부 변경 알림 후 재조회 | 마지막 loaded interval 250ms 병합 재조회 unit 통과 | 실계정 대기 | Calendar.app/Outlook 변경 |
+| 외부 삭제 후 local Brief 복구 | 전용 occurrence-aware lookup, 첫 missing·두 번째 명시적 recheck, orphan 보관·exact relink·local-only 삭제 자동 통과 | 로컬 구현 통과 / Exchange 수동 대기 | 일반 범위 fetch 부재·오류·candidate·ambiguous·inconclusive는 삭제 증거가 아님. 실제 Exchange 동기화 지연과 identifier churn은 별도 gate |
 | 권한 철회 후 데이터 제거 | calendar/event/selection 제거 unit 통과 | 실계정 대기 | System Settings 권한 철회 |
 | attendee meeting/초대 local-only Brief | `hasAttendees` meeting과 invitation 원본 차단, local notes·task unit flow 통과 | 실계정 대기 | KC-E6와 사용자 주최 meeting에서 변경 메일 없음 확인 필요 |
 
@@ -175,6 +176,20 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 - `AppIcon.icns`를 iconset으로 역추출해 16/32/128/256px 표현의 alpha, 네 corner 0과 center 255를 확인했다. Info.plist의 `CFBundleIconFile/Name = AppIcon`, Assets.car, XCTest 비포함도 확인했다.
 - 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. 최종 result bundle은 `/private/tmp/KaosCalAppIconCompatFinal.xcresult`다.
 - exact Release가 1512×949 onscreen 창을 만들고 정상 종료 뒤 process 0임을 확인했다. test와 bootstrap 전후 production DB mtime·size·SHA-256 및 WAL/SHM 부재는 동일했다. 이 final gate도 EventKit/Exchange write를 실행하지 않았다.
+
+## 2026-07-12 Phase 7B 외부 삭제 복구 자동·Release checkpoint
+
+- 일반 Day/Week/Agenda 구간 fetch에서 일정이 보이지 않는 사실은 삭제 증거로 사용하지 않는다. 저장된 calendar/item/event/external identifier와 occurrence anchor를 사용하는 별도 lookup만 복구 상태를 바꿀 수 있다.
+- 첫 명시적 `notFound`는 link를 `missing`으로만 만들고 local notes/tasks와 context lifecycle을 보존한다. 사용자가 `Check Again`을 눌러 두 번째 전용 lookup도 `notFound`일 때만 orphan review를 연다.
+- 권한·provider 오류, weak/ambiguous candidate와 recurring occurrence를 확정할 수 없는 `inconclusive`는 miss로 세지 않는다. 멀리 이동한 detached occurrence나 series seed의 제한 때문에 false orphan이 되지 않도록 보수적으로 남긴다.
+- provider의 명시적 cancelled evidence는 local context를 cancelled로 표시한다. 이후 같은 occurrence의 fresh exact found는 새 positive evidence로 scheduled/completed lifecycle을 다시 계산한다.
+- 명시적 relink는 선택 후보를 provider에서 마지막으로 exact 검증하고 expected-link 전체 상태를 CAS로 확인한 뒤 context/link/relinked log를 한 SQLite transaction에서 갱신한다. original EventKit notes는 v1 link에 저장되지 않았으므로 relink 전 change snapshot의 `originalNotes`는 unavailable(`nil`)이며 local Brief notes로 대체하지 않는다.
+- `Delete local Brief`는 local FK cascade만 수행하고 EventKit create/update/delete를 호출하지 않는다. KaosCal에서 linked 원본을 지우는 기능은 Phase 7C까지 계속 잠근다.
+- 최종 전체 **175 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. Debug result bundle은 `/private/tmp/KaosCalPhase7BFinal-20260712-0155.xcresult`다.
+- build-only Release `/private/tmp/KaosCalPhase7BFinalRelease/Build/Products/Release/KaosCal.app`, CDHash `f3b30718434641dbbd2dbec90f82581342d47506`은 strict codesign, hardened runtime, sandbox, Calendar entitlement, usage description을 통과했고 get-task-allow·XCTest를 포함하지 않는다.
+- exact artifact는 1482×931 onscreen 창을 만들고 정상 종료 뒤 process 0이었다. test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256과 WAL/SHM 부재가 동일했고 integrity/FK 및 v1/v2 migration 목록도 정상이다.
+- 어느 calendar에서든 strong identifier seed의 recurrence/occurrence가 맞지 않으면 inconclusive다. 살아 있는 series의 one-off deletion과 bounded search 밖 detached move는 구분할 수 없어 automatic orphan을 주장하지 않고 manual exact relink로 남긴다.
+- 이 checkpoint에서는 Exchange/EventKit fixture write나 외부 삭제를 실행하지 않았다. 실제 Exchange 동기화 지연, Calendar.app 외부 삭제와 identifier churn은 수동 gate이며 기존 live CRUD run `20260711-1626-B7D2`를 대체하지 않는다.
 
 ## 테스트 기록 형식
 

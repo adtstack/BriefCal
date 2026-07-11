@@ -88,12 +88,18 @@ EventKit 변경 알림이나 fetch 결과를 통해 원본 이벤트 변경을 �
 
 Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active occurrence의 유효 종료를 기준으로 scheduled/completed를 갱신하고, cancelled/orphaned는 덮어쓰지 않는다.
 
-Phase 7B의 부재 확인 계약:
-- 일반 구간 fetch에서 한 번 찾지 못한 결과는 상태 전이 근거로 쓰지 않는다.
-- occurrence-aware strong identifier 전용 lookup의 첫 `notFound`만 `missing`으로 기록할 수 있다.
-- 이미 missing인 항목을 사용자가 명시적으로 다시 확인했고 lookup도 `notFound`일 때 orphan 보관 확인을 제공한다.
-- weak/ambiguous, 권한 오류, provider 오류, 동기화 지연은 orphan 근거가 아니다.
-- 사용자가 직접 승인해야 orphan 보관·재연결·local context 삭제가 일어나며, local 삭제는 EventKit 삭제와 분리한다.
+구현된 Phase 7B의 부재 확인 계약:
+- 일반 구간 fetch에서 한 번 찾지 못한 결과는 상태 전이나 확인 횟수의 근거로 쓰지 않는다.
+- 사용자가 원본 열기를 요청하면 저장 link의 strong event/item/external identifiers와 occurrence anchor로 전용 lookup한다. active link의 첫 명시적 `notFound`만 `missing`으로 기록한다.
+- 이미 missing인 항목을 사용자가 `Recheck`했고 lookup도 `notFound`일 때만 orphan 보관 확인을 제공한다. 이 두 번째 결과만으로 DB를 orphaned로 만들지는 않는다.
+- 권한·provider 오류, candidate, ambiguous, calendar unavailable, invalid stored link와 recurring occurrence unavailable 같은 inconclusive 결과는 missing/orphan 근거가 아니며 상태를 바꾸지 않는다.
+- recurring lookup은 zoned instant 또는 all-day/floating civil anchor가 정확히 같은 occurrence만 strong match로 인정한다. 어느 calendar에서든 강한 identifier seed의 recurrence/occurrence가 저장 anchor와 맞지 않으면 `strongIdentifierOccurrenceMismatch` 또는 `recurringOccurrenceUnavailable` inconclusive이며 sibling occurrence를 자동 선택하지 않는다.
+- 살아 있는 recurring series의 first-occurrence seed는 exact occurrence가 범위 밖으로 이동했는지 삭제됐는지 구분하는 tombstone이 아니다. bounded EventKit 조회로 둘을 구분할 수 없는 동안에는 자동 missing/orphan을 제공하지 않고 manual exact-occurrence relink만 제공한다.
+- 유일한 strong `.found`는 missing을 active로 복구한다. 유일한 EventKit canceled match는 부재가 아니라 cancellation 증거로 다뤄 active link와 local Brief를 유지한 채 context를 cancelled로 만든다. 이후 non-cancelled `.found`는 cancelled를 해제하고 scheduled/completed를 다시 계산한다. 이 provider 관찰에는 `cancelled` change log를 쓰지 않으며 Phase 7C 원본 삭제와 구분한다.
+- Keep as orphan, Relink, Delete local Brief는 명시적으로 분리한다. local 삭제는 missing/orphaned SQLite context만 cascade 삭제하고 EventKit 삭제를 호출하지 않는다.
+- Relink는 선택 event를 provider에서 다시 strong lookup해 유일한 `.found`/`.cancelled`인지 최종 검증한다. 선택 당시 `EventLink`와 현재 row의 equality CAS, strong-ID 존재와 다른 context 충돌 검사를 통과한 뒤 snapshot/lifecycle/Undo supersede/`relinked` log를 하나의 SQLite transaction으로 저장한다.
+- Phase 7B는 schema migration을 추가하지 않았다. relink before log의 `originalNotes`는 v1 link가 원본 EventKit notes를 저장하지 않았기 때문에 nil/unavailable이며, local Event Brief notes를 대신 넣지 않는다.
+- linked original EventKit delete는 Phase 7C impact review와 별도 Confirm이 구현될 때까지 계속 잠근다.
 
 세부 경계는 [ADR-012](adr/ADR-012-lifecycle-after-review-and-orphan-confirmation.md)를 따른다.
 

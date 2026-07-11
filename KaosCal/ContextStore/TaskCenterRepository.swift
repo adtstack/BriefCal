@@ -76,7 +76,8 @@ final class TaskCenterRepository {
                             eventStart: eventRange.start,
                             eventEnd: eventRange.end,
                             isAllDay: link.isAllDay
-                        )
+                        ),
+                        eventLinkStatus: link.linkStatus
                     )
                 }
             let personalItems: [TaskCenterItem]
@@ -93,7 +94,8 @@ final class TaskCenterRepository {
                             dueAt: task.dueAt,
                             completedAt: task.completedAt,
                             sortOrder: task.sortOrder,
-                            source: .personal
+                            source: .personal,
+                            eventLinkStatus: nil
                         )
                     }
             }

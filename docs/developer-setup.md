@@ -1,7 +1,7 @@
 # Developer And Test Setup
 
-> 상태: Phase 7A·mini month·macOS 14 호환 AppIcon 완료 / 현재 154-test suite(수동 gate 1 opt-in skip) / 비반복 EventKit live CRUD 부분 통과·반복/이동 gate 대기
-> 마지막 갱신: 2026-07-11
+> 상태: Phase 7B missing·orphan·relink, mini month·macOS 14 호환 AppIcon 완료 / 현재 175-test suite(수동 gate 1 opt-in skip) / 비반복 EventKit live CRUD 부분 통과·반복/이동 gate 대기
+> 마지막 갱신: 2026-07-12
 
 KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에서 결정하고 기록한다. 사용자가 우선 준비할 것은 개발·실계정 검증에 필요한 아래 항목뿐이다.
 
@@ -72,7 +72,7 @@ Exchange Online인지 온프레미스인지 알 수 있는 관리자 정보가 �
 
 fixture는 민감하지 않은 제목과 내용, 고유 run marker로 `KAOS-TEST`에 만들고 calendar 이동 대상은 `일정`을 사용한다. KC-E4에는 attendee나 실제 연락처를 넣지 않고 KaosCal이 표현 가능한 기본 recurrence만 사용한다. Phase 6 구현·자동 gate와 서버 측 제한된 round-trip에 이어 비반복 EventKit write도 recurrence-fix signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서 부분 통과했다. 반복·all-day·move는 각각 별도 marker와 exact cleanup을 전제로 실행한다. 앱이나 환경변수에 account password를 넣는 fixture 자동화는 만들지 않는다.
 
-2026-07-11에 준비한 Phase 5와 Phase 6 수동 gate build의 역사적 source 상태·임시 path·CDHash·서명 검증은 [Exchange Compatibility](exchange-compatibility.md)의 서로 다른 build-evidence section에 유지한다. live run `20260711-1626-B7D2`의 ad-hoc signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서 화면·EventKit·서버 결과를 확인했다. legacy Brief 호환성, Phase 7A lifecycle과 mini month의 완료 증거도 별도 checkpoint에 있다. 최초 opaque AppIcon artifact는 macOS 14/15 검토 뒤 제외했고, transparent fallback을 포함한 최신 build-only Release CDHash `bc2ddd83c9d7f5e1bfd62241b0e02e63b23308b6`가 전체 154-test·서명·legacy `.icns` alpha gate를 통과했다. 어느 artifact도 아직 Calendar.app 시각 round-trip, all-day, 반복, move pass를 뜻하지 않는다.
+2026-07-11에 준비한 Phase 5와 Phase 6 수동 gate build의 역사적 source 상태·임시 path·CDHash·서명 검증은 [Exchange Compatibility](exchange-compatibility.md)의 서로 다른 build-evidence section에 유지한다. live run `20260711-1626-B7D2`의 ad-hoc signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서 화면·EventKit·서버 결과를 확인했다. legacy Brief 호환성, Phase 7A lifecycle, mini month와 AppIcon의 완료 증거도 별도 checkpoint에 있다. 현재 build-only Phase 7B Release CDHash `f3b30718434641dbbd2dbec90f82581342d47506`은 transparent AppIcon을 포함해 전체 175-test·strict 서명·bootstrap·운영 DB 격리 gate를 통과했다. 이 build-only artifact는 EventKit fixture write를 실행하지 않았고, 어느 artifact도 아직 Calendar.app 시각 round-trip, all-day, 반복, move pass를 뜻하지 않는다.
 
 ## 제공하지 않아도 되는 것
 

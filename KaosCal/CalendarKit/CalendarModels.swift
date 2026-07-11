@@ -161,6 +161,24 @@ struct LocalDateTimeComponents: Equatable {
         second = components.second ?? 0
     }
 
+    init(
+        calendarIdentifier: Calendar.Identifier,
+        year: Int,
+        month: Int,
+        day: Int,
+        hour: Int,
+        minute: Int,
+        second: Int
+    ) {
+        self.calendarIdentifier = calendarIdentifier
+        self.year = year
+        self.month = month
+        self.day = day
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+    }
+
     func date(in calendar: Calendar) -> Date? {
         var reconstructionCalendar = Calendar(identifier: calendarIdentifier)
         reconstructionCalendar.locale = calendar.locale
@@ -190,6 +208,183 @@ enum EventTimeSemantics: Equatable {
         end: LocalDateTimeComponents
     )
     case zoned(timeZoneIdentifier: String)
+}
+
+enum CalendarEventLookupOccurrence: Equatable {
+    case single
+    case instant(Date)
+    case allDay(LocalDateTimeComponents)
+    case floating(LocalDateTimeComponents)
+}
+
+struct CalendarEventLookupSnapshot: Equatable {
+    let calendarTitle: String
+    let sourceTitle: String
+    let title: String
+    let location: String?
+    let startDate: Date
+    let endDate: Date
+    let isAllDay: Bool
+    let timeSemantics: EventTimeSemantics
+}
+
+struct CalendarEventLookupQuery: Equatable {
+    let eventIdentifier: String?
+    let calendarItemIdentifier: String?
+    let calendarItemExternalIdentifier: String?
+    let calendarIdentifier: String
+    let occurrence: CalendarEventLookupOccurrence
+    let searchAnchors: [Date]
+    let lastKnown: CalendarEventLookupSnapshot
+
+    var hasStrongIdentifier: Bool {
+        [
+            eventIdentifier,
+            calendarItemIdentifier,
+            calendarItemExternalIdentifier
+        ].contains { value in
+            guard let value else { return false }
+            return !value.isEmpty
+        }
+    }
+
+    init(event: DisplayEvent) throws {
+        guard [
+            event.eventIdentifier,
+            event.calendarItemIdentifier,
+            event.calendarItemExternalIdentifier
+        ].contains(where: { value in
+            guard let value else { return false }
+            return !value.isEmpty
+        }) else {
+            throw CalendarEventLookupError.missingStrongIdentifier
+        }
+
+        let occurrence: CalendarEventLookupOccurrence
+        if !event.isRecurring {
+            occurrence = .single
+        } else {
+            switch event.timeSemantics {
+            case .zoned:
+                occurrence = .instant(event.occurrenceDate ?? event.startDate)
+            case let .allDay(start, _):
+                occurrence = .allDay(
+                    event.occurrenceLocalComponents ?? start
+                )
+            case let .floating(start, _):
+                occurrence = .floating(
+                    event.occurrenceLocalComponents ?? start
+                )
+            }
+        }
+        var seen = Set<Int64>()
+        let anchors = [event.occurrenceDate, event.startDate]
+            .compactMap { $0 }
+            .filter { date in
+                seen.insert(Int64(
+                    (date.timeIntervalSinceReferenceDate * 1_000).rounded()
+                )).inserted
+            }
+        self.init(
+            eventIdentifier: event.eventIdentifier,
+            calendarItemIdentifier: event.calendarItemIdentifier,
+            calendarItemExternalIdentifier: event.calendarItemExternalIdentifier,
+            calendarIdentifier: event.calendarIdentifier,
+            occurrence: occurrence,
+            searchAnchors: anchors,
+            lastKnown: CalendarEventLookupSnapshot(
+                calendarTitle: event.calendarTitle,
+                sourceTitle: event.sourceTitle,
+                title: event.title,
+                location: event.location,
+                startDate: event.startDate,
+                endDate: event.endDate,
+                isAllDay: event.isAllDay,
+                timeSemantics: event.timeSemantics
+            )
+        )
+    }
+
+    init(
+        eventIdentifier: String?,
+        calendarItemIdentifier: String?,
+        calendarItemExternalIdentifier: String?,
+        calendarIdentifier: String,
+        occurrence: CalendarEventLookupOccurrence,
+        searchAnchors: [Date],
+        lastKnown: CalendarEventLookupSnapshot
+    ) {
+        self.eventIdentifier = eventIdentifier
+        self.calendarItemIdentifier = calendarItemIdentifier
+        self.calendarItemExternalIdentifier = calendarItemExternalIdentifier
+        self.calendarIdentifier = calendarIdentifier
+        self.occurrence = occurrence
+        self.searchAnchors = searchAnchors
+        self.lastKnown = lastKnown
+    }
+}
+
+enum CalendarEventLookupBasis: String, Equatable {
+    case eventIdentifierAndOccurrence
+    case calendarItemIdentifierAndOccurrence
+    case externalIdentifierAndOccurrence
+    case exactSnapshot
+}
+
+struct CalendarEventLookupMatch: Equatable, Identifiable {
+    let event: DisplayEvent
+    let basis: CalendarEventLookupBasis
+    let isCancelled: Bool
+
+    init(
+        event: DisplayEvent,
+        basis: CalendarEventLookupBasis,
+        isCancelled: Bool = false
+    ) {
+        self.event = event
+        self.basis = basis
+        self.isCancelled = isCancelled
+    }
+
+    var id: String { event.id }
+}
+
+enum CalendarEventLookupIssue: Equatable {
+    case calendarUnavailable
+    case invalidStoredLink
+    case recurringOccurrenceUnavailable
+    case strongIdentifierOccurrenceMismatch
+}
+
+enum CalendarEventLookupResult: Equatable {
+    case found(CalendarEventLookupMatch)
+    case cancelled(CalendarEventLookupMatch)
+    case candidates([CalendarEventLookupMatch])
+    case ambiguous([CalendarEventLookupMatch])
+    case notFound
+    case inconclusive(CalendarEventLookupIssue)
+}
+
+enum CalendarEventLookupError: Error, Equatable {
+    case fullAccessRequired
+    case missingStrongIdentifier
+    case invalidStoredTimeSemantics
+    case invalidStoredOccurrence
+}
+
+extension CalendarEventLookupError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .fullAccessRequired:
+            "Full calendar access is required to check the linked event."
+        case .missingStrongIdentifier:
+            "The saved Event Brief does not have a strong calendar identifier. Choose an event to relink it manually."
+        case .invalidStoredTimeSemantics:
+            "The saved event time could not be reconstructed safely. Choose an event to relink the Brief manually."
+        case .invalidStoredOccurrence:
+            "The saved recurring occurrence could not be reconstructed safely. Choose an event to relink the Brief manually."
+        }
+    }
 }
 
 enum DisplayEventIdentity {

@@ -5,6 +5,8 @@ enum ContextStoreError: Error, Equatable {
     case emptyTitle
     case invalidRelativeDue
     case identityConfirmationRequired([String])
+    case invalidEventLinkTransition
+    case eventAlreadyLinked(String)
     case missingContext(String)
     case missingEventTask(String)
     case eventTaskContextMismatch(
@@ -23,6 +25,10 @@ extension ContextStoreError: LocalizedError {
             "The relative due date is invalid."
         case .identityConfirmationRequired:
             "Confirm the matching calendar event before changing local data."
+        case .invalidEventLinkTransition:
+            "The Event Brief link changed before this recovery action completed. Review it again."
+        case let .eventAlreadyLinked(contextID):
+            "The selected calendar event is already linked to another Event Brief: \(contextID)."
         case let .missingContext(contextID):
             "The local event context is missing: \(contextID)."
         case let .missingEventTask(taskID):

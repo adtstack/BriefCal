@@ -35,8 +35,8 @@ struct EventBriefView: View {
                         appState.reloadSelectedEventBrief()
                     }
                 }
-            case .confirmationRequired:
-                identityBlockedContent
+            case let .confirmationRequired(contextIDs):
+                identityBlockedContent(contextIDs: contextIDs)
             case .empty:
                 editableContent(
                     tasks: [],
@@ -66,7 +66,9 @@ struct EventBriefView: View {
             .background(KaosCalTheme.accentSoft, in: Capsule())
     }
 
-    private var identityBlockedContent: some View {
+    private func identityBlockedContent(
+        contextIDs: [String]
+    ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Label(
                 "Similar local Event Brief found",
@@ -79,6 +81,15 @@ struct EventBriefView: View {
             )
             .font(.caption)
             .foregroundStyle(.secondary)
+
+            ForEach(Array(contextIDs.enumerated()), id: \.element) { index, contextID in
+                Button("Review Relink Candidate \(index + 1)") {
+                    appState.reviewSelectedEventRelinkCandidate(
+                        contextID: contextID
+                    )
+                }
+                .buttonStyle(.bordered)
+            }
         }
         .padding(12)
         .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
@@ -92,6 +103,8 @@ struct EventBriefView: View {
         VStack(alignment: .leading, spacing: 18) {
             if lifecycleStatus == .completed {
                 endedEventBanner(hasStoredBrief: hasStoredBrief)
+            } else if lifecycleStatus == .cancelled {
+                cancelledEventBanner
             }
 
             ForEach(EventTaskSection.allCases, id: \.self) { section in
@@ -107,6 +120,25 @@ struct EventBriefView: View {
 
             notesEditor
         }
+    }
+
+    private var cancelledEventBanner: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label("Calendar event cancelled", systemImage: "calendar.badge.exclamationmark")
+                .font(.headline)
+            Text(
+                "The calendar provider reported this status. Local notes and tasks were kept; KaosCal did not delete or change the calendar event."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color.orange.opacity(0.12),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+        .accessibilityIdentifier("eventBrief.eventCancelled")
     }
 
     private var inferredLifecycleStatus: EventLifecycleStatus {

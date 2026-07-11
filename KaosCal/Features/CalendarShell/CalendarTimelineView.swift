@@ -213,7 +213,7 @@ struct CalendarTimelineView: View {
                         let width = max(24, CGFloat(span) * dayWidth - 6)
 
                         Button {
-                            appState.selectEvent(placement.event.id)
+                            appState.userSelectEvent(placement.event.id)
                         } label: {
                             AllDayEventCard(
                                 placement: placement,
@@ -296,7 +296,7 @@ struct CalendarTimelineView: View {
                 )
 
                 Button {
-                    appState.selectEvent(placement.event.id)
+                    appState.userSelectEvent(placement.event.id)
                 } label: {
                     TimedEventCard(
                         placement: placement,

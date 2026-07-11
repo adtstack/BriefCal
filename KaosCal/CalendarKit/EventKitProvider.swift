@@ -7,6 +7,12 @@ struct EventKitRecurrenceClassification: Equatable {
     let occurrenceDate: Date?
 }
 
+private struct EventKitLookupCandidate {
+    let rawEvent: EKEvent
+    let event: DisplayEvent
+    let basis: CalendarEventLookupBasis
+}
+
 @MainActor
 final class EventKitProvider: CalendarProviding {
     private let eventStore: EKEventStore
@@ -94,6 +100,129 @@ final class EventKitProvider: CalendarProviding {
                 }
                 return $0.startDate < $1.startDate
             }
+    }
+
+    func lookupEvent(
+        _ query: CalendarEventLookupQuery
+    ) throws -> CalendarEventLookupResult {
+        guard authorizationState.canReadEvents else {
+            throw CalendarEventLookupError.fullAccessRequired
+        }
+        guard query.hasStrongIdentifier else {
+            throw CalendarEventLookupError.missingStrongIdentifier
+        }
+
+        eventStore.refreshSourcesIfNecessary()
+        let savedCalendarIsAvailable = eventStore.calendar(
+            withIdentifier: query.calendarIdentifier
+        ) != nil
+        var rawCandidates: [EKEvent] = []
+
+        if let identifier = nonEmpty(query.eventIdentifier),
+           let event = eventStore.event(withIdentifier: identifier) {
+            rawCandidates.append(event)
+        }
+        if let identifier = nonEmpty(query.calendarItemIdentifier),
+           let event = eventStore.calendarItem(
+            withIdentifier: identifier
+           ) as? EKEvent {
+            rawCandidates.append(event)
+        }
+        if let identifier = nonEmpty(
+            query.calendarItemExternalIdentifier
+        ) {
+            rawCandidates.append(contentsOf: eventStore.calendarItems(
+                withExternalIdentifier: identifier
+            ).compactMap { $0 as? EKEvent })
+        }
+        for interval in lookupSearchIntervals(for: query) {
+            let predicate = eventStore.predicateForEvents(
+                withStart: interval.start,
+                end: interval.end,
+                calendars: nil
+            )
+            rawCandidates.append(contentsOf: eventStore.events(matching: predicate))
+        }
+
+        var strongMatches: [String: EventKitLookupCandidate] = [:]
+        var weakCandidates: [String: EventKitLookupCandidate] = [:]
+        var strongIdentifierMismatchIssue: CalendarEventLookupIssue?
+        for rawEvent in rawCandidates {
+            let event = makeDisplayEvent(rawEvent)
+            let key = lookupCandidateKey(event)
+            let strongBasis = strongLookupBasis(event, query: query)
+            let occurrenceMatches = lookupOccurrenceMatches(
+                event,
+                query: query
+            )
+            if let issue = lookupStrongIdentifierMismatchIssue(
+                event,
+                query: query
+            ) {
+                if strongIdentifierMismatchIssue == nil
+                    || issue == .strongIdentifierOccurrenceMismatch {
+                    strongIdentifierMismatchIssue = issue
+                }
+            }
+
+            if occurrenceMatches, let basis = strongBasis {
+                let match = EventKitLookupCandidate(
+                    rawEvent: rawEvent,
+                    event: event,
+                    basis: basis
+                )
+                if event.calendarIdentifier == query.calendarIdentifier {
+                    strongMatches[key] = match
+                } else {
+                    weakCandidates[key] = match
+                }
+            } else if exactLookupSnapshotMatches(event, query: query) {
+                weakCandidates[key] = EventKitLookupCandidate(
+                    rawEvent: rawEvent,
+                    event: event,
+                    basis: .exactSnapshot
+                )
+            }
+        }
+
+        let exactMatches = sortedLookupCandidates(strongMatches.values)
+        if exactMatches.count == 1, let match = exactMatches.first {
+            let result = CalendarEventLookupMatch(
+                event: match.event,
+                basis: match.basis,
+                isCancelled: match.rawEvent.status == .canceled
+            )
+            return match.rawEvent.status == .canceled
+                ? .cancelled(result)
+                : .found(result)
+        }
+        if exactMatches.count > 1 {
+            return .ambiguous(exactMatches.map {
+                CalendarEventLookupMatch(
+                    event: $0.event,
+                    basis: $0.basis,
+                    isCancelled: $0.rawEvent.status == .canceled
+                )
+            })
+        }
+
+        let candidates = sortedLookupCandidates(weakCandidates.values).map {
+            CalendarEventLookupMatch(
+                event: $0.event,
+                basis: $0.basis,
+                isCancelled: $0.rawEvent.status == .canceled
+            )
+        }
+        if candidates.count == 1 {
+            return .candidates(candidates)
+        }
+        if candidates.count > 1 {
+            return .ambiguous(candidates)
+        }
+        return lookupTerminalResult(
+            strongIdentifierMismatchIssue: strongIdentifierMismatchIssue,
+            savedCalendarIsAvailable: savedCalendarIsAvailable
+        )
     }
 
     func defaultCalendarIdentifierForNewEvents() -> String? {
@@ -302,6 +431,178 @@ final class EventKitProvider: CalendarProviding {
             originalNotes: event.notes,
             recurrence: recurrence
         )
+    }
+
+    func lookupOccurrenceMatches(
+        _ candidate: DisplayEvent,
+        query: CalendarEventLookupQuery
+    ) -> Bool {
+        switch query.occurrence {
+        case .single:
+            return !candidate.isRecurring
+        case let .instant(anchor):
+            guard candidate.isRecurring,
+                  case .zoned = candidate.timeSemantics else {
+                return false
+            }
+            let candidateAnchor = candidate.occurrenceDate
+                ?? candidate.startDate
+            return abs(candidateAnchor.timeIntervalSince(anchor)) < 0.001
+        case let .allDay(anchor):
+            guard candidate.isRecurring,
+                  case .allDay = candidate.timeSemantics else {
+                return false
+            }
+            return localOccurrenceAnchor(candidate) == anchor
+        case let .floating(anchor):
+            guard candidate.isRecurring,
+                  case .floating = candidate.timeSemantics else {
+                return false
+            }
+            return localOccurrenceAnchor(candidate) == anchor
+        }
+    }
+
+    private func strongLookupBasis(
+        _ event: DisplayEvent,
+        query: CalendarEventLookupQuery
+    ) -> CalendarEventLookupBasis? {
+        if let identifier = nonEmpty(query.eventIdentifier),
+           event.eventIdentifier == identifier {
+            return .eventIdentifierAndOccurrence
+        }
+        if let identifier = nonEmpty(query.calendarItemIdentifier),
+           event.calendarItemIdentifier == identifier {
+            return .calendarItemIdentifierAndOccurrence
+        }
+        if let identifier = nonEmpty(
+            query.calendarItemExternalIdentifier
+        ), event.calendarItemExternalIdentifier == identifier {
+            return .externalIdentifierAndOccurrence
+        }
+        return nil
+    }
+
+    private func exactLookupSnapshotMatches(
+        _ event: DisplayEvent,
+        query: CalendarEventLookupQuery
+    ) -> Bool {
+        let snapshot = query.lastKnown
+        guard event.title == snapshot.title,
+              event.location == snapshot.location,
+              event.isAllDay == snapshot.isAllDay else {
+            return false
+        }
+
+        switch (event.timeSemantics, snapshot.timeSemantics) {
+        case let (
+            .zoned(identifier),
+            .zoned(snapshotIdentifier)
+        ):
+            return identifier == snapshotIdentifier
+                && abs(event.startDate.timeIntervalSince(snapshot.startDate)) < 0.001
+                && abs(event.endDate.timeIntervalSince(snapshot.endDate)) < 0.001
+        case let (
+            .allDay(start, endExclusive),
+            .allDay(snapshotStart, snapshotEndExclusive)
+        ):
+            return start == snapshotStart
+                && endExclusive == snapshotEndExclusive
+        case let (
+            .floating(start, end),
+            .floating(snapshotStart, snapshotEnd)
+        ):
+            return start == snapshotStart && end == snapshotEnd
+        default:
+            return false
+        }
+    }
+
+    private func lookupSearchIntervals(
+        for query: CalendarEventLookupQuery
+    ) -> [DateInterval] {
+        let padding: TimeInterval = 172_800
+        let duration = max(
+            query.lastKnown.endDate.timeIntervalSince(
+                query.lastKnown.startDate
+            ),
+            3_600
+        )
+        var anchors = query.searchAnchors
+        switch query.occurrence {
+        case let .allDay(components), let .floating(components):
+            if let date = components.date(in: validationCalendar()) {
+                anchors.append(date)
+            }
+        case .single, .instant:
+            break
+        }
+        var seen = Set<Int64>()
+        return anchors
+            .filter { anchor in
+                seen.insert(Int64(
+                    (anchor.timeIntervalSinceReferenceDate * 1_000).rounded()
+                )).inserted
+            }
+            .map { anchor in
+                DateInterval(
+                    start: anchor.addingTimeInterval(-padding),
+                    end: anchor.addingTimeInterval(duration + padding)
+                )
+            }
+    }
+
+    private func lookupCandidateKey(_ event: DisplayEvent) -> String {
+        event.id
+    }
+
+    private func isRecurringLookup(
+        _ query: CalendarEventLookupQuery
+    ) -> Bool {
+        if case .single = query.occurrence { return false }
+        return true
+    }
+
+    func lookupTerminalResult(
+        strongIdentifierMismatchIssue: CalendarEventLookupIssue?,
+        savedCalendarIsAvailable: Bool
+    ) -> CalendarEventLookupResult {
+        if let strongIdentifierMismatchIssue {
+            return .inconclusive(strongIdentifierMismatchIssue)
+        }
+        if !savedCalendarIsAvailable {
+            return .inconclusive(.calendarUnavailable)
+        }
+        return .notFound
+    }
+
+    func lookupStrongIdentifierMismatchIssue(
+        _ candidate: DisplayEvent,
+        query: CalendarEventLookupQuery
+    ) -> CalendarEventLookupIssue? {
+        guard strongLookupBasis(candidate, query: query) != nil,
+              !lookupOccurrenceMatches(candidate, query: query) else {
+            return nil
+        }
+        return isRecurringLookup(query) && candidate.isRecurring
+            ? .recurringOccurrenceUnavailable
+            : .strongIdentifierOccurrenceMismatch
+    }
+
+    private func sortedLookupCandidates(
+        _ candidates: Dictionary<String, EventKitLookupCandidate>.Values
+    ) -> [EventKitLookupCandidate] {
+        candidates.sorted { lhs, rhs in
+            if lhs.event.startDate != rhs.event.startDate {
+                return lhs.event.startDate < rhs.event.startDate
+            }
+            if lhs.event.title != rhs.event.title {
+                return lhs.event.title.localizedCaseInsensitiveCompare(
+                    rhs.event.title
+                ) == .orderedAscending
+            }
+            return lhs.event.id < rhs.event.id
+        }
     }
 
     private func requireFullAccess() throws {

@@ -8,6 +8,9 @@ protocol CalendarProviding: AnyObject {
     func requestFullAccess() async throws -> Bool
     func listCalendars() throws -> [CalendarSource]
     func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent]
+    func lookupEvent(
+        _ query: CalendarEventLookupQuery
+    ) throws -> CalendarEventLookupResult
     func defaultCalendarIdentifierForNewEvents() -> String?
     func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent
     func updateEvent(

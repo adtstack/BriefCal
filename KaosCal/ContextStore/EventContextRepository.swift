@@ -118,6 +118,39 @@ final class EventContextRepository {
         }
     }
 
+    func fetchRecoveryBriefs() throws -> [EventBriefSnapshot] {
+        try database.read { db in
+            let links = try EventLink.fetchAll(db)
+                .filter {
+                    $0.linkStatus == .missing
+                        || $0.linkStatus == .orphaned
+                }
+                .sorted {
+                    if $0.updatedAt != $1.updatedAt {
+                        return $0.updatedAt > $1.updatedAt
+                    }
+                    return $0.contextID < $1.contextID
+                }
+            return try links.compactMap {
+                try fetchBrief(contextID: $0.contextID, in: db)
+            }
+        }
+    }
+
+    func fetchAllBriefs() throws -> [EventBriefSnapshot] {
+        try database.read { db in
+            let links = try EventLink.fetchAll(db).sorted {
+                if $0.updatedAt != $1.updatedAt {
+                    return $0.updatedAt > $1.updatedAt
+                }
+                return $0.contextID < $1.contextID
+            }
+            return try links.compactMap {
+                try fetchBrief(contextID: $0.contextID, in: db)
+            }
+        }
+    }
+
     @discardableResult
     func reconcileTemporalLifecycle(
         at date: Date,
@@ -154,8 +187,62 @@ final class EventContextRepository {
 
     func delete(contextID: String) throws {
         try database.write { db in
-            _ = try EventContext.deleteOne(db, key: contextID)
+            try delete(contextID: contextID, in: db)
         }
+    }
+
+    func delete(contextID: String, in db: Database) throws {
+        _ = try EventContext.deleteOne(db, key: contextID)
+    }
+
+    @discardableResult
+    func markMissing(
+        contextID: String,
+        in db: Database
+    ) throws -> EventBriefSnapshot {
+        guard let context = try EventContext.fetchOne(db, key: contextID),
+              var link = try fetchLink(contextID: contextID, in: db) else {
+            throw ContextStoreError.missingContext(contextID)
+        }
+        guard link.linkStatus == .active || link.linkStatus == .missing else {
+            throw ContextStoreError.invalidEventLinkTransition
+        }
+        if link.linkStatus == .active {
+            link.linkStatus = .missing
+            link.updatedAt = now()
+            try link.update(db)
+        }
+        let tasks = try EventTask
+            .filter(EventTask.Columns.contextID == contextID)
+            .fetchAll(db)
+            .sorted(by: Self.taskOrder)
+        return EventBriefSnapshot(context: context, link: link, tasks: tasks)
+    }
+
+    @discardableResult
+    func keepAsOrphan(
+        contextID: String,
+        in db: Database
+    ) throws -> EventBriefSnapshot {
+        guard var context = try EventContext.fetchOne(db, key: contextID),
+              var link = try fetchLink(contextID: contextID, in: db) else {
+            throw ContextStoreError.missingContext(contextID)
+        }
+        guard link.linkStatus == .missing || link.linkStatus == .orphaned else {
+            throw ContextStoreError.invalidEventLinkTransition
+        }
+        let timestamp = now()
+        context.lifecycleStatus = .orphaned
+        context.updatedAt = timestamp
+        link.linkStatus = .orphaned
+        link.updatedAt = timestamp
+        try context.update(db)
+        try link.update(db)
+        let tasks = try EventTask
+            .filter(EventTask.Columns.contextID == contextID)
+            .fetchAll(db)
+            .sorted(by: Self.taskOrder)
+        return EventBriefSnapshot(context: context, link: link, tasks: tasks)
     }
 
     func resolve(
@@ -454,12 +541,16 @@ final class EventContextRepository {
         contextID: String,
         event: DisplayEvent,
         notes: String?,
+        allowOrphanReactivation: Bool = false,
         in db: Database
     ) throws -> EventContext? {
         guard var context = try EventContext.fetchOne(db, key: contextID),
               var link = try EventLink
                 .filter(EventLink.Columns.contextID == contextID)
                 .fetchOne(db) else {
+            return nil
+        }
+        guard link.linkStatus != .orphaned || allowOrphanReactivation else {
             return nil
         }
         let snapshot = try EventLinkSnapshot(event: event)
@@ -503,6 +594,38 @@ final class EventContextRepository {
         try context.update(db)
         try link.update(db)
         return context
+    }
+
+    @discardableResult
+    func relink(
+        contextID: String,
+        to event: DisplayEvent,
+        at date: Date,
+        calendar: Calendar,
+        in db: Database
+    ) throws -> EventBriefSnapshot {
+        guard try updateSnapshot(
+            contextID: contextID,
+            event: event,
+            notes: nil,
+            allowOrphanReactivation: true,
+            in: db
+        ) != nil,
+        var context = try EventContext.fetchOne(db, key: contextID),
+        let link = try fetchLink(contextID: contextID, in: db) else {
+            throw ContextStoreError.missingContext(contextID)
+        }
+        context.lifecycleStatus = Self.temporalLifecycleStatus(
+            eventEnd: link.effectiveDateRange(calendar: calendar).end,
+            at: date
+        )
+        context.updatedAt = date
+        try context.update(db)
+        let tasks = try EventTask
+            .filter(EventTask.Columns.contextID == contextID)
+            .fetchAll(db)
+            .sorted(by: Self.taskOrder)
+        return EventBriefSnapshot(context: context, link: link, tasks: tasks)
     }
 
     private static func occurrenceMatches(
@@ -640,6 +763,9 @@ final class EventContextRepository {
         _ links: [EventLink],
         basis: EventIdentityMatchBasis
     ) -> EventContextResolution? {
+        if links.contains(where: { $0.linkStatus == .orphaned }) {
+            return weakResolution(links, basis: basis)
+        }
         let contextIDs = uniqueContextIDs(links)
         if contextIDs.count == 1 {
             return .linked(contextID: contextIDs[0], basis: basis)

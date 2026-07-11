@@ -4,6 +4,7 @@
 > 날짜: 2026-07-10
 > 관계: ADR-002, ADR-004, ADR-008을 구체화하며 대체하지 않음
 > Phase 7A 확장: ADR-012가 completed context projection과 After Review를 추가함
+> Phase 7B 확장: ADR-012가 Local Event Brief 목록과 recovery interaction을 추가함
 
 ## 배경
 
@@ -49,5 +50,5 @@ Event Brief와 Task Center는 같은 SQLite record를 서로 다른 화면에서
 - 실제 `KAOS-TEST`에서 event-linked 원본 occurrence 탐색과 외부 이동 반영 확인
 - read-only Viewer와 `KC-E6` invitation의 local-only 편집 실계정 확인
 - event task fixed/relative due 편집 UI, notification/reminder, drag reorder는 후속 결정
-- weak candidate relink, missing/orphan lifecycle은 Phase 6~7
+- weak candidate의 명시적·최종 검증 relink와 missing/orphan lifecycle은 Phase 7B에서 구현했다. 실제 Exchange 외부 삭제와 recovery sheet 전체 상호작용은 수동 gate로 남는다.
 - 원본 EventKit 생성·수정·삭제는 Phase 5

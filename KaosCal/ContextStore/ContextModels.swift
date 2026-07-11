@@ -368,6 +368,7 @@ struct TaskCenterItem: Equatable, Identifiable {
     let completedAt: Date?
     let sortOrder: Int
     let source: TaskCenterItemSource
+    let eventLinkStatus: EventLinkStatus?
 }
 
 enum TaskCenterCompletionResult: Equatable {
@@ -477,6 +478,50 @@ struct EventChangeSnapshot: Codable, Equatable {
         isDetached = event.isDetached
     }
 
+    init(link: EventLink) throws {
+        let storedStart = try Self.decodeStoredComponents(
+            link.startLocalComponents
+        )
+        let storedEnd = try Self.decodeStoredComponents(
+            link.endLocalComponents
+        )
+        let storedOccurrence = try Self.decodeStoredComponents(
+            link.occurrenceLocalComponents
+        )
+        if link.timeSemantics != .zoned,
+           storedStart == nil || storedEnd == nil {
+            throw CalendarEventLookupError.invalidStoredTimeSemantics
+        }
+        if link.isRecurring,
+           link.timeSemantics != .zoned,
+           storedOccurrence == nil {
+            throw CalendarEventLookupError.invalidStoredOccurrence
+        }
+
+        schemaVersion = 1
+        eventIdentifier = link.eventIdentifier
+        calendarItemIdentifier = link.calendarItemIdentifier
+        calendarItemExternalIdentifier = link.calendarItemExternalIdentifier
+        calendarIdentifier = link.calendarIdentifier
+        calendarTitle = link.calendarTitleSnapshot
+        sourceTitle = link.sourceTitle
+        title = link.titleSnapshot
+        location = link.locationSnapshot
+        originalNotes = nil
+        startDate = link.startSnapshot
+        endDate = link.endSnapshot
+        isAllDay = link.isAllDay
+        timeSemantics = link.timeSemantics
+        timeZoneIdentifier = link.timeZoneIdentifier
+        startLocalComponents = storedStart
+        endLocalComponents = storedEnd
+        isRecurring = link.isRecurring
+        occurrenceDate = link.occurrenceDate
+        occurrenceLocalComponents = storedOccurrence
+        occurrenceIdentityKey = link.occurrenceIdentityKey
+        isDetached = link.isDetached
+    }
+
     var supportsSingleEventUndo: Bool {
         !isRecurring && occurrenceDate == nil && !isDetached
     }
@@ -502,6 +547,19 @@ struct EventChangeSnapshot: Codable, Equatable {
             return startLocalComponents == other.startLocalComponents
                 && endLocalComponents == other.endLocalComponents
         }
+    }
+
+    private static func decodeStoredComponents(
+        _ encoded: String?
+    ) throws -> StoredLocalDateTimeComponents? {
+        guard let encoded,
+              let data = encoded.data(using: .utf8) else {
+            return nil
+        }
+        return try JSONDecoder().decode(
+            StoredLocalDateTimeComponents.self,
+            from: data
+        )
     }
 }
 
@@ -720,6 +778,18 @@ struct StoredLocalDateTimeComponents: Codable, Equatable {
         second = components.second
     }
 
+    var localComponents: LocalDateTimeComponents {
+        LocalDateTimeComponents(
+            calendarIdentifier: Self.identifier(named: calendarIdentifier),
+            year: year,
+            month: month,
+            day: day,
+            hour: hour,
+            minute: minute,
+            second: second
+        )
+    }
+
     func date(in displayCalendar: Calendar) -> Date? {
         var calendar = Calendar(identifier: Self.identifier(
             named: calendarIdentifier
@@ -740,7 +810,7 @@ struct StoredLocalDateTimeComponents: Codable, Equatable {
         )
     }
 
-    private static func identifier(
+    static func identifier(
         named name: String
     ) -> Calendar.Identifier {
         switch name {
@@ -753,6 +823,83 @@ struct StoredLocalDateTimeComponents: Codable, Equatable {
 }
 
 extension EventLink {
+    func calendarEventLookupQuery() throws -> CalendarEventLookupQuery {
+        guard EventIdentityFingerprint.firstNonEmpty(
+            eventIdentifier,
+            calendarItemIdentifier,
+            calendarItemExternalIdentifier
+        ) != nil else {
+            throw CalendarEventLookupError.missingStrongIdentifier
+        }
+
+        let semantics: EventTimeSemantics
+        switch timeSemantics {
+        case .zoned:
+            guard let timeZoneIdentifier else {
+                throw CalendarEventLookupError.invalidStoredTimeSemantics
+            }
+            semantics = .zoned(timeZoneIdentifier: timeZoneIdentifier)
+        case .allDay, .floating:
+            guard let start = try decodedLocalComponents(startLocalComponents),
+                  let end = try decodedLocalComponents(endLocalComponents) else {
+                throw CalendarEventLookupError.invalidStoredTimeSemantics
+            }
+            semantics = timeSemantics == .allDay
+                ? .allDay(start: start, endExclusive: end)
+                : .floating(start: start, end: end)
+        }
+
+        let occurrence: CalendarEventLookupOccurrence
+        if !isRecurring {
+            occurrence = .single
+        } else {
+            switch timeSemantics {
+            case .zoned:
+                guard let occurrenceDate else {
+                    throw CalendarEventLookupError.invalidStoredOccurrence
+                }
+                occurrence = .instant(occurrenceDate)
+            case .allDay, .floating:
+                guard let components = try decodedLocalComponents(
+                    occurrenceLocalComponents
+                ) else {
+                    throw CalendarEventLookupError.invalidStoredOccurrence
+                }
+                occurrence = timeSemantics == .allDay
+                    ? .allDay(components)
+                    : .floating(components)
+            }
+        }
+
+        var seenAnchors = Set<Int64>()
+        let searchAnchors = [occurrenceDate, startSnapshot]
+            .compactMap { $0 }
+            .filter { date in
+                seenAnchors.insert(Int64(
+                    (date.timeIntervalSinceReferenceDate * 1_000).rounded()
+                )).inserted
+            }
+
+        return CalendarEventLookupQuery(
+            eventIdentifier: eventIdentifier,
+            calendarItemIdentifier: calendarItemIdentifier,
+            calendarItemExternalIdentifier: calendarItemExternalIdentifier,
+            calendarIdentifier: calendarIdentifier,
+            occurrence: occurrence,
+            searchAnchors: searchAnchors,
+            lastKnown: CalendarEventLookupSnapshot(
+                calendarTitle: calendarTitleSnapshot,
+                sourceTitle: sourceTitle,
+                title: titleSnapshot,
+                location: locationSnapshot,
+                startDate: startSnapshot,
+                endDate: endSnapshot,
+                isAllDay: isAllDay,
+                timeSemantics: semantics
+            )
+        )
+    }
+
     func effectiveDateRange(
         calendar: Calendar
     ) -> (start: Date, end: Date) {
@@ -774,5 +921,18 @@ extension EventLink {
             return (self.startSnapshot, self.endSnapshot)
         }
         return (start, end)
+    }
+
+    private func decodedLocalComponents(
+        _ encoded: String?
+    ) throws -> LocalDateTimeComponents? {
+        guard let encoded,
+              let data = encoded.data(using: .utf8) else {
+            return nil
+        }
+        return try JSONDecoder().decode(
+            StoredLocalDateTimeComponents.self,
+            from: data
+        ).localComponents
     }
 }

@@ -181,17 +181,24 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - zoned는 절대 instant, all-day와 floating은 civil anchor를 비교해 time-zone 표시 변경으로 다른 occurrence를 선택하지 않는다.
 - 비반복 write는 기존 strong-ID fallback을 유지하고, 일치하는 event가 없으면 임의 sibling을 선택하지 않는다.
 
-### 8. 원본 일정 삭제 후 orphan (Phase 7B 수동 gate)
+### 8. 원본 일정 삭제 후 missing/orphan 복구 (Phase 7B 수동 gate)
 
 절차:
 1. Event Brief가 있는 일정을 Calendar.app에서 삭제한다.
-2. KaosCal로 돌아온다.
-3. 동기화 또는 새로고침 후 상태를 확인한다.
+2. KaosCal로 돌아와 해당 Brief를 연다.
+3. 전용 lookup의 첫 `notFound` 뒤 상태를 확인한다.
+4. `Check Again`을 누르기 전 일반 Reload와 범위 이동만 수행한다.
+5. 명시적으로 `Check Again`을 눌러 두 번째 `notFound`를 만든다.
+6. `Keep as orphan`, exact event 재연결, local Brief 삭제를 각각 독립 fixture로 확인한다.
 
 기대 결과:
 - Event Brief가 즉시 삭제되지 않는다.
-- context가 orphaned 상태로 표시된다.
-- 사용자는 보관, 재연결, 삭제 중 선택할 수 있다.
+- 첫 `notFound`에서는 link만 missing이며 context와 notes/tasks가 보존된다.
+- 일반 범위 fetch 부재, Reload, provider 오류, weak/ambiguous 후보, 권한 문제는 두 번째 miss로 세지 않는다.
+- 명시적 재확인의 두 번째 `notFound` 뒤에만 사용자가 orphan 보관, 재연결, local 삭제 중 선택할 수 있다.
+- orphan 보관 뒤 context와 link가 orphaned로 남고 Task Center의 `Local Event Briefs`에서 다시 열 수 있다.
+- 재연결은 최종 provider exact 검증 뒤 기존 notes/tasks와 context ID를 유지하며 새 link snapshot에 붙는다.
+- local 삭제 확인에는 notes/tasks 영향이 표시되고, 실행 전후 EventKit 원본과 provider write count가 변하지 않는다.
 
 ### 9. Backup / Import
 
@@ -426,9 +433,9 @@ Phase 5 이후에도 남은 수동·후속 후보:
 
 - 실제 SwiftUI 창에서 focus loss·delete confirmation·popover·VoiceOver 상호작용
 - app 종료·재실행과 실제 `KAOS-TEST` event-linked navigation 수동 흐름
-- 실제 `KAOS-TEST` create/update/delete, all-day, floating/zoned, Calendar.app round-trip
+- 실제 `KAOS-TEST` 비반복 create→update→delete는 통과했다. 남은 live 후보는 all-day, floating/zoned 의미 보존과 Calendar.app 시각 round-trip
 - event task fixed/relative due 편집 UI와 notification/reminder 정책
-- missing/orphaned lifecycle 전환과 relink UI
+- 실제 Exchange 동기화 지연·외부 삭제에서의 missing/orphan/relink UI 수동 흐름
 - backup/export/import/reset과 손상 DB 복구
 
 Phase 6에서 구현·통과한 자동 gate:
@@ -467,6 +474,21 @@ Phase 7A lifecycle·focus 자동/Release gate:
 - build-only Release `/private/tmp/KaosCalPhase7ARelease/Build/Products/Release/KaosCal.app`, CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
 - exact Release의 1360×840 onscreen 창 bootstrap과 종료 후 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
 - 이 gate에서는 EventKit/Exchange write를 실행하지 않았으며, Screen Recording 권한 부재로 픽셀 캡처는 시각 레이아웃 pass 근거로 사용하지 않음
+
+Phase 7B missing/orphan/relink 자동 gate:
+
+- 저장 link의 zoned instant, all-day·floating civil anchor를 만드는 전용 occurrence-aware lookup과 same-calendar exact strong match를 검증
+- 첫 명시적 `notFound`는 missing만, 별도 재확인의 두 번째 `notFound`만 orphan review를 열며 error·candidate·ambiguous·inconclusive는 miss로 세지 않음을 검증
+- 어느 calendar에서든 recurrence/occurrence shape가 맞지 않는 strong seed, 멀리 이동한 detached/recurring occurrence와 불완전한 series seed는 false orphan 대신 보수적 inconclusive/candidate로 남기고 legacy synthetic recurring→single은 확인 후보로만 반환
+- provider cancelled evidence는 context cancelled로 보존하고, 이후 exact found라는 새 positive evidence가 있을 때 scheduled/completed로 복구함을 검증
+- orphan 자동 재활성화 금지, explicit keep/relink/local delete transaction, stale expected-link CAS, 최종 provider exact 검증, 식별자 없는 후보 차단, unique/log-insert 실패 rollback을 검증
+- 재연결 뒤 기존 notes/tasks와 context ID가 보존되고 Event Brief를 즉시 다시 불러오며, local 삭제의 provider create/update/delete 호출이 모두 0임을 검증
+- Task Center의 모든 local Brief 목록에서 notes-only active와 missing/orphan 상태에 접근하고, background strong recovery 뒤 stale recovery sheet가 닫힘을 자동 검증. recovery sheet의 긴 local notes는 line limit을 제거하고 text selection을 유지했음을 코드 검토
+- 전체 **175 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; Debug result bundle `/private/tmp/KaosCalPhase7BFinal-20260712-0155.xcresult`
+- build-only Release `/private/tmp/KaosCalPhase7BFinalRelease/Build/Products/Release/KaosCal.app`, CDHash `f3b30718434641dbbd2dbec90f82581342d47506`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
+- exact Release의 1482×931 onscreen 창 bootstrap과 정상 종료 뒤 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
+- 실제 Exchange 외부 삭제·동기화 지연, 후보 재연결과 recovery sheet의 전체 시각 상호작용은 수동 gate로 남고, KaosCal 내 linked original delete는 Phase 7C까지 비활성화
+- 살아 있는 recurring series의 one-off 삭제와 범위 밖 detached move는 bounded EventKit lookup으로 구분할 수 없어 automatic orphan 수동 gate의 통과 범위에서 제외하고 manual exact relink만 확인
 
 Mini month 자동/Release gate:
 

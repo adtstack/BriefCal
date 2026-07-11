@@ -1223,6 +1223,197 @@ final class CalendarEventEditingTests: XCTestCase {
         XCTAssertEqual(provider.deleteCallCount, 0)
     }
 
+    func testDedicatedLookupMatcherRequiresExactRecurringAnchor() {
+        let provider = EventKitProvider(eventStore: EKEventStore())
+        let occurrence = date(2026, 7, 10, 9)
+        let original = makeEvent(
+            id: "lookup-original",
+            isRecurring: true,
+            startDate: occurrence,
+            occurrenceDate: occurrence
+        )
+        let query = CalendarEventLookupQuery(
+            eventIdentifier: original.eventIdentifier,
+            calendarItemIdentifier: original.calendarItemIdentifier,
+            calendarItemExternalIdentifier: original.calendarItemExternalIdentifier,
+            calendarIdentifier: original.calendarIdentifier,
+            occurrence: .instant(occurrence),
+            searchAnchors: [occurrence],
+            lastKnown: CalendarEventLookupSnapshot(
+                calendarTitle: original.calendarTitle,
+                sourceTitle: original.sourceTitle,
+                title: original.title,
+                location: original.location,
+                startDate: original.startDate,
+                endDate: original.endDate,
+                isAllDay: false,
+                timeSemantics: original.timeSemantics
+            )
+        )
+        let detached = makeEvent(
+            id: "lookup-detached",
+            isRecurring: true,
+            startDate: date(2026, 7, 10, 14),
+            occurrenceDate: occurrence,
+            isDetached: true
+        )
+        let sibling = makeEvent(
+            id: "lookup-sibling",
+            isRecurring: true,
+            startDate: date(2026, 7, 17, 9),
+            occurrenceDate: date(2026, 7, 17, 9)
+        )
+        let syntheticSingle = makeEvent(
+            id: "lookup-single",
+            startDate: occurrence,
+            occurrenceDate: occurrence
+        )
+
+        XCTAssertTrue(provider.lookupOccurrenceMatches(detached, query: query))
+        XCTAssertFalse(provider.lookupOccurrenceMatches(sibling, query: query))
+        XCTAssertFalse(provider.lookupOccurrenceMatches(syntheticSingle, query: query))
+    }
+
+    func testDedicatedLookupMatcherUsesFloatingCivilAnchor() {
+        let provider = EventKitProvider(eventStore: EKEventStore())
+        let civilStart = LocalDateTimeComponents(
+            date: date(2026, 7, 10, 9),
+            calendar: calendar
+        )
+        let civilEnd = LocalDateTimeComponents(
+            date: date(2026, 7, 10, 10),
+            calendar: calendar
+        )
+        let candidate = DisplayEvent(
+            id: "floating-lookup",
+            eventIdentifier: "floating-event",
+            calendarItemIdentifier: "floating-item",
+            calendarItemExternalIdentifier: "floating-external",
+            calendarIdentifier: "calendar",
+            calendarTitle: "KAOS-TEST",
+            sourceTitle: "Work",
+            accountType: .exchange,
+            calendarColor: nil,
+            title: "Floating lookup",
+            location: nil,
+            startDate: date(2026, 7, 10, 16),
+            endDate: date(2026, 7, 10, 17),
+            isAllDay: false,
+            timeZoneIdentifier: nil,
+            timeSemantics: .floating(start: civilStart, end: civilEnd),
+            isRecurring: true,
+            occurrenceDate: date(2026, 7, 10, 16),
+            occurrenceLocalComponents: civilStart,
+            isDetached: false,
+            isReadOnly: false,
+            isInvitation: false,
+            hasAttendees: false,
+            originalNotes: nil,
+            recurrence: .basic(BasicRecurrenceRule(frequency: .weekly))
+        )
+        let query = CalendarEventLookupQuery(
+            eventIdentifier: candidate.eventIdentifier,
+            calendarItemIdentifier: candidate.calendarItemIdentifier,
+            calendarItemExternalIdentifier: candidate.calendarItemExternalIdentifier,
+            calendarIdentifier: candidate.calendarIdentifier,
+            occurrence: .floating(civilStart),
+            searchAnchors: [candidate.startDate],
+            lastKnown: CalendarEventLookupSnapshot(
+                calendarTitle: candidate.calendarTitle,
+                sourceTitle: candidate.sourceTitle,
+                title: candidate.title,
+                location: nil,
+                startDate: candidate.startDate,
+                endDate: candidate.endDate,
+                isAllDay: false,
+                timeSemantics: candidate.timeSemantics
+            )
+        )
+
+        XCTAssertTrue(provider.lookupOccurrenceMatches(candidate, query: query))
+    }
+
+    func testDedicatedLookupRecurringSeedInAnotherCalendarIsInconclusive() throws {
+        let provider = EventKitProvider(eventStore: EKEventStore())
+        let occurrence = date(2026, 7, 10, 9)
+        let original = makeEvent(
+            id: "cross-calendar-series",
+            isRecurring: true,
+            startDate: occurrence,
+            occurrenceDate: occurrence
+        )
+        let query = try CalendarEventLookupQuery(event: original)
+        let firstSeriesOccurrenceInAnotherCalendar = makeEvent(
+            id: original.id,
+            isRecurring: true,
+            startDate: date(2026, 7, 17, 9),
+            occurrenceDate: date(2026, 7, 17, 9),
+            calendarIdentifier: "destination-calendar"
+        )
+
+        XCTAssertFalse(provider.lookupOccurrenceMatches(
+            firstSeriesOccurrenceInAnotherCalendar,
+            query: query
+        ))
+        XCTAssertEqual(
+            provider.lookupStrongIdentifierMismatchIssue(
+                firstSeriesOccurrenceInAnotherCalendar,
+                query: query
+            ),
+            .recurringOccurrenceUnavailable
+        )
+        XCTAssertEqual(
+            provider.lookupTerminalResult(
+                strongIdentifierMismatchIssue:
+                    .recurringOccurrenceUnavailable,
+                savedCalendarIsAvailable: true
+            ),
+            .inconclusive(.recurringOccurrenceUnavailable)
+        )
+    }
+
+    func testDedicatedLookupShapeMismatchIsInconclusiveButNoSeedIsNotFound() throws {
+        let provider = EventKitProvider(eventStore: EKEventStore())
+        let original = makeEvent(
+            id: "single-became-recurring",
+            startDate: date(2026, 7, 10, 9)
+        )
+        let query = try CalendarEventLookupQuery(event: original)
+        let currentRecurringItem = makeEvent(
+            id: original.id,
+            isRecurring: true,
+            startDate: date(2026, 7, 12, 14),
+            occurrenceDate: date(2026, 7, 12, 14)
+        )
+
+        XCTAssertFalse(provider.lookupOccurrenceMatches(
+            currentRecurringItem,
+            query: query
+        ))
+        XCTAssertEqual(
+            provider.lookupStrongIdentifierMismatchIssue(
+                currentRecurringItem,
+                query: query
+            ),
+            .strongIdentifierOccurrenceMismatch
+        )
+        XCTAssertEqual(
+            provider.lookupTerminalResult(
+                strongIdentifierMismatchIssue:
+                    .strongIdentifierOccurrenceMismatch,
+                savedCalendarIsAvailable: true
+            ),
+            .inconclusive(.strongIdentifierOccurrenceMismatch)
+        )
+        XCTAssertEqual(
+            provider.lookupTerminalResult(
+                strongIdentifierMismatchIssue: nil,
+                savedCalendarIsAvailable: true
+            ),
+            .notFound
+        )
+    }
+
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -1284,7 +1475,8 @@ final class CalendarEventEditingTests: XCTestCase {
         recurrence: CalendarEventRecurrence? = nil,
         startDate: Date? = nil,
         occurrenceDate: Date? = nil,
-        isDetached: Bool = false
+        isDetached: Bool = false,
+        calendarIdentifier: String? = nil
     ) -> DisplayEvent {
         let start = startDate ?? date(2026, 7, 10, 9)
         let recurrence = recurrence ?? (isRecurring
@@ -1298,7 +1490,7 @@ final class CalendarEventEditingTests: XCTestCase {
             eventIdentifier: "event-\(id)",
             calendarItemIdentifier: "item-\(id)",
             calendarItemExternalIdentifier: "external-\(id)",
-            calendarIdentifier: writableExchangeCalendar.id,
+            calendarIdentifier: calendarIdentifier ?? writableExchangeCalendar.id,
             calendarTitle: writableExchangeCalendar.title,
             sourceTitle: writableExchangeCalendar.sourceTitle,
             accountType: .exchange,
@@ -1401,6 +1593,9 @@ private final class DefaultScopedCalendarProviderSpy: CalendarProviding {
     func requestFullAccess() async throws -> Bool { true }
     func listCalendars() throws -> [CalendarSource] { [] }
     func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] { [] }
+    func lookupEvent(
+        _ query: CalendarEventLookupQuery
+    ) throws -> CalendarEventLookupResult { .notFound }
     func defaultCalendarIdentifierForNewEvents() -> String? { nil }
 
     func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent {

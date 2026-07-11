@@ -7,6 +7,11 @@ enum EventMutationContext: Equatable {
     case confirmationRequired(contextIDs: [String])
 }
 
+struct LinkedEventLookupTarget: Equatable {
+    let brief: EventBriefSnapshot
+    let query: CalendarEventLookupQuery
+}
+
 enum EventChangeLogError: Error, Equatable {
     case missingChange(String)
     case changeContextMismatch(
@@ -145,6 +150,230 @@ final class ContextStore {
                 contextID: contextID,
                 link: link
             )
+        }
+    }
+
+    func linkedEventLookupTarget(
+        contextID: String
+    ) throws -> LinkedEventLookupTarget {
+        try database.read { db in
+            guard let brief = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            return LinkedEventLookupTarget(
+                brief: brief,
+                query: try brief.link.calendarEventLookupQuery()
+            )
+        }
+    }
+
+    func fetchRecoveryBriefs() throws -> [EventBriefSnapshot] {
+        try eventContexts.fetchAllBriefs()
+    }
+
+    @discardableResult
+    func markLinkedEventMissing(
+        contextID: String
+    ) throws -> EventBriefSnapshot {
+        try database.write { db in
+            try eventContexts.markMissing(contextID: contextID, in: db)
+        }
+    }
+
+    @discardableResult
+    func refreshStrongLookup(
+        contextID: String,
+        event: DisplayEvent,
+        at date: Date,
+        calendar: Calendar
+    ) throws -> EventBriefSnapshot {
+        try database.write { db in
+            guard let link = try eventContexts.fetchLink(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            guard link.linkStatus == .active || link.linkStatus == .missing else {
+                throw ContextStoreError.invalidEventLinkTransition
+            }
+            guard try eventContexts.updateSnapshot(
+                contextID: contextID,
+                event: event,
+                notes: nil,
+                in: db
+            ) != nil else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            if var context = try EventContext.fetchOne(db, key: contextID),
+               context.lifecycleStatus == .cancelled {
+                context.lifecycleStatus = .scheduled
+                context.updatedAt = date
+                try context.update(db)
+            }
+            _ = try eventContexts.reconcileTemporalLifecycle(
+                at: date,
+                calendar: calendar,
+                in: db
+            )
+            guard let brief = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            return brief
+        }
+    }
+
+    @discardableResult
+    func markCalendarEventCancelled(
+        contextID: String,
+        event: DisplayEvent,
+        at date: Date
+    ) throws -> EventBriefSnapshot {
+        try database.write { db in
+            guard let link = try eventContexts.fetchLink(
+                contextID: contextID,
+                in: db
+            ), link.linkStatus == .active || link.linkStatus == .missing else {
+                throw ContextStoreError.invalidEventLinkTransition
+            }
+            guard try eventContexts.updateSnapshot(
+                contextID: contextID,
+                event: event,
+                notes: nil,
+                in: db
+            ) != nil,
+            var context = try EventContext.fetchOne(db, key: contextID) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            context.lifecycleStatus = .cancelled
+            context.updatedAt = date
+            try context.update(db)
+            guard let brief = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            return brief
+        }
+    }
+
+    @discardableResult
+    func keepLocalBriefAsOrphan(
+        contextID: String
+    ) throws -> EventBriefSnapshot {
+        try database.write { db in
+            try eventContexts.keepAsOrphan(contextID: contextID, in: db)
+        }
+    }
+
+    @discardableResult
+    func relinkLocalBrief(
+        contextID: String,
+        to event: DisplayEvent,
+        expectedLink: EventLink,
+        calendarStatusIsCancelled: Bool = false,
+        at date: Date,
+        calendar: Calendar
+    ) throws -> EventBriefSnapshot {
+        try database.write { db in
+            guard EventIdentityFingerprint.firstNonEmpty(
+                event.eventIdentifier,
+                event.calendarItemIdentifier,
+                event.calendarItemExternalIdentifier
+            ) != nil else {
+                throw CalendarEventLookupError.missingStrongIdentifier
+            }
+            guard let current = try eventContexts.fetchBrief(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            guard current.link == expectedLink else {
+                throw ContextStoreError.invalidEventLinkTransition
+            }
+            switch try eventContexts.resolve(event: event, in: db) {
+            case let .linked(existingContextID, _):
+                guard existingContextID == contextID else {
+                    throw ContextStoreError.eventAlreadyLinked(existingContextID)
+                }
+            case let .candidate(contextIDs, _),
+                 let .ambiguous(contextIDs, _):
+                let otherContextIDs = contextIDs.filter { $0 != contextID }
+                guard otherContextIDs.isEmpty else {
+                    throw ContextStoreError.identityConfirmationRequired(
+                        otherContextIDs
+                    )
+                }
+            case .notFound:
+                break
+            }
+
+            let before = try EventChangeSnapshot(link: current.link)
+            var relinked = try eventContexts.relink(
+                contextID: contextID,
+                to: event,
+                at: date,
+                calendar: calendar,
+                in: db
+            )
+            if calendarStatusIsCancelled,
+               var context = try EventContext.fetchOne(db, key: contextID) {
+                context.lifecycleStatus = .cancelled
+                context.updatedAt = date
+                try context.update(db)
+                guard let refreshed = try eventContexts.fetchBrief(
+                    contextID: contextID,
+                    in: db
+                ) else {
+                    throw ContextStoreError.missingContext(contextID)
+                }
+                relinked = refreshed
+            }
+            let after = try EventChangeSnapshot(event: event)
+            try db.execute(
+                sql: """
+                    UPDATE event_change_log
+                    SET undo_state = 'superseded'
+                    WHERE context_id = ? AND undo_state = 'available'
+                    """,
+                arguments: [contextID]
+            )
+            let record = try makeChangeRecord(
+                contextID: contextID,
+                changeType: .relinked,
+                scope: event.isRecurring ? .thisEvent : .single,
+                before: before,
+                after: after,
+                undoState: .unavailable,
+                undoneAt: nil,
+                undoOfChangeID: nil,
+                createdAt: date
+            )
+            try record.insert(db)
+            return relinked
+        }
+    }
+
+    func deleteLocalBrief(contextID: String) throws {
+        try database.write { db in
+            guard let link = try eventContexts.fetchLink(
+                contextID: contextID,
+                in: db
+            ) else {
+                throw ContextStoreError.missingContext(contextID)
+            }
+            guard link.linkStatus == .missing || link.linkStatus == .orphaned else {
+                throw ContextStoreError.invalidEventLinkTransition
+            }
+            try eventContexts.delete(contextID: contextID, in: db)
         }
     }
 

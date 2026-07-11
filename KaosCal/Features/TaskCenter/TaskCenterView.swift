@@ -114,6 +114,13 @@ struct TaskCenterView: View {
     private func loadedContent(_ items: [TaskCenterItem]) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 18) {
+                if !appState.recoveryBriefs.isEmpty {
+                    RecoveryBriefSection(
+                        appState: appState,
+                        briefs: appState.recoveryBriefs
+                    )
+                }
+
                 if appState.selectedTaskFilter == .today
                     || appState.selectedTaskFilter == .upcoming {
                     PersonalTaskComposer(
@@ -236,6 +243,85 @@ struct TaskCenterView: View {
 private struct TaskCenterGroup {
     let title: String
     let items: [TaskCenterItem]
+}
+
+private struct RecoveryBriefSection: View {
+    @ObservedObject var appState: AppState
+    let briefs: [EventBriefSnapshot]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("Local Event Briefs")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            VStack(spacing: 0) {
+                ForEach(briefs, id: \.context.id) { brief in
+                    Button {
+                        Task {
+                            await appState.openOriginalEvent(
+                                contextID: brief.context.id
+                            )
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: recoveryIcon(
+                                brief.link.linkStatus
+                            ))
+                                .foregroundStyle(KaosCalTheme.accent)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(brief.context.titleSnapshot)
+                                    .font(.body.weight(.medium))
+                                Text(
+                                    recoveryStatus(brief.link.linkStatus)
+                                        + " · \(brief.tasks.count) tasks"
+                                        + (brief.context.notes.isEmpty ? "" : " · Notes")
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text("Review")
+                                .font(.caption.weight(.semibold))
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                        }
+                        .padding(12)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier(
+                        "taskCenter.recoveryBrief.\(brief.context.id)"
+                    )
+                    if brief.context.id != briefs.last?.context.id {
+                        Divider().padding(.leading, 38)
+                    }
+                }
+            }
+            .background(.background.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(KaosCalTheme.subtleDivider)
+            }
+        }
+    }
+
+    private func recoveryStatus(_ status: EventLinkStatus) -> String {
+        switch status {
+        case .active: "Linked"
+        case .missing: "Original not found yet"
+        case .orphaned: "Local orphan"
+        }
+    }
+
+    private func recoveryIcon(_ status: EventLinkStatus) -> String {
+        switch status {
+        case .active: "link"
+        case .missing: "questionmark.circle"
+        case .orphaned: "archivebox"
+        }
+    }
 }
 
 private struct PersonalTaskComposer: View {
@@ -455,14 +541,15 @@ private struct TaskCenterRow: View {
                 }
             } label: {
                 Label(
-                    "\(section.shortTitle) · \(eventTitle) · "
+                    eventLinkPrefix
+                        + "\(section.shortTitle) · \(eventTitle) · "
                         + "\(eventTimeText(start: eventStart, end: eventEnd, isAllDay: isAllDay)) · "
                         + "\(calendarTitle) · \(sourceTitle)",
                     systemImage: "calendar"
                 )
             }
             .buttonStyle(.plain)
-            .help("Open original event")
+            .help(eventSourceHelp)
         case .personal:
             Label("Personal · Local", systemImage: "person.crop.circle")
         }
@@ -472,6 +559,22 @@ private struct TaskCenterRow: View {
         guard !item.isCompleted else { return false }
         if case .personal = item.source { return true }
         return false
+    }
+
+    private var eventLinkPrefix: String {
+        switch item.eventLinkStatus {
+        case .missing: "Missing · "
+        case .orphaned: "Orphan · "
+        case .active, .none: ""
+        }
+    }
+
+    private var eventSourceHelp: String {
+        switch item.eventLinkStatus {
+        case .missing: "Review the missing original event"
+        case .orphaned: "Review the local orphan Event Brief"
+        case .active, .none: "Open original event"
+        }
     }
 
     private var personalDueEditor: some View {

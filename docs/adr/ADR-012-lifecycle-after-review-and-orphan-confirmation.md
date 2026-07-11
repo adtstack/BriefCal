@@ -2,6 +2,7 @@
 
 > 상태: Accepted
 > 날짜: 2026-07-11
+> 구현 상태: Phase 7A/7B 완료, Phase 7C 잠금 유지
 
 ## 배경
 
@@ -36,24 +37,58 @@ Event Brief schema에는 `scheduled`, `completed`, `cancelled`, `orphaned`와
 
 ### Phase 7B: missing/orphan 확인
 
-- 일반 구간 fetch에서 한 번 보이지 않았다는 사실은 `orphaned`나
-  `cancelled`의 근거가 아니다.
-- 전용 lookup은 강한 event/item/external identifier와 반복 occurrence의
-  civil/instant anchor를 함께 사용해야 한다.
-- 첫 전용 lookup의 `notFound`는 link를 `missing`으로만 표시한다.
-- 이미 missing인 상태에서 사용자가 명시적으로 다시 확인한 lookup도
-  `notFound`일 때만 orphan 보관 확인을 제공한다.
-- 권한·provider·동기화 오류는 확인 횟수로 세지 않는다. weak/ambiguous
-  candidate는 자동 연결하지 않는다.
+- 일반 구간 fetch에서 한 번 보이지 않았다는 사실은 상태 전이나 확인 횟수의
+  근거가 아니며 `missing`, `orphaned`, `cancelled` 중 어느 것도 만들지 않는다.
+- 사용자가 원본 열기를 명시적으로 요청했을 때 저장 link로 만든 전용 lookup을
+  실행한다. query는 강한 event/item/external identifier와 반복 occurrence의
+  zoned instant 또는 all-day/floating civil anchor를 함께 가진다.
+- active link에 대한 첫 명시적 전용 lookup의 `notFound`만 link를
+  `missing`으로 바꾼다. context lifecycle, 마지막 성공 snapshot,
+  `last_seen_at`, local notes/tasks는 유지한다.
+- 이미 missing인 상태에서 사용자가 `Recheck`를 명시적으로 실행하고 그 lookup도
+  `notFound`일 때만 orphan 보관 확인을 제공한다. 두 번째 `notFound` 자체는
+  아직 `orphaned`를 저장하지 않는다.
+- 권한·provider 오류, candidate, ambiguous, calendar unavailable, 잘못된 저장
+  link와 반복 occurrence를 안전하게 확정하지 못한 inconclusive 결과는 확인
+  횟수로 세지 않고 상태를 바꾸지 않는다.
+- 어느 calendar에서든 강한 identifier seed가 보이지만 저장한 recurrence shape나
+  exact occurrence anchor가 확인되지 않으면 `notFound`가 아니라
+  `strongIdentifierOccurrenceMismatch` 또는 `recurringOccurrenceUnavailable`
+  inconclusive로 끝낸다. 같은 series의 sibling occurrence를 자동 선택하지 않는다.
+- EventKit의 first-occurrence identifier seed와 bounded search는 살아 있는 series에서
+  멀리 이동한 detached occurrence와 삭제된 occurrence를 확실히 구분하지 못한다.
+  이 경우 Phase 7B는 자동 missing/orphan 확인을 주장하지 않고 local data를 그대로
+  둔 채 manual exact-occurrence relink만 제공한다.
+- 유일한 강한 `.found`는 missing link를 active로 복구하고 snapshot과 시간
+  lifecycle을 갱신한다. EventKit의 명시적 canceled status는 부재가 아니라
+  cancellation 증거이므로 link는 active로 유지하고 context를 `cancelled`로
+  표시한다. 이후 non-cancelled `.found`가 확인되면 `cancelled`를 해제하고 현재
+  종료 시각에서 `scheduled`/`completed`를 다시 계산한다. 이 provider 관찰은
+  Phase 7C의 사용자 원본 삭제가 아니므로 `cancelled` change log를 만들지 않는다.
 - `Keep as orphan`, 명시적 후보 `Relink`, `Delete local Brief`는 서로 다른
-  사용자 명령이다. local 삭제는 EventKit 삭제를 호출하지 않는다.
+  사용자 명령이다. Keep은 context/link를 함께 orphaned로 만들고 local data를
+  보존한다. local 삭제는 missing/orphaned Brief의 SQLite context만 cascade
+  삭제하며 EventKit create/update/delete를 호출하지 않는다.
+- 후보 Relink는 사용자가 고른 event를 provider에서 한 번 더 occurrence-aware
+  strong lookup해 유일한 `.found` 또는 `.cancelled`임을 확인한다. 그 뒤 선택
+  시작 때의 `EventLink`와 현재 row가 완전히 같은지 expected-link CAS로 검사하고,
+  strong identifier·다른 context 충돌도 확인한다. 통과하면 link snapshot,
+  lifecycle, 이전 available Undo supersede와 `relinked` log append를 한 SQLite
+  transaction에서 수행하며 local notes/tasks는 보존한다. 최종 검증 결과가
+  `.cancelled`인 후보는 relink 후 lifecycle도 `cancelled`로 유지한다.
+- relink의 before log는 v1 `event_links`에 저장된 마지막-known 값으로 만든다.
+  v1은 원본 EventKit notes를 저장하지 않았으므로 `before.originalNotes`는
+  `nil`(unavailable)이다. 이 빈자리에 KaosCal local notes를 대입하지 않는다.
 
-Phase 7B를 열기 전에 `CalendarProviding`에 저장 link로부터 만든 전용 lookup
-query/result를 추가한다. 현재의 부분 구간 `fetchEvents`만으로 자동 orphan
-전이를 구현하지 않는다.
+위 선행 결정에 따라 `CalendarProviding`에 저장 link 또는 최종 선택 event에서
+만드는 `CalendarEventLookupQuery`와 typed result를 추가했다. Phase 7B는 기존
+v1/v2 status, snapshot, foreign key와 `relinked` change type을 재사용하므로 schema
+migration을 추가하지 않았다.
 
 ### Phase 7C: 연결된 원본 삭제
 
+- Phase 7B 완료 뒤에도 linked original delete는 잠금 상태이며 아래 계약은 아직
+  구현을 여는 조건이다.
 - linked original delete는 notes와 section별 task 영향을 먼저 보여 준 뒤
   별도 Confirm을 요구한다.
 - 성공한 EventKit 삭제는 context를 `cancelled`, link를 `orphaned`로 바꾸되
@@ -67,7 +102,7 @@ query/result를 추가한다. 현재의 부분 구간 `fetchEvents`만으로 자
 ## 결과
 
 Phase 7A는 Exchange 원본을 쓰지 않고도 종료 후 작업 흐름을 제공한다.
-Phase 7B/C는 조회 누락을 삭제로 오인하지 않으며, 원본 일정과 local Brief의
-삭제 권한을 분리한다. schema 변경은 필요 없지만 7B/C 구현에는 전용 provider
-lookup, orphan review UI, 저장 link 기반 change snapshot과 별도 회귀 검증이
-필요하다.
+완료된 Phase 7B는 조회 누락을 삭제로 오인하지 않고 원본 일정과 local Brief의
+삭제 권한을 분리한다. 전용 lookup, 두 단계 notFound, 보수적 반복 판정,
+orphan review, 검증된 relink와 local-only delete는 schema 변경 없이 기존 v1/v2
+저장 계약 위에 구현했다. Phase 7C의 linked original delete만 계속 잠겨 있다.

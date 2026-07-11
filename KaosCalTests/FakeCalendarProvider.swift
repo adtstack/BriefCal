@@ -15,6 +15,10 @@ final class FakeCalendarProvider: CalendarProviding {
     var calendars: [CalendarSource] = []
     var events: [DisplayEvent] = []
     var eventsForInterval: ((DateInterval) -> [DisplayEvent])?
+    var lookupResult: CalendarEventLookupResult?
+    var lookupEventHandler: ((
+        CalendarEventLookupQuery
+    ) throws -> CalendarEventLookupResult)?
     var error: Error?
     var defaultNewEventCalendarIdentifier: String?
     var createEventHandler: ((CalendarEventDraft) throws -> DisplayEvent)?
@@ -32,10 +36,12 @@ final class FakeCalendarProvider: CalendarProviding {
     private(set) var requestCallCount = 0
     private(set) var listCallCount = 0
     private(set) var fetchCallCount = 0
+    private(set) var lookupCallCount = 0
     private(set) var createCallCount = 0
     private(set) var updateCallCount = 0
     private(set) var deleteCallCount = 0
     private(set) var lastFetchInterval: DateInterval?
+    private(set) var lastLookupQuery: CalendarEventLookupQuery?
     private(set) var lastCreatedDraft: CalendarEventDraft?
     private(set) var lastUpdatedEvent: DisplayEvent?
     private(set) var lastUpdatedDraft: CalendarEventDraft?
@@ -65,6 +71,48 @@ final class FakeCalendarProvider: CalendarProviding {
         lastFetchInterval = interval
         if let error { throw error }
         return eventsForInterval?(interval) ?? events
+    }
+
+    func lookupEvent(
+        _ query: CalendarEventLookupQuery
+    ) throws -> CalendarEventLookupResult {
+        lookupCallCount += 1
+        lastLookupQuery = query
+        if let error { throw error }
+        if let lookupEventHandler {
+            return try lookupEventHandler(query)
+        }
+        if let lookupResult { return lookupResult }
+
+        var candidates = events
+        if let eventsForInterval {
+            for anchor in query.searchAnchors {
+                candidates.append(contentsOf: eventsForInterval(DateInterval(
+                    start: anchor.addingTimeInterval(-172_800),
+                    end: anchor.addingTimeInterval(172_800)
+                )))
+            }
+        }
+        var matches: [String: CalendarEventLookupMatch] = [:]
+        for event in candidates {
+            guard event.calendarIdentifier == query.calendarIdentifier,
+                  occurrenceMatches(event, query: query),
+                  let basis = lookupBasis(event, query: query) else {
+                continue
+            }
+            matches[event.id] = CalendarEventLookupMatch(
+                event: event,
+                basis: basis
+            )
+        }
+        let sorted = matches.values.sorted { $0.event.id < $1.event.id }
+        if sorted.count == 1, let match = sorted.first {
+            return .found(match)
+        }
+        if sorted.count > 1 {
+            return .ambiguous(sorted)
+        }
+        return .notFound
     }
 
     func defaultCalendarIdentifierForNewEvents() -> String? {
@@ -174,6 +222,57 @@ final class FakeCalendarProvider: CalendarProviding {
 
     func sendStoreChanged() {
         storeChangeHandler?()
+    }
+
+    private func lookupBasis(
+        _ event: DisplayEvent,
+        query: CalendarEventLookupQuery
+    ) -> CalendarEventLookupBasis? {
+        if let identifier = query.eventIdentifier,
+           !identifier.isEmpty,
+           event.eventIdentifier == identifier {
+            return .eventIdentifierAndOccurrence
+        }
+        if let identifier = query.calendarItemIdentifier,
+           !identifier.isEmpty,
+           event.calendarItemIdentifier == identifier {
+            return .calendarItemIdentifierAndOccurrence
+        }
+        if let identifier = query.calendarItemExternalIdentifier,
+           !identifier.isEmpty,
+           event.calendarItemExternalIdentifier == identifier {
+            return .externalIdentifierAndOccurrence
+        }
+        return nil
+    }
+
+    private func occurrenceMatches(
+        _ event: DisplayEvent,
+        query: CalendarEventLookupQuery
+    ) -> Bool {
+        switch query.occurrence {
+        case .single:
+            return !event.isRecurring
+        case let .instant(anchor):
+            guard event.isRecurring,
+                  case .zoned = event.timeSemantics else {
+                return false
+            }
+            return abs((event.occurrenceDate ?? event.startDate)
+                .timeIntervalSince(anchor)) < 0.001
+        case let .allDay(anchor):
+            guard event.isRecurring,
+                  case let .allDay(start, _) = event.timeSemantics else {
+                return false
+            }
+            return (event.occurrenceLocalComponents ?? start) == anchor
+        case let .floating(anchor):
+            guard event.isRecurring,
+                  case let .floating(start, _) = event.timeSemantics else {
+                return false
+            }
+            return (event.occurrenceLocalComponents ?? start) == anchor
+        }
     }
 
     private func makeEvent(

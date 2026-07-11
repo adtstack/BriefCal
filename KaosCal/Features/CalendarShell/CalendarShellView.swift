@@ -32,6 +32,17 @@ struct CalendarShellView: View {
         .sheet(item: eventEditorBinding) { session in
             EventEditorView(appState: appState, session: session)
         }
+        .sheet(item: linkedEventRecoveryBinding) { session in
+            LinkedEventRecoveryView(
+                appState: appState,
+                initialSession: session
+            )
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if appState.pendingRelinkContextID != nil {
+                RelinkSelectionBanner(appState: appState)
+            }
+        }
         .alert(
             "Calendar event change unavailable",
             isPresented: eventEditorAlertBinding
@@ -170,6 +181,332 @@ struct CalendarShellView: View {
                 }
             }
         )
+    }
+
+    private var linkedEventRecoveryBinding: Binding<LinkedEventRecoverySession?> {
+        Binding(
+            get: { appState.linkedEventRecoverySession },
+            set: { session in
+                if session == nil {
+                    appState.dismissLinkedEventRecovery()
+                }
+            }
+        )
+    }
+}
+
+private struct RelinkSelectionBanner: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Label(
+                "Relink Event Brief · Select the exact replacement event",
+                systemImage: "link.badge.plus"
+            )
+                .font(.callout.weight(.semibold))
+            Text("Use Day, Week, Agenda, or the mini month to find it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Cancel") {
+                appState.cancelRelinkSelection()
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(KaosCalTheme.accentSoft)
+        .overlay(alignment: .bottom) {
+            Divider()
+        }
+        .accessibilityIdentifier("relink.selectionBanner")
+    }
+}
+
+private struct LinkedEventRecoveryView: View {
+    @ObservedObject var appState: AppState
+    let initialSession: LinkedEventRecoverySession
+
+    @State private var confirmsLocalDeletion = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Label("Linked Event Recovery", systemImage: "link.badge.plus")
+                    .font(.title2.weight(.semibold))
+
+                briefSummary
+                Divider()
+                stageContent
+
+                if let error = appState.localOperationError {
+                    LocalOperationErrorView(
+                        message: error,
+                        dismiss: appState.clearLocalOperationError
+                    )
+                }
+            }
+            .padding(22)
+        }
+        .frame(width: 520)
+        .frame(maxHeight: 680)
+        .alert("Delete this local Event Brief?", isPresented: $confirmsLocalDeletion) {
+            Button("Delete Local Brief", role: .destructive) {
+                _ = appState.deleteRecoverableLocalBrief()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(localDeletionMessage)
+        }
+        .accessibilityIdentifier("linkedEventRecovery.content")
+    }
+
+    private var session: LinkedEventRecoverySession {
+        appState.linkedEventRecoverySession ?? initialSession
+    }
+
+    private var briefSummary: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(session.brief.context.titleSnapshot)
+                .font(.headline)
+            Text(
+                CalendarEventDateFormatting.abbreviatedDateTime(
+                    session.brief.link.startSnapshot,
+                    calendar: appState.calendar
+                )
+                    + " · " + session.brief.link.calendarTitleSnapshot
+                    + " · " + session.brief.link.sourceTitle
+            )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Label(
+                    session.brief.context.notes.isEmpty
+                        ? "No local notes"
+                        : "\(session.brief.context.notes.count) note characters",
+                    systemImage: "note.text"
+                )
+                Label(
+                    "\(session.brief.tasks.count) local tasks",
+                    systemImage: "checklist"
+                )
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            if !session.brief.context.notes.isEmpty {
+                Divider()
+                Text("Local notes")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(session.brief.context.notes)
+                    .font(.callout)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var stageContent: some View {
+        switch session.stage {
+        case .firstMissing:
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Original event not found yet", systemImage: "questionmark.circle")
+                    .font(.headline)
+                Text(
+                    "It may have moved or still be syncing. This first dedicated check only marked the link as missing; your local notes and tasks were kept."
+                )
+                .foregroundStyle(.secondary)
+                actionRow {
+                    Button("Not Now") {
+                        appState.dismissLinkedEventRecovery()
+                    }
+                    Button("Choose Event to Relink") {
+                        appState.beginSelectingRelinkCandidate()
+                    }
+                    Button("Check Again") {
+                        Task {
+                            await appState.recheckMissingLinkedEvent()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appState.isCheckingLinkedEvent)
+                }
+            }
+        case .orphanConfirmation:
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Still not found", systemImage: "exclamationmark.triangle")
+                    .font(.headline)
+                Text(
+                    "A separate check also found no strong occurrence match. Checking did not change your calendar. Choose what to do with the local Event Brief."
+                )
+                .foregroundStyle(.secondary)
+                recoveryActions(includeKeep: true)
+            }
+        case .orphaned:
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Kept as a local orphan", systemImage: "archivebox")
+                    .font(.headline)
+                Text(
+                    "The Brief is detached from automatic calendar matching. Its notes and tasks remain on this Mac until you relink or delete it."
+                )
+                .foregroundStyle(.secondary)
+                recoveryActions(includeKeep: false)
+            }
+        case .manualRelink:
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Choose the exact event manually", systemImage: "hand.tap")
+                    .font(.headline)
+                Text(
+                    "KaosCal could not prove the saved link safely, so it made no missing or orphan decision. Select the exact replacement occurrence yourself."
+                )
+                .foregroundStyle(.secondary)
+                actionRow {
+                    Button("Cancel") {
+                        appState.dismissLinkedEventRecovery()
+                    }
+                    Button("Choose Event") {
+                        appState.beginSelectingRelinkCandidate()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        case let .candidates(matches):
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Choose a matching event", systemImage: "list.bullet.rectangle")
+                    .font(.headline)
+                Text(
+                    "KaosCal found possible matches but will never select a weak or ambiguous candidate automatically."
+                )
+                .foregroundStyle(.secondary)
+                ForEach(matches) { match in
+                    Button {
+                        appState.chooseLinkedEventCandidate(match.event)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(match.event.title)
+                                    .font(.body.weight(.medium))
+                                Text(
+                                    CalendarEventDateFormatting.abbreviatedDateTime(
+                                        match.event.startDate,
+                                        calendar: appState.calendar
+                                    ) + " · " + match.event.calendarTitle
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                if match.isCancelled {
+                                    Label("Calendar reports cancelled", systemImage: "exclamationmark.triangle")
+                                        .font(.caption)
+                                        .foregroundStyle(.orange)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(10)
+                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                }
+                actionRow {
+                    Button("Cancel") {
+                        appState.dismissLinkedEventRecovery()
+                    }
+                    Button("Choose Another Event") {
+                        appState.beginSelectingRelinkCandidate()
+                    }
+                }
+            }
+        case let .confirmRelink(event):
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Confirm relink", systemImage: "link")
+                    .font(.headline)
+                Text(
+                    "Attach this local Brief to “\(event.title)” in \(event.calendarTitle)? Notes and tasks stay local; the calendar event is not modified."
+                )
+                .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 5) {
+                    Label(
+                        CalendarEventDateFormatting.inspectorText(
+                            for: event,
+                            calendar: appState.calendar
+                        ),
+                        systemImage: "clock"
+                    )
+                    Label(
+                        "\(event.sourceTitle) · \(event.calendarTitle)",
+                        systemImage: "calendar"
+                    )
+                    if let timeZoneIdentifier = event.timeZoneIdentifier {
+                        Label(timeZoneIdentifier, systemImage: "globe")
+                    }
+                    if event.isRecurring {
+                        Label(
+                            event.isDetached
+                                ? "Detached recurring occurrence"
+                                : "Recurring occurrence",
+                            systemImage: "repeat"
+                        )
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+                actionRow {
+                    Button("Cancel") {
+                        appState.dismissLinkedEventRecovery()
+                    }
+                    Button("Relink Brief") {
+                        Task {
+                            _ = await appState.confirmLinkedEventRelink()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(appState.isCheckingLinkedEvent)
+                }
+            }
+        }
+    }
+
+    private func recoveryActions(includeKeep: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if includeKeep {
+                Button("Keep as Orphan") {
+                    _ = appState.keepLinkedEventAsOrphan()
+                }
+            }
+            Button("Choose Event to Relink") {
+                appState.beginSelectingRelinkCandidate()
+            }
+            Button("Delete Local Brief", role: .destructive) {
+                confirmsLocalDeletion = true
+            }
+            Divider()
+            Button("Cancel") {
+                appState.dismissLinkedEventRecovery()
+            }
+        }
+    }
+
+    private func actionRow<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        HStack {
+            Spacer()
+            content()
+        }
+    }
+
+    private var localDeletionMessage: String {
+        "This permanently deletes \(session.brief.tasks.count) local tasks and "
+            + "\(session.brief.context.notes.count) note characters from this Mac. "
+            + "The calendar event and Exchange data will not be deleted or changed."
     }
 }
 
@@ -802,7 +1139,7 @@ private struct AgendaView: View {
     private var eventSelection: Binding<String?> {
         Binding(
             get: { appState.selectedEventID },
-            set: { appState.selectEvent($0) }
+            set: { appState.userSelectEvent($0) }
         )
     }
 }
@@ -1024,6 +1361,11 @@ private final class PreviewCalendarProvider: CalendarProviding {
     func requestFullAccess() async throws -> Bool { false }
     func listCalendars() throws -> [CalendarSource] { [] }
     func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] { [] }
+    func lookupEvent(
+        _ query: CalendarEventLookupQuery
+    ) throws -> CalendarEventLookupResult {
+        throw CalendarEventLookupError.fullAccessRequired
+    }
     func defaultCalendarIdentifierForNewEvents() -> String? { nil }
     func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent {
         throw CalendarEventWriteError.fullAccessRequired
