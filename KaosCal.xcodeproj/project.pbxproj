@@ -39,6 +39,7 @@
 		E10000000000000000000001 /* CalendarEventEditing.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000001 /* CalendarEventEditing.swift */; };
 		E10000000000000000000002 /* CalendarEventEditingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000002 /* CalendarEventEditingTests.swift */; };
 		E10000000000000000000003 /* EventEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000000000000000000003 /* EventEditorView.swift */; };
+		F10000000000000000000001 /* ManualEventKitQATests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000001 /* ManualEventKitQATests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -87,6 +88,7 @@
 		E20000000000000000000001 /* CalendarEventEditing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventEditing.swift; sourceTree = "<group>"; };
 		E20000000000000000000002 /* CalendarEventEditingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventEditingTests.swift; sourceTree = "<group>"; };
 		E20000000000000000000003 /* EventEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventEditorView.swift; sourceTree = "<group>"; };
+		F20000000000000000000001 /* ManualEventKitQATests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualEventKitQATests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -186,6 +188,7 @@
 				E20000000000000000000002 /* CalendarEventEditingTests.swift */,
 				C2000000000000000000000A /* ContextStoreTests.swift */,
 				D20000000000000000000003 /* LocalWorkspaceTests.swift */,
+				F20000000000000000000001 /* ManualEventKitQATests.swift */,
 				A2000000000000000000000E /* FakeCalendarProvider.swift */,
 			);
 			path = KaosCalTests;
@@ -394,6 +397,7 @@
 				E10000000000000000000002 /* CalendarEventEditingTests.swift in Sources */,
 				C1000000000000000000000A /* ContextStoreTests.swift in Sources */,
 				D10000000000000000000003 /* LocalWorkspaceTests.swift in Sources */,
+				F10000000000000000000001 /* ManualEventKitQATests.swift in Sources */,
 				A1000000000000000000000A /* FakeCalendarProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

@@ -26,6 +26,8 @@ KaosCal은 Exchange를 우선 검증해야 하지만, Microsoft OAuth·Graph·EW
 
 Phase 1에서 `KC-E1`~`KC-E6` fixture로 [Exchange Compatibility](../exchange-compatibility.md)를 채운다.
 
+Outlook connector는 서버 측 동작을 교차 확인하는 외부 QA oracle로만 사용할 수 있다. 앱 binary·runtime·동기화·자격 증명 의존성이 아니며, connector 결과는 서명 앱의 TCC full access, EventKit source·writable 상태와 Calendar.app round-trip gate를 대체하지 않는다. 따라서 v1의 EventKit-only 입출력 결정은 바뀌지 않는다.
+
 ## 근거
 
 - [Apple: requestFullAccessToEvents](https://developer.apple.com/documentation/eventkit/ekeventstore/requestfullaccesstoevents%28completion%3A%29)

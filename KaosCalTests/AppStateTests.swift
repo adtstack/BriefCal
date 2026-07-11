@@ -564,7 +564,7 @@ final class Phase6AppStateTests: XCTestCase {
             ),
             CalendarSource(
                 id: "destination",
-                title: "KAOS-TEST-DEST",
+                title: "일정",
                 sourceTitle: "Exchange QA",
                 accountType: .exchange,
                 isWritable: true,

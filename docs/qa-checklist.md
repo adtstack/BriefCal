@@ -8,12 +8,25 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ## 테스트 환경
 
 최소 환경:
+
 - 깨끗한 macOS 사용자 계정
 - macOS Calendar에 등록된 테스트 전용 Exchange Online 계정
+- 서버 QA source `KAOS-TEST`와 destination `일정`; 두 이름은 exact match로 선택
 - 수정 가능한 Exchange calendar와 공유 read-only Exchange calendar
 - 네트워크가 꺼진 상태
 - 권한을 거부한 상태
 - 앱 재설치 또는 DB 초기화 상태
+
+## 실계정 증거 경로와 fixture 안전
+
+| 경로 | 용도 | 통과로 간주하지 않는 항목 |
+| --- | --- | --- |
+| Outlook connector server | exact-name calendar와 서버 측 CRUD·시간대·지원 반복·cleanup 확인 | TCC, EventKit `.exchange`·writable, Calendar.app, KaosCal UI·local context |
+| 최신 서명 KaosCal/EventKit | full access, EventKit source·권한, Calendar.app round-trip, identifier·series 동작, local context 안전성 확인 | connector의 server pass만으로 자동 통과하지 않음 |
+
+서버 fixture는 고유 run marker, attendee·실제 연락처 없는 내용, 제한된 날짜 범위를 사용한다. 기존 일정은 수정·삭제하지 않으며 mutation 응답으로 받은 exact fixture만 cleanup한 뒤 source/destination을 두 번 다시 조회해 잔여 0건을 확인한다. raw calendar/event ID, account/email, owner와 source title은 저장소 문서·프로젝트 로그·commit에 복사하지 않는다.
+
+2026-07-11 run `20260711-1512-7C4E`의 서버 baseline은 source create-fetch-update, destination independent write, Pacific→Korea UTC normalization, finite weekly 5 occurrences, `this_instance` exception, exact 네 fixture cleanup과 세 번의 residue `0/0` 확인까지 pass다. `this_and_following`은 connector의 `originalStart` 누락으로 mutation 전에 fail해 재시도하지 않았고, actual cross-calendar move와 all-day는 각각 move API와 `isAllDay` create 입력이 없어 not tested다. MSA에서 search가 지원되지 않아 bounded list fallback을 사용했다. 이 baseline으로 Exchange Online이나 local EventKit pass를 선언하지 않는다.
 
 ## 수동 테스트 시나리오
 
@@ -35,7 +48,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 현재 증거 주의:
 - 사용자는 2026-07-11 macOS 전체 캘린더 접근을 허용했다고 보고했다.
-- 이 보고만으로 최신 서명 앱의 `Full calendar access`, EventKit fetch, `KAOS-TEST` source/writable 상태를 pass 처리하지 않는다. 실제 화면·빌드·fixture 결과를 별도로 기록한다.
+- 최신 서명 EventKit host는 authorization `notDetermined`였고 권한 prompt UI를 사용할 수 없어 local write 0회로 중단했다. 사용자 보고나 Outlook connector 결과만으로 `Full calendar access`, EventKit fetch, `.exchange` source와 `allowsContentModifications`를 pass 처리하지 않는다.
 
 ### 2. 권한 거부
 
@@ -70,7 +83,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ### 4. 새 일정 생성
 
 절차:
-1. `⌘N` 또는 toolbar plus로 `KAOS-TEST` 시간 일정을 만든다.
+1. `⌘N` 또는 toolbar plus로 source `KAOS-TEST`에 시간 일정을 만든다.
 2. 종일 일정도 포함 종료 날짜로 하나 만든다.
 3. Calendar.app을 열어 두 일정을 확인한다.
 4. 만든 일정의 원본 notes와 별도 Event Brief notes를 각각 저장한다.
@@ -216,9 +229,9 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ### 12-a. linked safe move와 change log (Phase 6 수동 gate)
 
 절차:
-1. 빈 writable `KAOS-TEST-DEST`와 attendee·recurrence가 없는 `KAOS-TEST` fixture를 사용한다.
+1. destination `일정`과 attendee·recurrence가 없는 source `KAOS-TEST` fixture를 사용한다. `일정`이 비어 있다고 가정하지 않는다.
 2. fixture에 non-sensitive Event Brief notes와 Before/During/After task를 각각 하나 이상 저장한다.
-3. target calendar를 `KAOS-TEST-DEST`로 바꾸고 impact confirmation을 연다.
+3. target calendar를 `일정`으로 바꾸고 impact confirmation을 연다.
 4. 기존/새 calendar·시간, 유지할 local notes/task 요약과 최근 change history를 확인한 뒤 Cancel한다.
 5. 다시 열어 Confirm하고 Calendar.app·KaosCal·Task Center를 확인한다.
 6. 같은 fixture에 외부 변경을 만든 뒤 남아 있는 Undo 또는 후속 write를 시도한다.

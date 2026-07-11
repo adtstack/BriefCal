@@ -13,7 +13,7 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 - Phase 3: **완료** — GRDB v1 migration, 앱 bootstrap, Event Brief/task repository, identity resolver, 파일 재열기·동시 저장, 54-test 전체 회귀, Release·서명 Debug 검증 완료
 - Phase 4: **구현·자동·빌드·서명·fixture 시각 검증 완료 / 수동 gate 대기** — notes autosave, event/personal task CRUD·완료·due, typed Task Center, strong-only 원본 탐색 구현; 전체 75 tests와 Release·서명 Debug·strict codesign 통과
 - Phase 5: **구현·자동·Release·ad-hoc 서명 checkpoint / 실제 EventKit·Exchange 수동 gate 대기** — attendee가 없는 비반복 writable 일정 create/update, local Brief 없는 일정 move/delete, all-day·floating/zoned·원본 notes 편집, stale/identity/rebind 보호 구현; 전체 97 tests와 strict codesign 통과
-- Phase 6: **구현·자동·Release·ad-hoc 서명 checkpoint / 실계정 검증 대기** — 명시적 반복 범위, 확인 뒤 write, linked safe move, additive change log, 좁은 session Undo와 안전 차단 경계를 구현했고 전체 121 tests와 strict codesign을 통과. `KAOS-TEST` EventKit/Calendar.app round-trip은 대기
+- Phase 6: **구현·자동·Release·ad-hoc 서명 checkpoint / Outlook 서버 부분 검증·로컬 EventKit gate 대기** — 명시적 반복 범위, 확인 뒤 write, linked safe move, additive change log, 좁은 session Undo와 안전 차단 경계를 구현했고 121-test checkpoint와 strict codesign을 통과. 후속 read-only gate 추가 뒤 현재 suite는 122 tests 중 1 intentional opt-in skip, 0 failures다. `KAOS-TEST`(source)·`일정`(destination)의 제한된 서버 round-trip과 cleanup은 확인했지만 EventKit/Calendar.app round-trip은 대기
 - Phase 7~10: 대기
 
 ## Phase 표
@@ -203,6 +203,7 @@ Definition of Done:
 - detached occurrence의 `이번 이후`, 모든 linked `이번 이후`, attendee meeting, complex recurrence의 future/rule 변경은 Calendar.app 또는 안전 안내로 보낸다. complex recurrence의 `이번 일정` ordinary-field patch는 rule을 보존하며 linked delete는 Phase 7까지 차단한다.
 - 전체 **121 tests, 0 failures, 0 unexpected**로 구현 자동 gate를 통과했다. 실제 `KAOS-TEST`의 Exchange source/writable·recurrence span·Calendar.app round-trip은 별도 수동 gate로 남아 있으며 현재 pass로 표시하지 않는다.
 - unsigned Release와 ad-hoc signed Debug build, strict codesign, app sandbox·Calendar·Debug get-task-allow entitlement, full-access usage description을 확인했다. signed app 실행은 sandbox DB에 `v2_event_change_log` additive migration을 정상 적용했지만 최신 창·실계정 EventKit 화면은 확인하지 못했다.
+- 2026-07-11 Outlook connector run은 `KAOS-TEST` source create/fetch/update, `일정` destination independent write, 시간대·유한 반복 `this_instance` 및 exact cleanup을 서버 경로에서 부분 통과했다. actual cross-calendar move·all-day는 도구 입력이 없어 미검증이고 `this_and_following`은 mutation 전에 거부됐다. 이 결과를 EventKit `.exchange`·TCC·Calendar.app 또는 Exchange Online 통과로 합치지 않는다.
 
 ## Phase 7: Lifecycle / After Review
 

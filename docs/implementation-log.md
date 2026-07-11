@@ -378,6 +378,54 @@
 - 문서 변경: README, ADR-011/index, phase plan, architecture, data model, design system, EventKit decisions, QA, Exchange compatibility, v1 scope, developer setup, implementation log
 - 결과: Phase 6 코드·자동·Release·ad-hoc 서명·production additive migration checkpoint를 통과했다. fake provider와 local DB 검증을 실제 Exchange 지원으로 해석하지 않으며, 다음 수동 gate는 정확한 최신 창에서 `KAOS-TEST`를 확인한 뒤에만 전용 fixture로 실행한다.
 
+## 2026-07-11 — Outlook 서버 QA와 로컬 EventKit TCC gate 분리
+
+- 관련 ADR: ADR-001, ADR-003, ADR-010, ADR-011
+- run: `20260711-1512-7C4E`
+- 테스트 캘린더 결정:
+  - source: `KAOS-TEST`
+  - destination: `일정`
+  - 사용자가 두 캘린더의 고유 QA fixture write를 허용했으며 새 destination calendar를 만들지 않는다.
+- 서버 preflight:
+  - 두 exact-name match가 각각 하나이고 editable·distinct·same owner임을 확인했다.
+  - mailbox time zone은 `Korea Standard Time`으로 반환됐다.
+  - connector가 MSA 제한을 보고했으므로 이 결과로 Exchange Online, 같은 Mac의 EventKit account 또는 `EKSourceType.exchange`를 판정하지 않는다.
+- Outlook connector 서버 결과:
+  - source nonrecurring fixture create → fetch → update: **pass**
+  - destination independent write: **pass**. source에서 destination으로 실제 move한 결과가 아니다.
+  - Pacific time zone fixture → Korea time zone update와 UTC normalization: **pass**
+  - 종료가 있는 weekly recurrence와 occurrence 5개 조회: **pass**
+  - `this_instance` exception: **pass**
+  - `this_and_following`: connector가 필수 `originalStart`를 제공하지 않아 mutation 전에 **fail**. 원본은 바뀌지 않았고 추측 입력으로 재시도하지 않았다.
+  - cross-calendar move: move API가 없어 **not tested**
+  - all-day: create schema에 `isAllDay` 입력이 없어 **not tested**
+  - search: MSA mailbox에서 지원되지 않아 bounded list fallback으로 exact run marker만 확인했다.
+- cleanup:
+  - run에서 만든 exact 네 fixture만 mutation 응답 식별자로 삭제: **pass**
+  - cleanup 직후 bounded list를 두 차례 실행하고 최종 작업 종료 전 지연 재확인을 한 번 더 수행했다. 세 번 모두 source/destination 잔여가 `0/0`이었다.
+  - 기존 calendar event는 수정·삭제하지 않았다.
+- 로컬 EventKit gate:
+  - 최신 서명 host의 authorization은 `notDetermined`였다.
+  - full-access 요청은 macOS prompt UI를 사용할 수 없어 중단했고 local fixture write는 0회였다.
+  - TCC full access, EventKit `.exchange` source, `allowsContentModifications`, Calendar.app round-trip, identifier churn·series split은 **blocked / pending**이다.
+- 증거·비밀정보 경계:
+  - password, MFA, token을 앱·환경변수·저장소에 넣지 않았다.
+  - raw calendar/event ID, account/email, owner와 source title은 저장소 문서·프로젝트 로그·commit에 복사하지 않았다. connector session의 응답 식별자는 exact cleanup에만 사용했다.
+- 재현 가능한 로컬 preflight:
+  - `ManualEventKitQATests/testManualExchangeGate`를 test target에 추가했다. 기본 실행은 provider 생성 전에 skip하고 `inspect` mode만 허용한다.
+  - 이 preflight는 access prompt와 write를 호출하지 않으며 report에서 raw calendar identifier와 source title을 제외한다.
+- 최종 자동·DB gate:
+  - 전체 **122 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**. skip은 위 read-only manual gate 하나다.
+  - 전체 test 직전·직후 direct/sandbox `kaoscal.sqlite`와 각각의 `-wal`/`-shm` 존재 여부, mtime, size, SHA-256을 비교했고 모두 불변이었다.
+  - 두 DB는 서로 같은 내용이며 migration 2개, 업무 table 0 rows, `integrity_check=ok`, foreign-key violation 0이었다.
+  - 과거 Phase 6 기록 뒤 direct DB의 mtime·size가 02:30 수동 host 실험 구간에 바뀐 사실은 확인했지만 원인은 소급 귀속할 수 없다. 내용 손상은 없으며, 이번 전후 불변 gate만 현재 증거로 사용한다.
+- 최종 Release gate:
+  - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO`인 ad-hoc Release build **pass**.
+  - `codesign --verify --deep --strict` **pass**, hardened runtime·app sandbox·Calendar entitlement와 full-access usage description 확인, `get-task-allow`·XCTest plug-in 없음.
+  - 현재 검증 artifact는 `/private/tmp/KaosCalFinalRelease`이며 이전 임시 artifact를 최종 증거로 재사용하지 않는다.
+- 변경 문서: README, phase plan, developer setup, Exchange compatibility, QA checklist, implementation log, ADR-001
+- 결과: 서버 측 제한된 CRUD·time-zone·recurrence·cleanup은 통과했다. 서버 pass와 로컬 EventKit pass는 별도이며, 실제 move·all-day·`this_and_following`과 EventKit/Calendar.app이 남아 있어 Exchange 지원 완료를 선언하지 않는다.
+
 ## 다음 항목 템플릿
 
 ```markdown
