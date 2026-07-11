@@ -653,7 +653,39 @@
 - 증거 경계:
   - 이 checkpoint의 delete provider는 fake이고 local 저장소는 test DB다. 실제 Exchange/EventKit fixture write, Calendar.app/Outlook 삭제 반영, recurring deletion exception과 process crash recovery는 실행하지 않았다.
   - 기존 live run `20260711-1626-B7D2`는 local Brief 없는 비반복 CRUD 증거일 뿐 Phase 7C linked delete pass가 아니다.
-  - Phase 7C Release·서명·safe bootstrap은 통과했지만 EventKit/Exchange write는 실행하지 않았다. live linked delete gate는 계속 별도다.
+  - 이 자동 checkpoint에서는 Phase 7C Release·서명·safe bootstrap만 통과했고 EventKit/Exchange write를 실행하지 않았다. 후속 live linked delete 결과는 바로 아래 별도 entry에 기록한다.
+
+## 2026-07-12 — Phase 7C linked original delete live Exchange gate
+
+- 관련 ADR: ADR-001, ADR-003, ADR-005, ADR-010, ADR-011, ADR-012
+- run·host:
+  - run marker/ID: `20260712-025027-KST`; Asia/Seoul
+  - exact signed Release: `/private/tmp/KaosCalPhase7CFinalRelease/Build/Products/Release/KaosCal.app`
+  - CDHash: `6b1da198f969cb033946fdb72b2b2e46392310f2`
+  - `Full calendar access`와 `KAOS-TEST`·`일정`의 exact-name `Exchange`·writable 표시를 확인했다.
+- nonrecurring fixture와 persistence:
+  - marker `KAOSCAL-P7C-LIVE-20260712-025027-KST-SINGLE`, 2026-07-12 15:00–16:00 KST, attendee 없음, recurrence 없음
+  - Notes 1건, Before/During/After task 각 1건을 만들었고 앱 종료·재실행 뒤 Notes와 총 3개 task가 유지됐다.
+  - 첫 alert와 final review에 `Scope: Single event`, Notes와 section별 task 수가 표시됐다. Back을 실행한 경로에는 provider/local write가 없었고 Outlook exact-marker count는 1로 유지됐다.
+- live delete 결과:
+  - final `Delete Original & Keep Brief`를 정확히 1회 실행했다.
+  - KaosCal Task Center가 `Original deleted · Local Brief kept`, Notes, 총 3개 task를 표시했다. Undo는 없고 Relink와 Delete Local Brief 진입점은 남았다.
+  - Outlook exact-marker count는 즉시 및 지연 확인에서 0이었고 Calendar.app exact title 검색은 `결과 없음`이었다.
+- local DB read-only 증거:
+  - sandbox DB를 `query_only`로 열어 `integrity_check`, foreign key, `v1_context_store`·`v2_event_change_log` migration을 확인했고 모두 통과했다.
+  - 대상 context/link는 1/1로 남아 lifecycle/status가 `cancelled`/`orphaned`였다. Notes가 존재하고 task는 3개, Before/During/After 각 1개였다.
+  - 정확히 1개의 `cancelled`/`single`/`unavailable` log, available Undo 0개, 유효하고 일치하는 before/after payload와 current-link-generation deletion provenance를 확인했다.
+  - 보존 대상 combined hash는 live delete 전후 동일했다. 실제 hash 값은 기록하지 않았다.
+- 자동 증거:
+  - 이 live run은 자동 결과를 대체하거나 새 suite로 계산하지 않는다. Phase 7C 신규 14 tests를 포함한 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**와 result bundle `/private/tmp/KaosCalPhase7CFinal-20260712-022700.xcresult`가 그대로 유효하다.
+- recurring fixture와 session lock:
+  - marker `KAOSCAL-P7C-LIVE-20260712-025027-KST-RECUR`를 attendee 없는 daily series로 서버에 만들었고 `seriesMaster`와 2026-07-12~14 occurrence 3개를 확인했다.
+  - KaosCal UI 상호작용 전에 macOS session이 자동 잠겼다. 따라서 recurring `thisEvent` live mutation은 **not tested**이며 제품 failure로 판정하지 않는다. automated recurrence tests의 pass도 변경하지 않는다.
+- cleanup·증거 경계:
+  - recurring exact series 전체를 Outlook에서 삭제했다. 서버 최종 residue는 single 0, recurring 0이다.
+  - single local Brief는 증거로 의도적으로 남겨 두었고 화면 잠금으로 UI-only cleanup을 완료하지 못했다. 다음 수동 세션에서 `Delete Local Brief`를 실행하고 EventKit 원본이 재생성되지 않음을 확인해야 한다.
+  - raw calendar/event ID, account/email, Notes·task 본문과 실제 combined hash는 기록하지 않았다. run에서 만든 exact fixture 외 기존 일정은 수정·삭제하지 않았다.
+- 결과: nonrecurring linked original delete의 exact Release, EventKit write, Calendar.app·Outlook 제거, local Brief/task 보존과 current-link-generation deletion provenance는 **pass**. recurring `thisEvent` mutation과 retained single local Brief cleanup은 session lock으로 **blocked / manual pending**이며 process crash recovery와 backend 종류도 계속 미판정이다.
 
 ## 다음 항목 템플릿
 
