@@ -63,6 +63,29 @@ enum LocalContextStoreState: Equatable {
     case failed(String)
 }
 
+enum LocalDataOperationState: Equatable {
+    case idle
+    case exporting
+    case importing
+    case resetting
+    case quarantined
+}
+
+typealias LocalDataImportOperation = @Sendable (
+    _ service: LocalDataBackupService,
+    _ archiveURL: URL,
+    _ automaticBackupDirectory: URL,
+    _ now: Date,
+    _ appVersion: String
+) throws -> LocalDataImportResult
+
+typealias LocalDataResetOperation = @Sendable (
+    _ service: LocalDataBackupService,
+    _ automaticBackupDirectory: URL,
+    _ now: Date,
+    _ appVersion: String
+) throws -> LocalDataResetResult
+
 enum EventBriefState: Equatable {
     case noSelection
     case unavailable
@@ -205,6 +228,32 @@ private enum EventMutationSafetyError: LocalizedError {
     }
 }
 
+private enum LocalDataMaintenanceError: LocalizedError {
+    case unavailable
+    case operationInProgress
+    case recoveryRequired(String)
+    case unsavedNotes
+    case interactionInProgress
+    case automaticBackupLocationUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .unavailable:
+            "KaosCal local data is unavailable, so this operation did not run."
+        case .operationInProgress:
+            "Another local data operation is already in progress."
+        case let .recoveryRequired(message):
+            message
+        case .unsavedNotes:
+            "KaosCal could not save every open notes draft. Retry the failed draft before backing up, importing, or resetting local data."
+        case .interactionInProgress:
+            "Finish or close the event editor, recovery review, relink check, or Undo operation before replacing local data."
+        case .automaticBackupLocationUnavailable:
+            "KaosCal could not determine a safe location for the automatic recovery backup. Nothing was changed."
+        }
+    }
+}
+
 private struct FailedNotesDraft {
     let text: String
     let message: String
@@ -223,6 +272,8 @@ final class AppState: ObservableObject {
     @Published private(set) var selectedCalendarSet: CalendarSetFilter = .all
     @Published private(set) var events: [DisplayEvent] = []
     @Published private(set) var localContextStoreState: LocalContextStoreState
+    @Published private(set) var localDataOperationState: LocalDataOperationState = .idle
+    @Published private(set) var localDataOperationMessage: String?
     @Published private(set) var eventBriefState: EventBriefState = .noSelection
     @Published private(set) var selectedEventNotes = ""
     @Published private(set) var notesSaveState: NotesSaveState = .idle
@@ -245,6 +296,8 @@ final class AppState: ObservableObject {
     let contextStore: ContextStore?
     private let now: () -> Date
     private let calendarProvider: CalendarProviding
+    private let localDataImportOperation: LocalDataImportOperation
+    private let localDataResetOperation: LocalDataResetOperation
     private var storeRefreshTask: Task<Void, Never>?
     private var rangeLoadTask: Task<Void, Never>?
     private var notesSaveTask: Task<Void, Never>?
@@ -253,6 +306,8 @@ final class AppState: ObservableObject {
     private var persistedEventNotes = ""
     private var failedNotesDrafts: [String: FailedNotesDraft] = [:]
     private var lastEventMutationUndoCandidate: CalendarEventUndoCandidate?
+    private var calendarRefreshDeferredByLocalDataOperation = false
+    private var localDataQuarantineMessage: String?
     private var duplicateCandidateIndex:
         [String: [CalendarDuplicateCandidate]] = [:]
 
@@ -261,7 +316,24 @@ final class AppState: ObservableObject {
         now: @escaping () -> Date = Date.init,
         calendarProvider: CalendarProviding? = nil,
         contextStore: ContextStore? = nil,
-        localContextStoreState: LocalContextStoreState = .unavailable
+        localContextStoreState: LocalContextStoreState = .unavailable,
+        localDataImportOperation: @escaping LocalDataImportOperation = {
+            service, archiveURL, automaticBackupDirectory, now, appVersion in
+            try service.importBackup(
+                from: archiveURL,
+                automaticBackupDirectory: automaticBackupDirectory,
+                now: now,
+                appVersion: appVersion
+            )
+        },
+        localDataResetOperation: @escaping LocalDataResetOperation = {
+            service, automaticBackupDirectory, now, appVersion in
+            try service.resetLocalData(
+                automaticBackupDirectory: automaticBackupDirectory,
+                now: now,
+                appVersion: appVersion
+            )
+        }
     ) {
         let calendarProvider = calendarProvider ?? EventKitProvider()
         self.calendar = calendar
@@ -269,6 +341,8 @@ final class AppState: ObservableObject {
         self.calendarProvider = calendarProvider
         self.contextStore = contextStore
         self.localContextStoreState = localContextStoreState
+        self.localDataImportOperation = localDataImportOperation
+        self.localDataResetOperation = localDataResetOperation
         calendarAuthorizationState = calendarProvider.authorizationState
         focusedDate = calendar.startOfDay(for: now())
 
@@ -286,6 +360,20 @@ final class AppState: ObservableObject {
     }
 
     var taskReferenceDate: Date { now() }
+
+    var localDataDatabaseURL: URL? {
+        contextStore?.localDataBackups.databaseURL
+    }
+
+    private var localDataMaintenanceBlockError: LocalDataMaintenanceError {
+        guard localDataOperationState == .quarantined else {
+            return .operationInProgress
+        }
+        return .recoveryRequired(
+            localDataQuarantineMessage
+                ?? "KaosCal local data is locked for this session after a failed rollback. Quit KaosCal before attempting recovery."
+        )
+    }
 
     var visibleDates: [Date] {
         let section = selectedSection ?? .week
@@ -380,6 +468,7 @@ final class AppState: ObservableObject {
     }
 
     func selectCalendarSet(_ filter: CalendarSetFilter) {
+        guard localDataOperationState == .idle else { return }
         guard selectedCalendarSet != filter else { return }
         flushPendingEventNotes()
         selectedCalendarSet = filter
@@ -421,6 +510,12 @@ final class AppState: ObservableObject {
         for source: CalendarSource
     ) -> Bool {
         localOperationError = nil
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard let contextStore else {
             localOperationError = "Local calendar role storage is unavailable. No calendar data was changed."
             return false
@@ -456,6 +551,7 @@ final class AppState: ObservableObject {
     }
 
     func selectDuplicateCandidate(_ candidate: CalendarDuplicateCandidate) {
+        guard localDataOperationState == .idle else { return }
         selectedCalendarSet = .all
         let range = CalendarEventDateFormatting.effectiveDateRange(
             for: candidate.event,
@@ -468,6 +564,7 @@ final class AppState: ObservableObject {
     }
 
     func selectEvent(_ id: String?) {
+        guard localDataOperationState == .idle else { return }
         let event = id.flatMap { requestedID in
             events.first { $0.id == requestedID }
         }
@@ -487,6 +584,7 @@ final class AppState: ObservableObject {
     }
 
     func userSelectEvent(_ id: String?) {
+        guard localDataOperationState == .idle else { return }
         selectEvent(id)
         guard let contextID = pendingRelinkContextID,
               let event = id.flatMap({ requestedID in
@@ -513,11 +611,13 @@ final class AppState: ObservableObject {
     }
 
     func reloadSelectedEventBrief() {
+        guard localDataOperationState == .idle else { return }
         flushPendingEventNotes()
         loadSelectedEventBrief()
     }
 
     func reviewSelectedEventRelinkCandidate(contextID: String) {
+        guard localDataOperationState == .idle else { return }
         guard let event = activeBriefEvent,
               let contextStore else {
             return
@@ -539,6 +639,7 @@ final class AppState: ObservableObject {
     }
 
     func updateSelectedEventNotes(_ notes: String) {
+        guard localDataOperationState == .idle else { return }
         guard let event = activeBriefEvent else { return }
         selectedEventNotes = notes
         notesSaveTask?.cancel()
@@ -582,6 +683,172 @@ final class AppState: ObservableObject {
 
     func clearLocalOperationError() {
         localOperationError = nil
+    }
+
+    func clearLocalDataOperationMessage() {
+        guard localDataOperationState != .quarantined else { return }
+        localDataOperationMessage = nil
+    }
+
+    @discardableResult
+    func exportLocalDataBackup(
+        to destinationURL: URL
+    ) async -> LocalDataExportResult? {
+        let service: LocalDataBackupService
+        do {
+            service = try beginLocalDataOperation(
+                .exporting,
+                replacesLocalData: false
+            )
+        } catch {
+            localDataOperationMessage = "Backup did not run. \(Self.message(for: error))"
+            return nil
+        }
+
+        let accessStarted = destinationURL
+            .startAccessingSecurityScopedResource()
+        defer {
+            if accessStarted {
+                destinationURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        do {
+            let operationDate = now()
+            let appVersion = Self.currentAppVersion
+            let result = try await Task.detached(priority: .userInitiated) {
+                try service.exportBackup(
+                    to: destinationURL,
+                    now: operationDate,
+                    appVersion: appVersion
+                )
+            }.value
+            endLocalDataOperation(reloadLocalProjections: false)
+            localDataOperationMessage = "Backup exported to \(result.archiveURL.path(percentEncoded: false)). The ZIP is not encrypted."
+            return result
+        } catch {
+            endLocalDataOperation(reloadLocalProjections: false)
+            localDataOperationMessage = "Backup failed. No new partial backup was committed; an existing destination, if any, was left unchanged. \(Self.message(for: error))"
+            return nil
+        }
+    }
+
+    @discardableResult
+    func importLocalDataBackup(
+        from archiveURL: URL
+    ) async -> LocalDataImportResult? {
+        let service: LocalDataBackupService
+        let automaticDirectory: URL
+        var operationBegan = false
+        do {
+            service = try beginLocalDataOperation(
+                .importing,
+                replacesLocalData: true
+            )
+            operationBegan = true
+            guard let directory = automaticBackupDirectory(for: service) else {
+                throw LocalDataMaintenanceError
+                    .automaticBackupLocationUnavailable
+            }
+            automaticDirectory = directory
+        } catch {
+            if operationBegan {
+                endLocalDataOperation(reloadLocalProjections: false)
+            }
+            localDataOperationMessage = "Import did not run. \(Self.message(for: error))"
+            return nil
+        }
+
+        let accessStarted = archiveURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessStarted {
+                archiveURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        do {
+            let operationDate = now()
+            let appVersion = Self.currentAppVersion
+            let importOperation = localDataImportOperation
+            let result = try await Task.detached(priority: .userInitiated) {
+                try importOperation(
+                    service,
+                    archiveURL,
+                    automaticDirectory,
+                    operationDate,
+                    appVersion
+                )
+            }.value
+            endLocalDataOperation(reloadLocalProjections: true)
+            localDataOperationMessage = "Backup imported. The previous local database was saved to \(result.automaticBackupURL.path(percentEncoded: false)). Calendar and Exchange events were not changed."
+            return result
+        } catch {
+            if Self.rollbackFailed(error) {
+                quarantineLocalData(
+                    after: "Import",
+                    automaticBackupDirectory: automaticDirectory,
+                    error: error
+                )
+                return nil
+            }
+            endLocalDataOperation(reloadLocalProjections: false)
+            localDataOperationMessage = "Import failed validation or restore. The active local database was kept or rolled back. \(Self.message(for: error))"
+            return nil
+        }
+    }
+
+    @discardableResult
+    func resetLocalData() async -> LocalDataResetResult? {
+        let service: LocalDataBackupService
+        let automaticDirectory: URL
+        var operationBegan = false
+        do {
+            service = try beginLocalDataOperation(
+                .resetting,
+                replacesLocalData: true
+            )
+            operationBegan = true
+            guard let directory = automaticBackupDirectory(for: service) else {
+                throw LocalDataMaintenanceError
+                    .automaticBackupLocationUnavailable
+            }
+            automaticDirectory = directory
+        } catch {
+            if operationBegan {
+                endLocalDataOperation(reloadLocalProjections: false)
+            }
+            localDataOperationMessage = "Reset did not run. \(Self.message(for: error))"
+            return nil
+        }
+
+        do {
+            let operationDate = now()
+            let appVersion = Self.currentAppVersion
+            let resetOperation = localDataResetOperation
+            let result = try await Task.detached(priority: .userInitiated) {
+                try resetOperation(
+                    service,
+                    automaticDirectory,
+                    operationDate,
+                    appVersion
+                )
+            }.value
+            endLocalDataOperation(reloadLocalProjections: true)
+            localDataOperationMessage = "Active KaosCal local data was reset. A recovery backup remains at \(result.automaticBackupURL.path(percentEncoded: false)). Calendar and Exchange events were not changed."
+            return result
+        } catch {
+            if Self.rollbackFailed(error) {
+                quarantineLocalData(
+                    after: "Reset",
+                    automaticBackupDirectory: automaticDirectory,
+                    error: error
+                )
+                return nil
+            }
+            endLocalDataOperation(reloadLocalProjections: false)
+            localDataOperationMessage = "Reset failed. The active local database was kept or rolled back. \(Self.message(for: error))"
+            return nil
+        }
     }
 
     func addSelectedEventTask(
@@ -804,6 +1071,12 @@ final class AppState: ObservableObject {
 
     func openOriginalEvent(contextID: String) async {
         localOperationError = nil
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return
+        }
         guard let contextStore else {
             localOperationError = "Local task storage is unavailable."
             return
@@ -861,6 +1134,12 @@ final class AppState: ObservableObject {
 
     func recheckMissingLinkedEvent() async {
         localOperationError = nil
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return
+        }
         guard let session = linkedEventRecoverySession,
               session.brief.link.linkStatus == .missing,
               let contextStore else {
@@ -909,6 +1188,7 @@ final class AppState: ObservableObject {
     }
 
     func beginSelectingRelinkCandidate() {
+        guard localDataOperationState == .idle else { return }
         guard let session = linkedEventRecoverySession else { return }
         pendingRelinkContextID = session.brief.context.id
         selectedCalendarSet = .all
@@ -926,6 +1206,7 @@ final class AppState: ObservableObject {
     }
 
     func chooseLinkedEventCandidate(_ event: DisplayEvent) {
+        guard localDataOperationState == .idle else { return }
         guard let session = linkedEventRecoverySession else { return }
         linkedEventRecoverySession = LinkedEventRecoverySession(
             brief: session.brief,
@@ -935,6 +1216,12 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func confirmLinkedEventRelink() async -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard let session = linkedEventRecoverySession,
               case let .confirmRelink(event) = session.stage,
               let contextStore else {
@@ -1001,6 +1288,12 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func keepLinkedEventAsOrphan() -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard let session = linkedEventRecoverySession,
               let contextStore else {
             return false
@@ -1021,6 +1314,12 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func deleteRecoverableLocalBrief() -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard let session = linkedEventRecoverySession,
               let contextStore else {
             return false
@@ -1044,6 +1343,7 @@ final class AppState: ObservableObject {
         target: LinkedEventLookupTarget,
         explicitRecheck: Bool
     ) async {
+        guard localDataOperationState == .idle else { return }
         guard let contextStore else { return }
         isCheckingLinkedEvent = true
         defer { isCheckingLinkedEvent = false }
@@ -1159,6 +1459,12 @@ final class AppState: ObservableObject {
     }
 
     func beginCreatingEvent() {
+        guard localDataOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return
+        }
         guard eventEditorSession == nil,
               eventEditorOperationState == .idle else {
             eventEditorError = Self.message(
@@ -1230,6 +1536,12 @@ final class AppState: ObservableObject {
     }
 
     func beginEditingSelectedEvent() {
+        guard localDataOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return
+        }
         guard eventEditorSession == nil,
               eventEditorOperationState == .idle else {
             eventEditorError = Self.message(
@@ -1331,6 +1643,12 @@ final class AppState: ObservableObject {
         _ draft: CalendarEventDraft,
         scope requestedScope: CalendarEventMutationScope?
     ) async -> Bool {
+        guard localDataOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard let session = eventEditorSession,
               eventEditorOperationState == .idle else { return false }
         guard pendingLinkedOriginalDeletion == nil else {
@@ -1420,6 +1738,12 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func confirmPendingEventMutation() async -> Bool {
+        guard localDataOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard pendingLinkedOriginalDeletion == nil else {
             eventEditorError = Self.message(
                 for: EventMutationSafetyError.confirmationUnavailable
@@ -1442,6 +1766,12 @@ final class AppState: ObservableObject {
     func prepareLinkedOriginalDeletion(
         scope requestedScope: CalendarEventMutationScope?
     ) -> Bool {
+        guard localDataOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard let session = eventEditorSession,
               case let .existing(original) = session.target,
               eventEditorOperationState == .idle else {
@@ -1498,6 +1828,12 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func confirmPendingLinkedOriginalDeletion() async -> Bool {
+        guard localDataOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard let preview = pendingLinkedOriginalDeletion,
               let session = eventEditorSession,
               case let .existing(original) = session.target,
@@ -1616,6 +1952,12 @@ final class AppState: ObservableObject {
     func deleteEventEditorTarget(
         scope requestedScope: CalendarEventMutationScope?
     ) async -> Bool {
+        guard localDataOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard let session = eventEditorSession,
               case let .existing(original) = session.target else {
             return false
@@ -1682,6 +2024,12 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func undoLastEventMutation() async -> Bool {
+        guard localDataOperationState == .idle else {
+            eventUndoError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         guard !isUndoingEventMutation,
               let candidate = lastEventMutationUndoCandidate,
               let contextStore else {
@@ -1932,6 +2280,7 @@ final class AppState: ObservableObject {
     }
 
     func loadCalendarStatus() async {
+        guard localDataOperationState == .idle else { return }
         calendarAuthorizationState = calendarProvider.authorizationState
         switch calendarAuthorizationState {
         case .notDetermined:
@@ -1949,6 +2298,7 @@ final class AppState: ObservableObject {
     }
 
     func requestCalendarAccess() async {
+        guard localDataOperationState == .idle else { return }
         calendarContentState = .loading
         do {
             let granted = try await calendarProvider.requestFullAccess()
@@ -1974,6 +2324,7 @@ final class AppState: ObservableObject {
     }
 
     func refreshCalendarData(in requestedInterval: DateInterval? = nil) async {
+        guard localDataOperationState == .idle else { return }
         if pendingEventMutation != nil
             || pendingLinkedOriginalDeletion != nil {
             pendingEventMutation = nil
@@ -2029,6 +2380,14 @@ final class AppState: ObservableObject {
     }
 
     private func scheduleStoreRefresh() {
+        guard localDataOperationState != .quarantined else {
+            calendarRefreshDeferredByLocalDataOperation = false
+            return
+        }
+        guard localDataOperationState == .idle else {
+            calendarRefreshDeferredByLocalDataOperation = true
+            return
+        }
         storeRefreshTask?.cancel()
         storeRefreshTask = Task { @MainActor [weak self] in
             do {
@@ -2069,6 +2428,7 @@ final class AppState: ObservableObject {
     }
 
     func refreshTaskCenter() {
+        guard localDataOperationState == .idle else { return }
         guard let contextStore else {
             taskCenterState = .unavailable
             recoveryBriefs = []
@@ -2211,6 +2571,7 @@ final class AppState: ObservableObject {
     }
 
     private func saveSelectedEventNotesNow() {
+        guard localDataOperationState == .idle else { return }
         guard let event = activeBriefEvent,
               let contextStore else {
             return
@@ -2271,6 +2632,12 @@ final class AppState: ObservableObject {
         _ operation: () throws -> Void
     ) -> Bool {
         localOperationError = nil
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
         flushPendingEventNotes()
         do {
             try operation()
@@ -2281,6 +2648,162 @@ final class AppState: ObservableObject {
             localOperationError = Self.message(for: error)
             return false
         }
+    }
+
+    private func beginLocalDataOperation(
+        _ operation: LocalDataOperationState,
+        replacesLocalData: Bool
+    ) throws -> LocalDataBackupService {
+        guard localDataOperationState == .idle else {
+            throw localDataMaintenanceBlockError
+        }
+        guard case .ready = localContextStoreState,
+              let contextStore,
+              contextStore.localDataBackups.databaseURL != nil else {
+            throw LocalDataMaintenanceError.unavailable
+        }
+
+        localDataOperationMessage = nil
+        flushPendingEventNotes()
+        guard failedNotesDrafts.isEmpty else {
+            throw LocalDataMaintenanceError.unsavedNotes
+        }
+        if case .failed = notesSaveState {
+            throw LocalDataMaintenanceError.unsavedNotes
+        }
+
+        guard eventEditorOperationState == .idle,
+              !isUndoingEventMutation,
+              !isCheckingLinkedEvent else {
+            throw LocalDataMaintenanceError.interactionInProgress
+        }
+
+        if replacesLocalData {
+            guard eventEditorSession == nil,
+                  pendingEventMutation == nil,
+                  pendingLinkedOriginalDeletion == nil,
+                  linkedEventRecoverySession == nil,
+                  pendingRelinkContextID == nil else {
+                throw LocalDataMaintenanceError.interactionInProgress
+            }
+        }
+
+        localDataOperationState = operation
+        notesSaveTask?.cancel()
+        notesSaveTask = nil
+        rangeLoadTask?.cancel()
+        rangeLoadTask = nil
+        storeRefreshTask?.cancel()
+        storeRefreshTask = nil
+        return contextStore.localDataBackups
+    }
+
+    private static func rollbackFailed(_ error: Error) -> Bool {
+        guard let backupError = error as? LocalDataBackupError else {
+            return false
+        }
+        switch backupError {
+        case .importFailed(_, false), .resetFailed(_, false):
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func quarantineLocalData(
+        after operation: String,
+        automaticBackupDirectory: URL,
+        error: Error
+    ) {
+        notesSaveTask?.cancel()
+        notesSaveTask = nil
+        rangeLoadTask?.cancel()
+        rangeLoadTask = nil
+        storeRefreshTask?.cancel()
+        storeRefreshTask = nil
+        calendarRefreshDeferredByLocalDataOperation = false
+        invalidateEventUndoCandidate()
+
+        let operationName = operation.lowercased()
+        let message = "\(operation) failed, and KaosCal could not restore the previous local database. Local data changes, calendar changes, and refresh are locked for this session. Quit KaosCal before recovery. The automatic pre-\(operationName) recovery ZIP is in \(automaticBackupDirectory.path(percentEncoded: false)). \(Self.message(for: error))"
+        localDataQuarantineMessage = message
+        localDataOperationMessage = message
+        localOperationError = message
+        eventEditorError = message
+        eventUndoError = message
+        localContextStoreState = .failed(message)
+        localDataOperationState = .quarantined
+    }
+
+    private func automaticBackupDirectory(
+        for service: LocalDataBackupService
+    ) -> URL? {
+        service.databaseURL?
+            .deletingLastPathComponent()
+            .appendingPathComponent("Backups", isDirectory: true)
+    }
+
+    private func endLocalDataOperation(
+        reloadLocalProjections: Bool
+    ) {
+        guard localDataOperationState != .quarantined else { return }
+        localDataOperationState = .idle
+        if reloadLocalProjections {
+            reloadLocalDataProjections()
+        }
+        scheduleVisiblePeriodLoadIfNeeded()
+
+        guard calendarRefreshDeferredByLocalDataOperation else { return }
+        calendarRefreshDeferredByLocalDataOperation = false
+        let interval = loadedEventInterval
+        Task { @MainActor [weak self] in
+            await self?.refreshCalendarData(in: interval)
+        }
+    }
+
+    private func reloadLocalDataProjections() {
+        notesSaveTask?.cancel()
+        notesSaveTask = nil
+        failedNotesDrafts.removeAll()
+        selectedEventNotes = ""
+        persistedEventNotes = ""
+        notesSaveState = .idle
+
+        eventEditorSession = nil
+        pendingEventMutation = nil
+        pendingLinkedOriginalDeletion = nil
+        eventEditorOperationState = .idle
+        eventEditorError = nil
+        invalidateEventUndoCandidate()
+        eventUndoError = nil
+        isUndoingEventMutation = false
+
+        linkedEventRecoverySession = nil
+        pendingRelinkContextID = nil
+        isCheckingLinkedEvent = false
+        recoveryBriefs = []
+        localOperationError = nil
+        localDataQuarantineMessage = nil
+        selectedCalendarSet = .all
+        localContextStoreState = .ready
+
+        loadCalendarRolePreferences()
+        observeLocalContexts(events)
+        activeBriefEvent = selectedEvent
+        if activeBriefEvent == nil {
+            eventBriefState = .noSelection
+        } else {
+            loadSelectedEventBrief()
+        }
+        refreshTaskCenter()
+        clearSelectionOutsideVisiblePeriod()
+    }
+
+    private static var currentAppVersion: String {
+        let info = Bundle.main.infoDictionary
+        return info?["CFBundleShortVersionString"] as? String
+            ?? info?["CFBundleVersion"] as? String
+            ?? "unknown"
     }
 
     private static func duePolicy(for task: EventTask) -> EventTaskDue {
@@ -2319,6 +2842,7 @@ final class AppState: ObservableObject {
     private func scheduleVisiblePeriodLoadIfNeeded() {
         rangeLoadTask?.cancel()
         rangeLoadTask = nil
+        guard localDataOperationState == .idle else { return }
         guard calendarAuthorizationState.canReadEvents else { return }
         let visible = visibleInterval
         if let loadedEventInterval,

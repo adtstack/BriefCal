@@ -3,9 +3,14 @@ import GRDB
 
 struct AppDatabase: Sendable {
     private let writer: any DatabaseWriter
+    let databaseURL: URL?
 
-    init(_ writer: any DatabaseWriter) throws {
+    init(
+        _ writer: any DatabaseWriter,
+        databaseURL: URL? = nil
+    ) throws {
         self.writer = writer
+        self.databaseURL = databaseURL?.standardizedFileURL
         try DatabaseMigrations.migrator.migrate(writer)
     }
 
@@ -24,7 +29,8 @@ struct AppDatabase: Sendable {
             DatabaseQueue(
                 path: fileURL.path,
                 configuration: makeConfiguration()
-            )
+            ),
+            databaseURL: fileURL
         )
     }
 
@@ -64,6 +70,39 @@ struct AppDatabase: Sendable {
         try read { db in
             try Bool.fetchOne(db, sql: "PRAGMA foreign_keys") ?? false
         }
+    }
+
+    /// Writes a transactionally consistent SQLite snapshot without copying a
+    /// potentially stale WAL sidecar.
+    func writeSnapshot(to fileURL: URL) throws {
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(
+            at: fileURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if fileManager.fileExists(atPath: fileURL.path) {
+            try fileManager.removeItem(at: fileURL)
+        }
+
+        let destination = try DatabaseQueue(
+            path: fileURL.path,
+            configuration: Self.makeConfiguration()
+        )
+        try writer.backup(to: destination)
+    }
+
+    /// Restores a preflighted snapshot through SQLite's online backup API.
+    /// This intentionally avoids replacing the file underneath the live GRDB
+    /// queue. The destination writer serializes the restore with app writes.
+    func restoreSnapshot(from fileURL: URL) throws {
+        var configuration = Self.makeConfiguration()
+        configuration.readonly = true
+        configuration.label = "KaosCal Validated Restore Source"
+        let source = try DatabaseQueue(
+            path: fileURL.path,
+            configuration: configuration
+        )
+        try source.backup(to: writer)
     }
 
     private static func makeConfiguration() -> Configuration {

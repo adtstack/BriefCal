@@ -55,6 +55,7 @@ final class ContextStore {
     let personalTasks: PersonalTaskRepository
     let taskCenter: TaskCenterRepository
     let calendarRoles: CalendarRoleRepository
+    let localDataBackups: LocalDataBackupService
 
     private let database: AppDatabase
     private let now: () -> Date
@@ -87,6 +88,10 @@ final class ContextStore {
         calendarRoles = CalendarRoleRepository(
             database: database,
             now: now
+        )
+        localDataBackups = LocalDataBackupService(
+            database: database,
+            databaseURL: database.databaseURL
         )
     }
 

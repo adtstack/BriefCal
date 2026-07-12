@@ -43,6 +43,9 @@
 		G10000000000000000000001 /* CalendarClarity.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000001 /* CalendarClarity.swift */; };
 		G10000000000000000000002 /* CalendarRoleRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000002 /* CalendarRoleRepository.swift */; };
 		G10000000000000000000003 /* CalendarClarityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000003 /* CalendarClarityTests.swift */; };
+		H10000000000000000000001 /* LocalDataBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000001 /* LocalDataBackupService.swift */; };
+		H10000000000000000000002 /* LocalDataSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000002 /* LocalDataSettingsView.swift */; };
+		H10000000000000000000003 /* LocalDataBackupServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000003 /* LocalDataBackupServiceTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -95,6 +98,9 @@
 		G20000000000000000000001 /* CalendarClarity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarClarity.swift; sourceTree = "<group>"; };
 		G20000000000000000000002 /* CalendarRoleRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarRoleRepository.swift; sourceTree = "<group>"; };
 		G20000000000000000000003 /* CalendarClarityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarClarityTests.swift; sourceTree = "<group>"; };
+		H20000000000000000000001 /* LocalDataBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataBackupService.swift; sourceTree = "<group>"; };
+		H20000000000000000000002 /* LocalDataSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataSettingsView.swift; sourceTree = "<group>"; };
+		H20000000000000000000003 /* LocalDataBackupServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataBackupServiceTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -154,6 +160,7 @@
 				D70000000000000000000001 /* EventBrief */,
 				D70000000000000000000002 /* TaskCenter */,
 				E70000000000000000000001 /* EventEditor */,
+				H70000000000000000000001 /* Settings */,
 			);
 			path = Features;
 			sourceTree = "<group>";
@@ -194,6 +201,7 @@
 				A20000000000000000000012 /* CalendarEventLayoutTests.swift */,
 				E20000000000000000000002 /* CalendarEventEditingTests.swift */,
 				C2000000000000000000000A /* ContextStoreTests.swift */,
+				H20000000000000000000003 /* LocalDataBackupServiceTests.swift */,
 				D20000000000000000000003 /* LocalWorkspaceTests.swift */,
 				F20000000000000000000001 /* ManualEventKitQATests.swift */,
 				A2000000000000000000000E /* FakeCalendarProvider.swift */,
@@ -228,6 +236,7 @@
 			isa = PBXGroup;
 			children = (
 				C20000000000000000000001 /* AppDatabase.swift */,
+				H20000000000000000000001 /* LocalDataBackupService.swift */,
 				G20000000000000000000002 /* CalendarRoleRepository.swift */,
 				C20000000000000000000002 /* DatabaseMigrations.swift */,
 				C20000000000000000000003 /* ContextModels.swift */,
@@ -263,6 +272,14 @@
 				E20000000000000000000003 /* EventEditorView.swift */,
 			);
 			path = EventEditor;
+			sourceTree = "<group>";
+		};
+		H70000000000000000000001 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				H20000000000000000000002 /* LocalDataSettingsView.swift */,
+			);
+			path = Settings;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -372,6 +389,7 @@
 			files = (
 				A10000000000000000000002 /* AppState.swift in Sources */,
 				C10000000000000000000001 /* AppDatabase.swift in Sources */,
+				H10000000000000000000001 /* LocalDataBackupService.swift in Sources */,
 				G10000000000000000000002 /* CalendarRoleRepository.swift in Sources */,
 				C10000000000000000000002 /* DatabaseMigrations.swift in Sources */,
 				C10000000000000000000003 /* ContextModels.swift in Sources */,
@@ -393,6 +411,7 @@
 				D10000000000000000000001 /* EventBriefView.swift in Sources */,
 				D10000000000000000000002 /* TaskCenterView.swift in Sources */,
 				E10000000000000000000003 /* EventEditorView.swift in Sources */,
+				H10000000000000000000002 /* LocalDataSettingsView.swift in Sources */,
 				A10000000000000000000004 /* KaosCalTheme.swift in Sources */,
 				A10000000000000000000001 /* KaosCalApp.swift in Sources */,
 			);
@@ -408,6 +427,7 @@
 				A1000000000000000000000E /* CalendarEventLayoutTests.swift in Sources */,
 				E10000000000000000000002 /* CalendarEventEditingTests.swift in Sources */,
 				C1000000000000000000000A /* ContextStoreTests.swift in Sources */,
+				H10000000000000000000003 /* LocalDataBackupServiceTests.swift in Sources */,
 				D10000000000000000000003 /* LocalWorkspaceTests.swift in Sources */,
 				F10000000000000000000001 /* ManualEventKitQATests.swift in Sources */,
 				A1000000000000000000000A /* FakeCalendarProvider.swift in Sources */,

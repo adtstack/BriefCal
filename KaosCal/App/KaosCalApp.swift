@@ -38,6 +38,10 @@ struct KaosCalApp: App {
                 .keyboardShortcut("t", modifiers: [.command])
             }
         }
+
+        Settings {
+            LocalDataSettingsView(appState: appState)
+        }
     }
 
     private func navigationCommand(

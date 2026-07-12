@@ -1228,3 +1228,530 @@ final class Phase6AppStateTests: XCTestCase {
         ))!
     }
 }
+
+@MainActor
+final class Phase9AppStateTests: XCTestCase {
+    func testExportFlushesPendingSelectedNotesWithoutCalendarWrites() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let database = try AppDatabase.open(
+            at: directory.appendingPathComponent("live.sqlite")
+        )
+        let store = ContextStore(database: database)
+        let event = makeEvent()
+        let provider = makeProvider(events: [event])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(event.id)
+        state.updateSelectedEventNotes("Include this pending export note")
+        XCTAssertEqual(state.notesSaveState, .pending)
+
+        let archiveURL = directory.appendingPathComponent("manual-export.zip")
+        let optionalResult = await state.exportLocalDataBackup(to: archiveURL)
+        let result = try XCTUnwrap(optionalResult)
+        let inspection = try store.localDataBackups.inspectBackup(at: archiveURL)
+
+        XCTAssertEqual(result.archiveURL, archiveURL.standardizedFileURL)
+        XCTAssertEqual(inspection.manifest, result.manifest)
+        XCTAssertEqual(state.localDataOperationState, .idle)
+        XCTAssertEqual(state.notesSaveState, .saved)
+        guard case let .loaded(brief, _) = try store.loadBrief(for: event) else {
+            return XCTFail("Expected the pending note to be flushed before export")
+        }
+        XCTAssertEqual(brief.context.notes, "Include this pending export note")
+        assertNoCalendarWrites(provider)
+    }
+
+    func testImportReplacesLocalProjectionsAndKeepsPreImportBackup() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let event = makeEvent()
+        let sourceDatabase = try AppDatabase.open(
+            at: directory.appendingPathComponent("source.sqlite")
+        )
+        let sourceStore = ContextStore(database: sourceDatabase)
+        let sourceContext = try XCTUnwrap(
+            try sourceStore.saveNotes(
+                for: event,
+                notes: "Imported source notes"
+            )
+        )
+        let sourceEventTask = try sourceStore.appendEventTask(
+            for: event,
+            section: .before,
+            title: "Imported source checklist"
+        )
+        let sourcePersonalTask = try sourceStore.personalTasks.create(
+            title: "Imported personal task"
+        )
+        _ = try sourceStore.calendarRoles.upsert(
+            source: calendarSource,
+            role: .work
+        )
+        let sourceArchiveURL = directory.appendingPathComponent("source.zip")
+        _ = try sourceStore.localDataBackups.exportBackup(
+            to: sourceArchiveURL,
+            now: date(2026, 7, 12, 9),
+            appVersion: "phase9-test"
+        )
+
+        let targetDatabase = try AppDatabase.open(
+            at: directory.appendingPathComponent("target.sqlite")
+        )
+        let targetStore = ContextStore(database: targetDatabase)
+        let targetContext = try XCTUnwrap(
+            try targetStore.saveNotes(
+                for: event,
+                notes: "Replace these target notes"
+            )
+        )
+        _ = try targetStore.appendEventTask(
+            for: event,
+            section: .after,
+            title: "Replace this target checklist"
+        )
+        let targetPersonalTask = try targetStore.personalTasks.create(
+            title: "Replace this personal task"
+        )
+        _ = try targetStore.calendarRoles.upsert(
+            source: calendarSource,
+            role: .personal
+        )
+
+        let provider = makeProvider(events: [event])
+        let state = makeState(provider: provider, store: targetStore)
+        await state.loadCalendarStatus()
+        state.selectEvent(event.id)
+        XCTAssertEqual(state.selectedEventNotes, "Replace these target notes")
+        XCTAssertEqual(
+            state.recoveryBriefs.map(\.context.id),
+            [targetContext.id]
+        )
+
+        let optionalResult = await state.importLocalDataBackup(
+            from: sourceArchiveURL
+        )
+        let result = try XCTUnwrap(optionalResult)
+
+        XCTAssertEqual(state.localDataOperationState, .idle)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: result.automaticBackupURL.path
+            )
+        )
+        XCTAssertNoThrow(
+            try targetStore.localDataBackups.inspectBackup(
+                at: result.automaticBackupURL
+            )
+        )
+        XCTAssertNil(try targetStore.eventContexts.fetch(id: targetContext.id))
+        XCTAssertNil(
+            try targetStore.personalTasks.fetch(id: targetPersonalTask.id)
+        )
+
+        let importedBrief = try XCTUnwrap(
+            targetStore.eventContexts.fetchBrief(
+                contextID: sourceContext.id
+            )
+        )
+        XCTAssertEqual(importedBrief.context.notes, "Imported source notes")
+        XCTAssertEqual(importedBrief.tasks.map(\.id), [sourceEventTask.id])
+        XCTAssertEqual(
+            try targetStore.personalTasks.fetch(id: sourcePersonalTask.id)?.title,
+            "Imported personal task"
+        )
+        XCTAssertEqual(
+            try targetStore.calendarRoles.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.role,
+            .work
+        )
+        XCTAssertEqual(state.selectedEventNotes, "Imported source notes")
+        XCTAssertEqual(state.calendarRole(for: event), .work)
+        XCTAssertEqual(
+            state.recoveryBriefs.map(\.context.id),
+            [sourceContext.id]
+        )
+        XCTAssertNil(state.eventEditorSession)
+        XCTAssertNil(state.pendingEventMutation)
+        XCTAssertNil(state.linkedEventRecoverySession)
+        XCTAssertFalse(state.lastEventMutationUndoAvailable)
+
+        let recoveredDatabase = try AppDatabase.open(
+            at: directory.appendingPathComponent("pre-import-recovered.sqlite")
+        )
+        let recoveredStore = ContextStore(database: recoveredDatabase)
+        _ = try recoveredStore.localDataBackups.importBackup(
+            from: result.automaticBackupURL,
+            automaticBackupDirectory: directory.appendingPathComponent(
+                "Recovery-Safety",
+                isDirectory: true
+            ),
+            now: date(2026, 7, 12, 10),
+            appVersion: "phase9-test"
+        )
+        XCTAssertEqual(
+            try recoveredStore.eventContexts.fetchBrief(
+                contextID: targetContext.id
+            )?.context.notes,
+            "Replace these target notes"
+        )
+        XCTAssertEqual(
+            try recoveredStore.calendarRoles.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.role,
+            .personal
+        )
+        assertNoCalendarWrites(provider)
+    }
+
+    func testResetClearsLocalDataKeepsCalendarEventAndCreatesRestorableBackup() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let database = try AppDatabase.open(
+            at: directory.appendingPathComponent("reset.sqlite")
+        )
+        let store = ContextStore(database: database)
+        let event = makeEvent()
+        let context = try XCTUnwrap(
+            try store.saveNotes(for: event, notes: "Recover after reset")
+        )
+        let eventTask = try store.appendEventTask(
+            for: event,
+            section: .during,
+            title: "Recover reset checklist"
+        )
+        let personalTask = try store.personalTasks.create(
+            title: "Recover reset personal task"
+        )
+        _ = try store.calendarRoles.upsert(
+            source: calendarSource,
+            role: .family
+        )
+
+        let provider = makeProvider(events: [event])
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(event.id)
+        let optionalResult = await state.resetLocalData()
+        let result = try XCTUnwrap(optionalResult)
+
+        XCTAssertGreaterThan(result.deletedRowCounts.total, 0)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: result.automaticBackupURL.path
+            )
+        )
+        XCTAssertNoThrow(
+            try store.localDataBackups.inspectBackup(
+                at: result.automaticBackupURL
+            )
+        )
+        XCTAssertTrue(try store.eventContexts.fetchAll().isEmpty)
+        XCTAssertEqual(try store.eventTasks.count(), 0)
+        XCTAssertEqual(try store.personalTasks.count(), 0)
+        XCTAssertEqual(try store.calendarRoles.count(), 0)
+        XCTAssertEqual(state.events.map(\.id), [event.id])
+        XCTAssertEqual(provider.events.map(\.id), [event.id])
+        XCTAssertEqual(state.selectedEventID, event.id)
+        XCTAssertEqual(state.eventBriefState, .empty)
+        XCTAssertEqual(state.calendarRole(for: event), .other)
+        XCTAssertTrue(state.recoveryBriefs.isEmpty)
+
+        let recoveredDatabase = try AppDatabase.open(
+            at: directory.appendingPathComponent("reset-recovered.sqlite")
+        )
+        let recoveredStore = ContextStore(database: recoveredDatabase)
+        _ = try recoveredStore.localDataBackups.importBackup(
+            from: result.automaticBackupURL,
+            automaticBackupDirectory: directory.appendingPathComponent(
+                "Reset-Recovery-Safety",
+                isDirectory: true
+            ),
+            now: date(2026, 7, 12, 11),
+            appVersion: "phase9-test"
+        )
+        let recoveredBrief = try XCTUnwrap(
+            recoveredStore.eventContexts.fetchBrief(contextID: context.id)
+        )
+        XCTAssertEqual(recoveredBrief.context.notes, "Recover after reset")
+        XCTAssertEqual(recoveredBrief.tasks.map(\.id), [eventTask.id])
+        XCTAssertEqual(
+            try recoveredStore.personalTasks.fetch(id: personalTask.id)?.title,
+            "Recover reset personal task"
+        )
+        XCTAssertEqual(
+            try recoveredStore.calendarRoles.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.role,
+            .family
+        )
+        assertNoCalendarWrites(provider)
+    }
+
+    func testImportRollbackFailureQuarantinesMutationsAndRefreshForSession() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let databaseURL = directory.appendingPathComponent("quarantine.sqlite")
+        let database = try AppDatabase.open(at: databaseURL)
+        let store = ContextStore(database: database)
+        let existingTask = try store.personalTasks.create(
+            title: "Keep this local task"
+        )
+        let event = makeEvent()
+        let provider = makeProvider(events: [event])
+        let state = AppState(
+            calendar: calendar,
+            now: { self.date(2026, 7, 12, 12) },
+            calendarProvider: provider,
+            contextStore: store,
+            localContextStoreState: .ready,
+            localDataImportOperation: { _, _, _, _, _ in
+                throw LocalDataBackupError.importFailed(
+                    reason: "forced restore and rollback failure",
+                    rollbackSucceeded: false
+                )
+            }
+        )
+        await state.loadCalendarStatus()
+        let fetchCountBeforeImport = provider.fetchCallCount
+
+        let result = await state.importLocalDataBackup(
+            from: directory.appendingPathComponent("forced-import.zip")
+        )
+
+        XCTAssertNil(result)
+        XCTAssertEqual(state.localDataOperationState, .quarantined)
+        let message = try XCTUnwrap(state.localDataOperationMessage)
+        let backupDirectory = directory.appendingPathComponent(
+            "Backups",
+            isDirectory: true
+        )
+        XCTAssertTrue(message.contains("could not restore the previous local database"))
+        XCTAssertTrue(message.contains("locked for this session"))
+        XCTAssertTrue(message.contains("Quit KaosCal before recovery"))
+        XCTAssertTrue(message.contains(backupDirectory.path))
+        guard case let .failed(storeMessage) = state.localContextStoreState else {
+            return XCTFail("A rollback failure must quarantine the local store")
+        }
+        XCTAssertEqual(storeMessage, message)
+
+        state.clearLocalDataOperationMessage()
+        XCTAssertEqual(state.localDataOperationMessage, message)
+
+        XCTAssertFalse(state.createPersonalTask(title: "Must not write", dueAt: nil))
+        XCTAssertNotNil(try store.personalTasks.fetch(id: existingTask.id))
+        XCTAssertEqual(try store.personalTasks.count(), 1)
+        XCTAssertFalse(state.setCalendarRole(.work, for: calendarSource))
+        XCTAssertEqual(try store.calendarRoles.count(), 0)
+
+        provider.events = []
+        await state.refreshCalendarData()
+        provider.storeChangeHandler?()
+        await Task.yield()
+        XCTAssertEqual(provider.fetchCallCount, fetchCountBeforeImport)
+        XCTAssertEqual(state.events.map(\.id), [event.id])
+
+        state.beginCreatingEvent()
+        XCTAssertNil(state.eventEditorSession)
+        XCTAssertTrue(
+            state.eventEditorError?.contains("locked for this session") == true
+        )
+        assertNoCalendarWrites(provider)
+    }
+
+    func testResetRollbackFailureUsesTheSameQuarantineBoundary() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let database = try AppDatabase.open(
+            at: directory.appendingPathComponent("reset-quarantine.sqlite")
+        )
+        let store = ContextStore(database: database)
+        let provider = makeProvider(events: [])
+        let state = AppState(
+            calendar: calendar,
+            now: { self.date(2026, 7, 12, 12) },
+            calendarProvider: provider,
+            contextStore: store,
+            localContextStoreState: .ready,
+            localDataResetOperation: { _, _, _, _ in
+                throw LocalDataBackupError.resetFailed(
+                    reason: "forced reset rollback failure",
+                    rollbackSucceeded: false
+                )
+            }
+        )
+
+        let result = await state.resetLocalData()
+
+        XCTAssertNil(result)
+        XCTAssertEqual(state.localDataOperationState, .quarantined)
+        let message = try XCTUnwrap(state.localDataOperationMessage)
+        XCTAssertTrue(message.contains("Reset failed"))
+        XCTAssertTrue(message.contains("automatic pre-reset recovery ZIP"))
+        XCTAssertTrue(message.contains("Backups"))
+        guard case let .failed(storeMessage) = state.localContextStoreState else {
+            return XCTFail("A reset rollback failure must quarantine the local store")
+        }
+        XCTAssertEqual(storeMessage, message)
+        assertNoCalendarWrites(provider)
+    }
+
+    func testLocalDataSettingsFileBackedHealthyStateFitsAndProducesOffscreenBitmap() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("settings.sqlite")
+        try autoreleasepool {
+            let database = try AppDatabase.open(at: databaseURL)
+            let store = ContextStore(database: database)
+            let provider = makeProvider(events: [])
+            let state = makeState(provider: provider, store: store)
+            XCTAssertEqual(
+                state.localDataDatabaseURL,
+                databaseURL.standardizedFileURL
+            )
+            XCTAssertEqual(state.localContextStoreState, .ready)
+            let hostingView = NSHostingView(rootView:
+                LocalDataSettingsView(appState: state)
+                    .background(Color(nsColor: .windowBackgroundColor))
+            )
+
+            let fittingSize = hostingView.fittingSize
+            XCTAssertLessThanOrEqual(fittingSize.width, 620.5)
+            XCTAssertLessThanOrEqual(fittingSize.height, 620.5)
+
+            hostingView.frame = NSRect(x: 0, y: 0, width: 620, height: 620)
+            hostingView.wantsLayer = true
+            hostingView.layoutSubtreeIfNeeded()
+            let representation = try XCTUnwrap(
+                hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
+            )
+            hostingView.cacheDisplay(
+                in: hostingView.bounds,
+                to: representation
+            )
+            let pngData = try XCTUnwrap(
+                representation.representation(using: .png, properties: [:])
+            )
+
+            XCTAssertGreaterThanOrEqual(representation.pixelsWide, 620)
+            XCTAssertGreaterThanOrEqual(representation.pixelsHigh, 620)
+            XCTAssertGreaterThan(pngData.count, 10_000)
+            assertNoCalendarWrites(provider)
+        }
+    }
+
+    private var calendar: Calendar {
+        var result = Calendar(identifier: .gregorian)
+        result.timeZone = TimeZone(secondsFromGMT: 0)!
+        return result
+    }
+
+    private var calendarSource: CalendarSource {
+        CalendarSource(
+            id: "calendar",
+            title: "KAOS-TEST",
+            sourceTitle: "Exchange QA",
+            accountType: .exchange,
+            isWritable: true,
+            color: nil
+        )
+    }
+
+    private func makeProvider(events: [DisplayEvent]) -> FakeCalendarProvider {
+        let provider = FakeCalendarProvider(
+            authorizationState: .fullAccess
+        )
+        provider.calendars = [calendarSource]
+        provider.events = events
+        return provider
+    }
+
+    private func makeState(
+        provider: FakeCalendarProvider,
+        store: ContextStore
+    ) -> AppState {
+        AppState(
+            calendar: calendar,
+            now: { self.date(2026, 7, 12, 12) },
+            calendarProvider: provider,
+            contextStore: store,
+            localContextStoreState: .ready
+        )
+    }
+
+    private func makeEvent() -> DisplayEvent {
+        let start = date(2026, 7, 12, 9)
+        return DisplayEvent(
+            id: "phase9-event",
+            eventIdentifier: "event-phase9",
+            calendarItemIdentifier: "item-phase9",
+            calendarItemExternalIdentifier: "external-phase9",
+            calendarIdentifier: calendarSource.id,
+            calendarTitle: calendarSource.title,
+            sourceTitle: calendarSource.sourceTitle,
+            accountType: calendarSource.accountType,
+            calendarColor: nil,
+            title: "Phase 9 backup fixture",
+            location: nil,
+            startDate: start,
+            endDate: start.addingTimeInterval(3_600),
+            isAllDay: false,
+            timeZoneIdentifier: calendar.timeZone.identifier,
+            timeSemantics: .zoned(
+                timeZoneIdentifier: calendar.timeZone.identifier
+            ),
+            isRecurring: false,
+            occurrenceDate: nil,
+            occurrenceLocalComponents: nil,
+            isDetached: false,
+            isReadOnly: false,
+            isInvitation: false,
+            hasAttendees: false,
+            originalNotes: nil,
+            recurrence: .none
+        )
+    }
+
+    private func date(
+        _ year: Int,
+        _ month: Int,
+        _ day: Int,
+        _ hour: Int = 0
+    ) -> Date {
+        calendar.date(from: DateComponents(
+            year: year,
+            month: month,
+            day: day,
+            hour: hour
+        ))!
+    }
+
+    private func makeTemporaryDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "Phase9AppStateTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        return directory
+    }
+
+    private func assertNoCalendarWrites(
+        _ provider: FakeCalendarProvider,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(provider.createCallCount, 0, file: file, line: line)
+        XCTAssertEqual(provider.updateCallCount, 0, file: file, line: line)
+        XCTAssertEqual(provider.deleteCallCount, 0, file: file, line: line)
+    }
+}
