@@ -3,6 +3,7 @@
 > 상태: Accepted
 > 날짜: 2026-07-10
 > Phase 7B 확장: ADR-012가 전용 lookup, missing/orphan과 검증된 relink를 구현함
+> Phase 9 확장: ADR-015가 settings/backup metadata migration 예상과 failed-bootstrap recovery 일정을 명시적으로 수정함
 > 관계: ADR-003, ADR-004, ADR-006을 구체화하며 대체하지 않음
 
 ## 배경
@@ -13,7 +14,7 @@ Event Brief 메모와 작업은 Exchange 원본 일정과 수명이 다르다. E
 
 - GRDB.swift `7.10.0`을 Swift Package Manager exact version으로 고정한다.
 - 앱 시작 시 Application Support의 `KaosCal/kaoscal.sqlite`를 열고 `v1_context_store` migration을 적용한다. migration/open 실패 시 in-memory DB로 대체하지 않고 기존 파일을 보존한 채 앱 사용을 중단하고 복구 안내를 표시한다.
-- v1 migration에는 현재 필요한 네 테이블만 둔다: `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`. change log는 Phase 6, calendar role은 Phase 8, settings·backup metadata는 Phase 9의 additive migration으로 추가한다.
+- v1 migration에는 현재 필요한 네 테이블만 둔다: `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`. change log는 Phase 6의 additive v2, calendar role은 Phase 8의 additive v3로 추가했다. Phase 9 settings/backup metadata는 DB table이 아니라 ZIP manifest이므로 migration을 추가하지 않는다.
 - `event_contexts`와 `event_links`는 `context_id UNIQUE`인 1:1 관계다. context 삭제 시 link와 event task는 foreign-key cascade로 삭제한다. 원본 EventKit 이벤트는 이 삭제에 포함하지 않는다.
 - 일정 선택이나 빈 메모는 row를 만들지 않는다. 첫 번째 비어 있지 않은 메모 또는 event task 저장 시 context와 link를 한 transaction에서 지연 생성한다.
 - `DatabaseQueue`에서 식별→생성/갱신 전체를 하나의 database write transaction으로 직렬화한다. 동시 첫 저장도 context 하나만 만들며, identifier+occurrence unique index를 DB 방어선으로 둔다.
@@ -48,5 +49,5 @@ Event Brief 메모와 작업은 Exchange 원본 일정과 수명이 다르다. E
 
 - 실제 `KAOS-TEST` Exchange 일정에서 identifier 변화·detached occurrence 관찰
 - 실제 앱 종료/재실행 뒤 Phase 4 Event Brief와 Task Center UI 유지 확인
-- 손상 DB와 migration 실패의 backup/export 복구 흐름은 Phase 9에서 완성
+- Phase 9은 정상 부팅한 current-schema DB의 export/import/reset을 완성했다. 손상 live DB 때문에 open/migration이 실패한 상태의 bootstrap recovery는 ADR-015에 따라 Phase 10으로 이월했다.
 - change log는 Phase 6의 additive v2 migration으로 구현했고, orphan lifecycle은 Phase 7B에서 기존 v1 status를 재사용해 migration 없이 구현했다. 실제 Exchange identifier churn과 surviving-series occurrence 삭제는 계속 수동 검증한다.

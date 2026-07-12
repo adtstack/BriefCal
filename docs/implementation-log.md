@@ -722,6 +722,42 @@
   - shared read-only Exchange Viewer calendar가 없어 provider-reported reason의 live 판정도 blocked다. custom saved Set, `No calendars assigned to Work` 같은 role 전용 empty-state copy, color/name override와 자동 duplicate 처리는 Phase 8 완료 범위에 포함하지 않는다.
 - 결과: Phase 8 구현·자동·signed Release·운영 additive migration은 **pass**. live visual과 shared read-only Exchange는 **manual pending**이며 이 둘을 자동 결과로 대체하지 않는다.
 
+## 2026-07-12 — Phase 9 Backup / Settings와 최종 데이터 안전 감사
+
+- 관련 ADR: ADR-001, ADR-005, ADR-006, ADR-008, ADR-015
+- 범위·파일:
+  - `AppDatabase`에 live `DatabaseWriter`의 SQLite online snapshot과 같은 writer 대상 restore를 추가하고, `ContextStore`가 `LocalDataBackupService`를 소유하게 했다. 실행 중 DB 파일이나 WAL/SHM을 filesystem copy/replace하지 않는다.
+  - `LocalDataBackupService`는 수동 export, inspect, whole-store import와 six-table reset을 제공한다. store-only ZIP root는 `manifest.json`과 `kaoscal.sqlite` 두 entry뿐이며 manifest format v1은 app/schema/migration/timestamp, DB byte count·SHA-256과 privacy flag를 기록한다.
+  - `AppState`는 pending notes flush, editor/recovery/Undo/다른 operation gate, background maintenance lock과 성공 뒤 local projection reload를 담당한다. import/reset 전 자동 ZIP과 raw rollback snapshot을 만들고, restore와 rollback이 모두 실패하면 `.quarantined`로 전환해 local/provider mutation과 refresh를 재시작 전까지 차단한다.
+  - `LocalDataSettingsView`와 Settings scene을 추가했다. export/import file panel, destructive import 확인, 정확한 `RESET` 입력 sheet, active DB 경로/Finder 열기, 포함 범위·plaintext·무검열 경고를 표시한다.
+  - App Sandbox 밖의 명시적 Open/Save panel URL만 `com.apple.security.files.user-selected.read-write`로 읽고 쓴다. import/reset 전 recovery ZIP은 app container의 Application Support `Backups`에 둔다.
+- strict archive·schema 안전 경계:
+  - manifest 64 KiB, SQLite 128 MiB, archive 129 MiB 상한을 둔다. nested/duplicate/path traversal/symlink entry, CRC 불일치, deflate, encryption, data descriptor, ZIP64, multi-disk, extra/comment/attribute, trailing byte와 gap/overlap을 거부한다.
+  - current migration ledger의 row count·identifier 집합과 전체 `sqlite_master`를 fresh current schema와 정확히 비교한다. `sqlite_*` 이름으로 숨긴 trigger/view와 data-only 미래 migration ledger도 거부한다. integrity/FK 결과는 첫 오류만 읽어 공격성 DB의 출력 증폭을 제한한다.
+  - manual export destination은 live DB와 `-wal`/`-shm`/`-journal`, hard link, symlink parent, 대소문자 비구분 volume과 file resource identity까지 비교하고 실제 write 직전에 다시 검사한다.
+  - import는 active DB를 바꾸기 전 archive/hash/schema/integrity/FK를 검증하고 자동 ZIP을 완성한다. 같은 live writer에 restore한 뒤 재검증하며 실패하면 raw pre-operation snapshot으로 rollback한다. reset은 migration ledger/schema를 유지한 채 `event_change_log`, `event_tasks`, `event_links`, `event_contexts`, `personal_tasks`, `calendar_preferences`만 한 transaction에서 비운다.
+- 개인정보·호환성 계약:
+  - complete EventKit store나 attendee 전체 목록을 별도 export하지 않고 계정 credential/password/MFA/OAuth token 전용 필드도 없다. 그러나 Event Brief/task의 사용자 본문은 검사·redact하지 않으며 linked metadata와 original-notes snapshot도 포함될 수 있다.
+  - ZIP과 SQLite는 KaosCal이 암호화하거나 서명하지 않는다. SHA-256은 entry integrity일 뿐 제작자 인증이 아니며 신뢰하는 위치와 직접 생성한 backup만 사용한다. machine name은 manifest에 기록하지 않는다.
+  - Phase 9 import는 running build와 application identifier·migration·schema object가 정확히 같은 backup만 허용한다. 향후 v4가 v3 backup을 자동 migration하는 경로, schedule backup, retention pruning과 failed-bootstrap recovery는 구현하지 않았다.
+- 자동 검증:
+  - `LocalDataBackupServiceTests` 8개: 표준 `unzip -t`, manifest/current schema, same-writer import와 automatic ZIP 재복구, six-table reset과 pre-reset ZIP 재복구, CRC/path/hostile ZIP, extra/hidden schema와 future ledger, live DB/sidecar·hard/symlink destination 차단을 통과했다.
+  - `Phase9AppStateTests` 6개: pending notes export, import/reset cache reload와 automatic ZIP 재복구, fake provider create/update/delete 0회, import/reset rollback 실패 session quarantine, healthy file-backed 620×620 Settings bitmap을 통과했다.
+  - 최종 전체 **213 tests executed, 212 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**.
+  - result bundle: `/private/tmp/KaosCalPhase9FinalTests-20260712-1535.xcresult`.
+- Release·운영 데이터 gate:
+  - artifact: `/private/tmp/KaosCalPhase9FinalRelease-20260712-1535/Build/Products/Release/KaosCal.app`.
+  - CDHash: `4f6eb184110ca317a440c5d640cf0670e4c42753`.
+  - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` ad-hoc Release, hardened runtime, `codesign --verify --deep --strict`: **pass**. entitlement는 app sandbox, Calendar, user-selected read/write 세 개이며 get-task-allow·XCTest plug-in/link가 없다. full-access usage description과 AppIcon keys도 확인했다.
+  - exact Release는 1512×949 visible window를 생성했고 두 차례 직접 기동·종료했다. bundle-ID 기반 UI restore 시 이미 등록된 Debug build가 한 번 별도로 기동되어 즉시 종료했으며 exact artifact의 시각 증거로 계산하지 않았다. 최종 KaosCal process는 0이다.
+  - direct DB `1783704658|126976`, SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 sandbox DB `1783832834|139264`, SHA-256 `7cd91d35ceaa7f04a43c00e88cf1c99d7d8f778ebeffa8c55af0f9f269251d23`가 전체 test, exact Release 기동과 위 Debug process 전후 모두 불변이었다. 양쪽 integrity `ok`, FK violation 0, WAL/SHM/journal 부재를 확인했고 sandbox는 v1/v2/v3와 `calendar_preferences` 0행을 유지했다. Phase 9은 새 DB migration을 추가하지 않았다.
+- 증거 경계·남은 위험:
+  - macOS accessibility permission은 granted였지만 provider가 exact Release의 visible 창을 AX window로 노출하지 않았고 window screenshot도 만들지 못했다. 따라서 Settings/Open·Save panel, scroll 전체 copy와 typed reset의 live interaction은 **manual pending**이며 file-backed offscreen bitmap으로 대체하지 않는다.
+  - core restore/post-validation 실패 뒤 실제 rollback을 일으키는 fault injection은 없다. 성공 restore/automatic backup 재복구와 AppState의 주입된 `rollbackSucceeded = false` quarantine은 검증했지만 두 증거를 같은 것으로 과장하지 않는다.
+  - 이 checkpoint에서 실제 EventKit/Exchange write를 실행하지 않았다. provider write 0회는 fake-provider 자동 증거이며, 과거 Exchange CRUD/live linked-delete run과 분리한다.
+  - 손상 live DB 때문에 app open/migration이 실패한 상태의 backup import recovery는 Phase 10이다.
+- 결과: Phase 9 healthy current-schema backup/export/import/reset, strict archive/schema/destination, Settings·privacy, rollback 실패 quarantine, 전체 자동·signed Release·운영 DB 격리 checkpoint는 **pass**. live Settings panel과 failed-bootstrap recovery는 명시적으로 이월한다.
+
 ## 다음 항목 템플릿
 
 ```markdown

@@ -239,14 +239,26 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ### 9. Backup / Import
 
 절차:
-1. Event Brief가 있는 상태에서 backup export를 만든다.
-2. local context를 초기화한다.
-3. backup을 import한다.
+1. Event Brief notes/tasks, personal task, change history와 explicit calendar role이 있는 healthy current-schema file DB에서 수동 export를 만든다.
+2. ZIP root가 store-only `kaoscal.sqlite`, `manifest.json` 정확히 두 entry인지 확인하고 manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 각각 시험한다.
+3. manifest의 archive format version이 schema version과 분리돼 있고 app/export metadata, v1/v2/v3 migration 목록, DB byte count와 SHA-256이 snapshot과 일치하는지 확인한다. 기기 이름이 없는지도 확인한다. SHA-256은 제작자 인증이 아님을 문구로 확인한다.
+4. active DB 내용을 구분할 수 있게 바꾼 뒤 export ZIP import를 선택하고 replacement confirmation을 취소해 no-op을 확인한다.
+5. 다시 승인해 import 전 `Backups` automatic ZIP 생성, validated hot restore와 projection reload를 확인한다.
+6. extra/nested/duplicate entry, deflate/encryption/data descriptor/ZIP64/multi-disk, extra/comment/attribute, trailing/gapped/overlapping payload, manifest 누락·변조, byte/hash 불일치, unknown archive format, incompatible schema/migration, corrupt SQLite, integrity/FK failure fixture를 각각 import한다. 다시 압축한 ZIP과 신뢰할 수 없는 출처도 성공 경로로 취급하지 않는다.
+7. pending notes 저장 실패, 진행 중 event mutation, automatic-backup 경로 실패 상태에서 import/reset을 시도한다.
+8. reset sheet에서 틀린 문자열과 `RESET`을 각각 입력한다. 성공 전후 active 여섯 user table과 migration history를 확인한다.
 
 기대 결과:
-- Event Brief가 복구된다.
-- 원본 캘린더 이벤트는 import 과정에서 삭제되지 않는다.
-- schema version이 맞지 않으면 안전한 오류를 보여준다.
+- 정상 export ZIP에는 정확히 두 store-only entry만 있고 manifest byte/hash가 DB와 일치한다.
+- app identifier, current schema object와 migration 목록이 정확히 같은 신뢰 가능한 backup만 import한다. 과거 schema 자동 migration이나 미래 schema downgrade, SHA-256만으로 제작자 신뢰 판정은 하지 않는다.
+- import cancellation과 모든 preflight 실패는 active DB, WAL/SHM과 EventKit provider write count를 바꾸지 않는다.
+- valid import는 Event Brief/tasks/personal tasks/change log/role을 복구하고 import 직전 DB의 automatic ZIP 경로를 결과에 표시한다.
+- restore 또는 사후 schema/integrity/FK failure는 사전 snapshot으로 rollback하고 partial active DB를 성공으로 표시하지 않는다.
+- reset은 automatic backup이 먼저 성공한 경우에만 실행되며 `event_change_log`, `event_tasks`, `event_links`, `event_contexts`, `personal_tasks`, `calendar_preferences` row를 비운다. schema와 GRDB migration history는 유지한다.
+- export/import/reset 어느 경로도 Calendar/Exchange 원본 일정이나 EventKit provider write count를 바꾸지 않는다.
+- 현재 UI는 linked title/time/location/identifier와 original-notes change snapshot이 plaintext ZIP에 포함될 수 있고 complete calendar record/account credential/Exchange password는 전용 export 대상이 아니라고 설명한다. KaosCal이 credential/token과 attendee 전체 목록을 전용 필드로 저장하지 않는다는 점, 사용자 notes/tasks는 redact하지 않아 본문 민감정보가 포함될 수 있다는 점은 backup 정책 문서에서 별도로 확인한다. 마지막 무검열 경계를 UI에도 직접 표시하는 개선은 실제 copy가 추가되기 전 통과로 기록하지 않는다.
+- `Backups`의 recovery ZIP은 자동 삭제·prune되지 않는다.
+- 정상 store를 열지 못하는 failed-bootstrap corrupt DB 상태에는 Settings import를 성공 경로로 표시하지 않는다. 이 recovery UI는 Phase 10이다.
 
 ### 10. Day / Week / Agenda 일관성
 
@@ -390,7 +402,11 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - Event Brief 데이터는 절대 `EKEvent.notes`에 serialize되지 않는다.
 - read-only source에는 destructive edit control을 보여주지 않는다.
 - local context 삭제는 원본 calendar event 삭제와 분리된다.
-- import는 기존 DB를 경고 없이 덮어쓰지 않는다.
+- import는 기존 DB를 경고 없이 덮어쓰지 않고 automatic recovery ZIP이 실패하면 restore를 시작하지 않는다.
+- archive는 store-only two-entry 구조, format/schema/migration 분리, byte/SHA-256, integrity/FK를 모두 통과해야 한다.
+- local snapshot/restore는 같은 live SQLite writer를 사용하고 DB/WAL file replacement로 우회하지 않는다.
+- reset은 여섯 user-data table만 지우고 migration history를 유지하며, reset 전 automatic backup이 필수다.
+- backup/import/reset은 EventKit write를 호출하지 않는다.
 - 일정 이동 취소는 EventKit과 local DB 모두 변경하지 않는다.
 - orphaned context는 사용자 선택 없이 자동 삭제하지 않는다.
 - EventKit 변경 알림 뒤에는 마지막 loaded interval을 다시 fetch하고 stale event object를 저장하지 않는다.
@@ -563,6 +579,20 @@ Phase 8 Multi-Calendar Clarity 자동·Release gate:
 - signed Release `/private/tmp/KaosCalPhase8FinalRelease/Build/Products/Release/KaosCal.app`, CDHash `6c595445dadfb60588410329222557d00865c222`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
 - 전체 test 전후 direct/sandbox 운영 DB의 mtime·size·SHA-256과 WAL/SHM 부재 불변. exact Release 정상 bootstrap에서는 사전 backup 뒤 sandbox DB만 v2→v3로 migration하고 integrity `ok`, FK violation 0, 새 table 0행과 기존 다섯 table count·SHA3 불변, 종료 뒤 process 0을 확인
 - macOS session lock 때문에 Sidebar/Inspector/고밀도 card/VoiceOver 실화면은 **not tested**. shared read-only Viewer가 없어 provider read-only reason live gate도 **manual pending**이며 자동 결과로 대체하지 않음
+
+Phase 9 Local Data 자동·Release gate:
+
+- 집중 자동 검증은 live-writer export snapshot, standard `unzip -t` 호환 two-entry ZIP, manifest v1 핵심 값, same-writer import, pre-import automatic ZIP의 실제 재복구, six-table reset·migration history 유지와 pre-reset ZIP의 실제 재복구를 포함한다.
+- hostile fixture는 input symlink, CRC/path traversal/attribute, trailing byte, multi-disk, encryption/data descriptor/deflate/ZIP64/overlap/oversize, 예상 밖 schema object, 숨은 `sqlite_*` trigger와 미등록 migration ledger 행을 거부한다. export destination은 live DB와 WAL/SHM/journal, hard link, symlink parent 경유까지 차단한다.
+- AppState 집중 자동 검증은 pending selected notes를 flush한 export, import/reset 성공 뒤 local projection reload, automatic ZIP의 별도 DB 복구와 export/import/reset의 fake provider write 0회를 확인한다. 주입한 import/reset `rollbackSucceeded = false`는 local/provider mutation과 refresh를 session quarantine으로 차단한다.
+- file-backed healthy DB로 620×620 Settings bitmap 생성과 fitting size를 확인했다. 이는 실제 Open/Save panel, scroll 전체 copy와 typed reset 상호작용의 시각 통과를 대신하지 않는다.
+- manifest exact-key/type/version/hash 변조, 손상 SQLite가 integrity/FK 검사까지 도달하는 fixture, automatic-backup 생성 실패, core restore/post-validation 실패 뒤 실제 rollback, failed draft·열린 interaction·concurrent operation 차단과 repeated deterministic encode는 구현 계약과 별도 QA 항목이다. 전용 fixture가 추가되기 전에는 자동 통과로 기록하지 않는다.
+- plaintext·무서명·수동 retention, source machine name 부재, 계정 credential 전용 저장 부재와 사용자 notes/tasks 무검열 포함 계약은 문서/code review 범위다. 실제 file panel 문구를 확인하기 전에는 live visual pass로 기록하지 않는다.
+- 최종 전체 **213 tests executed, 212 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase9FinalTests-20260712-1535.xcresult`.
+- signed Release `/private/tmp/KaosCalPhase9FinalRelease-20260712-1535/Build/Products/Release/KaosCal.app`, CDHash `4f6eb184110ca317a440c5d640cf0670e4c42753`, strict codesign·hardened runtime·sandbox·Calendar·user-selected read/write entitlement **pass**; get-task-allow와 XCTest 비포함.
+- exact Release는 1512×949 visible window를 만들었고 직접 종료했다. direct DB `1783704658|126976`, SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 sandbox DB `1783832834|139264`, SHA-256 `7cd91d35ceaa7f04a43c00e88cf1c99d7d8f778ebeffa8c55af0f9f269251d23`가 test·bootstrap 전후 불변이며 integrity `ok`, FK violation 0, WAL/SHM/journal 부재와 최종 process 0을 확인했다.
+- macOS accessibility provider가 exact Release 창을 AX window로 노출하지 않아 Settings/Open·Save panel live interaction은 **manual pending**이다. 이 gate에서 실제 EventKit/Exchange write를 실행하지 않았으며 fake provider write 0회와 구분한다.
+- production DB open/migration 실패 상태의 bootstrap recovery는 이 gate에 포함하지 않고 Phase 10으로 유지한다.
 
 Mini month 자동/Release gate:
 

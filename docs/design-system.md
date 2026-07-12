@@ -206,6 +206,45 @@ Source badge는 EventKit 계정 유형, 실제 calendar/source, 사용자가 정
 
 shared read-only Exchange의 실제 문구와 긴 source/role 조합, 고밀도 card의 시각 품질은 fixture 부재와 session lock 제한으로 live visual gate가 아직 미검증이다. 코드·fixture 투영을 이 gate의 통과로 해석하지 않는다.
 
+## Phase 9 Local Data Settings
+
+Settings의 `Local Data` 화면은 backup, restore, storage, privacy와 destructive reset을
+한 화면에 분리된 group으로 보여 준다.
+
+- `Manual Backup`은 `Export Backup…`으로 사용자가 `.zip` 위치를 고르게 한다. export
+  중에는 spinner와 `Exporting…`을 표시하고 다른 local-data action을 잠근다.
+- `Restore From Backup`은 파일 선택만으로 교체하지 않는다. 선택한 파일명, 현재 DB의
+  자동 recovery backup이 먼저 만들어진다는 점, Calendar/Exchange 원본 불변을
+  destructive confirmation에 함께 표시한다.
+- `Storage`는 active SQLite의 실제 path를 selectable monospaced text로 표시하고
+  `Show in Finder`를 제공한다.
+- `What Is Included`는 Event Brief/task/role/change history뿐 아니라 linked
+  title/time/location/identifier와 original-notes change snapshot이 포함될 수 있음을
+  밝힌다. 현재 UI는 complete calendar event record, account credential과 Exchange
+  password를 전용 export 대상으로 삼지 않는다고 표시한다. KaosCal이 credential/token
+  전용 필드나 attendee 전체 목록을 저장하지 않는다는 계약과 별개로, 사용자
+  notes/tasks 본문은 redact하지 않으므로 그 안의 민감정보가 포함될 수 있다는 정확한
+  경계는 같은 화면의 plaintext 경고와 backup 문서에서 보완한다.
+- ZIP은 KaosCal이 암호화하지 않는 plaintext이며 사용자가 선택한 cloud folder에도
+  그대로 저장된다는 경고를 action과 같은 화면에 둔다.
+- `Reset Local Data…`는 red destructive hierarchy를 사용한다. 별도 sheet에서 정확히
+  `RESET`을 입력해야 `Delete Local Data`가 활성화되고, 자동 recovery backup과
+  Calendar/Exchange 원본 보존을 다시 설명한다.
+- export/import/reset 성공 결과는 export 또는 recovery backup 경로를 selectable
+  message로 남기고 사용자가 닫을 수 있게 한다. 실패 message는 validation/restore와
+  active DB 유지·rollback 결과를 표시하지만 자동 backup 경로가 항상 포함되지는 않는다.
+- import alert와 reset 확인 sheet는 사용자가 실행을 승인하면 닫힌 뒤 비동기 operation이
+  계속된다. 진행 중에는 Settings의 다른 local-data action과 앱의 local/EventKit mutation
+  진입을 막지만 Settings window 자체를 닫는 것은 operation 취소가 아니다. pending notes
+  저장 실패나 진행 중 event mutation이 있으면 data operation을 시작하지 않고 해결할
+  항목을 먼저 보여 준다.
+- automatic backup retention/pruning control은 제공하지 않는다. `Backups`의 파일은
+  사용자가 직접 관리한다.
+- 정상 DB가 열리지 않은 global bootstrap failure에서 이 Settings 화면을 recovery로
+  재사용하지 않는다. corrupt live DB recovery UI는 Phase 10이다.
+
+archive 동작과 개인정보 계약은 [backup-restore.md](backup-restore.md)를 따른다.
+
 ## Phase 6 recurrence와 impact confirmation
 
 Phase 6 confirmation은 반복 범위·calendar 이동·기존 시간 의미 변경과 linked local context가 받을 영향을 write 전에 읽는 작업 화면으로 구현되었다. 자동 gate는 통과했지만 실제 서명 창·`KAOS-TEST` 상호작용 통과를 의미하지 않는다.

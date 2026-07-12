@@ -1,6 +1,6 @@
 # Developer And Test Setup
 
-> 상태: Phase 7A~7C lifecycle·recovery·linked original delete, mini month·macOS 14 호환 AppIcon 구현 / 현재 189-test suite(188 pass, 수동 Exchange 1 opt-in skip) / 비반복 EventKit live CRUD 부분 통과·Phase 7C linked delete와 반복/이동 live gate 대기
+> 상태: Phase 9 Backup / Settings까지 구현·signed Release 완료 / 현재 213-test suite(212 pass, 수동 Exchange 1 opt-in skip) / 비반복 EventKit live CRUD·linked delete 부분 통과, 반복/이동·shared read-only·live Settings panel gate 대기
 > 마지막 갱신: 2026-07-12
 
 KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에서 결정하고 기록한다. 사용자가 우선 준비할 것은 개발·실계정 검증에 필요한 아래 항목뿐이다.

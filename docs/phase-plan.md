@@ -18,7 +18,8 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 - Mini month: **구현·집중 자동·210pt offscreen 시각 검증 완료** — locale/firstWeekday/time-zone을 따르는 고정 6×7 civil grid, 독립 월 탐색, 날짜 선택의 기존 range-fetch 연결, today/focused/adjacent 상태와 keyboard·VoiceOver 경계를 구현. 전체 Month 화면과 불완전 fetch 기반 event dot은 범위 밖
 - App icon: **구현·호환성·전체 자동·Release 검증 완료** — calendar grid·schedule blocks·Todo check의 원본 표식과 16~1024px alpha slot을 구현. 최초 opaque build를 macOS 14/15 legacy `.icns` 위험으로 제외하고 transparent full-bleed squircle, `.icns` alpha, strict signed Release와 exact bootstrap을 검증했다. Icon Composer layered/dark/tinted variant는 배포 polish로 이월
 - Phase 8: **구현·199-test 자동·signed Release·v3 migration 완료 / live UI·shared read-only gate 대기** — local calendar role, role별 virtual Set, source/permission badge, typed read-only reason과 비파괴 duplicate review를 구현했다. 화면 잠금으로 실화면과 shared Viewer는 미검증이다.
-- Phase 9~10: 대기
+- Phase 9: **구현·213-test 자동·signed Release·운영 DB 무변경 완료 / live Settings panel gate 대기** — healthy current-schema DB의 수동 export, strict two-entry ZIP import, import/reset 전 자동 recovery backup, six-table local reset, rollback 실패 session quarantine과 privacy/storage 설명을 구현했다. 같은 current-schema의 신뢰 가능한 backup만 허용하며 손상 live DB의 bootstrap recovery는 Phase 10이다.
+- Phase 10: 대기
 
 ## Phase 표
 
@@ -208,7 +209,7 @@ Definition of Done:
 - 반복 write와 linked move는 scope·before/after·유지될 local context를 보여 준 뒤 Confirm해야 하며, Cancel은 provider call·local rebind·log append를 수행하지 않도록 구현했다.
 - `v2_event_change_log`를 v1 baseline을 수정하지 않는 additive migration으로 구현했고, linked rebind·log와 Undo rebind·restored append를 각각 하나의 SQLite transaction으로 묶었다.
 - detached occurrence의 `이번 이후`, 모든 linked `이번 이후`, attendee meeting, complex recurrence의 future/rule 변경은 Calendar.app 또는 안전 안내로 보낸다. complex recurrence의 `이번 일정` ordinary-field patch는 rule을 보존한다. Phase 6 checkpoint 당시 linked delete는 Phase 7C까지 차단했으며 현재는 Phase 7C의 별도 final review 경로만 허용한다.
-- Phase 6의 **121-test 구현 checkpoint**, 122-test read-only gate와 132-test legacy compatibility checkpoint, Phase 7A의 145-test checkpoint, mini month·AppIcon의 154-test checkpoint, Phase 7B의 175-test와 Phase 7C의 189-test Release checkpoint를 역사적 증거로 보존한다. 현재 최신 suite는 Phase 8의 **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**이며 result bundle은 `/private/tmp/KaosCalPhase8FinalTests-20260712-1415.xcresult`다.
+- Phase 6의 **121-test 구현 checkpoint**, 122-test read-only gate와 132-test legacy compatibility checkpoint, Phase 7A의 145-test checkpoint, mini month·AppIcon의 154-test checkpoint, Phase 7B의 175-test, Phase 7C의 189-test와 Phase 8의 199-test Release checkpoint를 역사적 증거로 보존한다. 현재 최신 suite는 Phase 9의 **213 tests executed, 212 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**이며 result bundle은 `/private/tmp/KaosCalPhase9FinalTests-20260712-1535.xcresult`다.
 - live gate에서 EventKit이 비반복 `EKEvent`에도 `occurrenceDate == startDate`를 제공할 수 있어 반복 badge와 scope를 잘못 요구하는 문제를 발견했다. 반복 소속은 `hasRecurrenceRules || isDetached`만으로 판정하고, 비반복 display identity의 `occurrenceDate`는 `nil`로 정규화하도록 수정했다.
 - transparent AppIcon 최종 build-only Release `/private/tmp/KaosCalIconCompatRelease/Build/Products/Release/KaosCal.app`는 CDHash `bc2ddd83c9d7f5e1bfd62241b0e02e63b23308b6`로 strict codesign, hardened runtime, app sandbox, Calendar entitlement, `AppIcon.icns` alpha를 통과했다. 전체 154-test 결과는 `/private/tmp/KaosCalAppIconCompatFinal.xcresult`다. 실계정 run은 recurrence-fix artifact에 계속 귀속하고 AppIcon 작업에서는 fixture write를 실행하지 않았다.
 - 2026-07-11 FinalRelease EventKit run `20260711-1626-B7D2`에서 full access, 두 writable Exchange calendar, `KAOS-TEST` 비반복 create→앱 재실행/refetch→scope 없는 update→single delete를 확인했다. 서버 item은 생성·수정 뒤 모두 `singleInstance`·recurrence 없음이었고 source/destination marker residue는 `0/0`이었다.
@@ -286,6 +287,19 @@ Definition of Done:
 - zip export 생성
 - 새 DB에 import 성공
 - 원본 캘린더 이벤트 삭제 없이 KaosCal 데이터만 삭제 가능
+
+현재 구현 판정:
+- 정상 부팅해 `v3_calendar_clarity`까지 migration된 file-backed DB만 Local Data 작업을 연다. pending notes를 먼저 flush하고 저장 실패, 다른 local-data operation, editor mutation/recovery가 진행 중이면 export/import/reset을 시작하지 않는다.
+- 수동 export는 live `DatabaseWriter`의 SQLite online snapshot을 사용한다. store-only ZIP root에는 `kaoscal.sqlite`와 `manifest.json` 두 entry만 있으며 archive format version을 DB schema와 분리하고 app/export metadata, schema와 migration 목록, DB byte count·SHA-256을 기록한다. 기기 이름은 기록하지 않는다. manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 두고 deflate/encryption/data descriptor/ZIP64/multi-disk와 재압축된 archive를 거부한다.
+- import는 archive entry/encoding, manifest format, byte count/hash, schema/migration, SQLite integrity와 foreign key를 모두 검사한다. active DB를 바꾸기 전에 Application Support `Backups`에 자동 ZIP을 남기고, 같은 writer에 hot restore한 뒤 다시 검증한다. 실패하면 active DB를 유지하거나 사전 snapshot rollback을 시도한다.
+- reset은 정확한 `RESET` 확인 뒤 사전 자동 ZIP을 만들고 `event_change_log`, `event_tasks`, `event_links`, `event_contexts`, `personal_tasks`, `calendar_preferences`의 active row만 한 transaction에서 지운다. GRDB migration history와 schema는 유지한다.
+- Settings는 DB 위치와 Finder 열기, linked event metadata·original-notes snapshot 포함 가능성, complete calendar record/account credential/Exchange password 전용 필드 비포함과 plaintext 위험을 표시한다. KaosCal은 credential/token과 attendee 전체 목록을 전용 필드로 수집하지 않고 EventKit 전체 event store도 export하지 않지만, 사용자 notes/tasks를 redact하지 않으므로 본문에 입력한 민감정보는 포함될 수 있다는 경계도 UI와 backup 문서에 명시한다.
+- export/import/reset은 EventKit write를 호출하지 않는다. 자동 backup은 사용자가 직접 관리하며 schedule·retention pruning·자동 삭제를 하지 않는다.
+- SHA-256은 archive byte integrity일 뿐 제작자 인증이 아니다. 실행 중인 앱과 application identifier·current schema object·migration 목록이 정확히 같은 신뢰 가능한 backup만 import하며 schema upgrade/downgrade는 지원하지 않는다.
+- DB open/migration 실패로 정상 store가 없는 시작 상태에서 corrupt live DB를 교체하는 recovery UI는 Phase 10으로 이월한다. 상세 계약은 [backup-restore.md](backup-restore.md)와 [ADR-015](adr/ADR-015-backup-import-reset-safety.md)를 따른다.
+- 최종 전체 **213 tests executed, 212 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**이며 result bundle은 `/private/tmp/KaosCalPhase9FinalTests-20260712-1535.xcresult`다. core 8개와 AppState 6개 Phase 9 집중 테스트에는 strict archive/schema/destination, same-writer import/reset recovery, rollback 실패 quarantine, file-backed 620×620 Settings render와 fake provider write 0회가 포함된다.
+- signed Release `/private/tmp/KaosCalPhase9FinalRelease-20260712-1535/Build/Products/Release/KaosCal.app`, CDHash `4f6eb184110ca317a440c5d640cf0670e4c42753`는 strict codesign·hardened runtime, sandbox·Calendar·user-selected read/write entitlement와 usage description/AppIcon을 통과했고 get-task-allow·XCTest가 없다.
+- exact Release는 1512×949 visible window를 만들고 종료됐다. 전체 test와 두 차례 exact bootstrap 전후 direct/sandbox 운영 DB의 mtime·size·SHA-256, integrity/FK, WAL/SHM/journal 부재가 불변이고 최종 process는 0이다. macOS accessibility가 이 창을 AX window로 노출하지 않아 실제 Settings/Open·Save panel과 typed reset은 **manual pending**이며 620×620 offscreen render로 대체하지 않는다.
 
 ## Phase 10: Paid Beta Polish
 

@@ -28,7 +28,7 @@ KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 ## 표시 모델과 영속 모델
 
-Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연결·맥락만 SQLite에 영속화했다. Phase 6은 이 경계에 impact preview, recurrence scope, additive change log와 process-session Undo token을 구현했다. Phase 7B는 schema를 바꾸지 않고 occurrence-aware lookup 값, 두 단계 missing 확인과 명시적 recovery 명령을 추가했다. Phase 7C도 기존 v1/v2를 재사용해 linked original delete의 saved-link preview, CAS, `cancelled + orphaned` finalize와 current-link-generation deletion provenance projection을 추가했다. Phase 8은 EventKit snapshot·Event Brief identity와 분리된 role preference만 additive v3에 저장하고, virtual set·typed restriction·duplicate candidate는 파생 projection으로 구현했다.
+Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연결·맥락만 SQLite에 영속화했다. Phase 6은 이 경계에 impact preview, recurrence scope, additive change log와 process-session Undo token을 구현했다. Phase 7B는 schema를 바꾸지 않고 occurrence-aware lookup 값, 두 단계 missing 확인과 명시적 recovery 명령을 추가했다. Phase 7C도 기존 v1/v2를 재사용해 linked original delete의 saved-link preview, CAS, `cancelled + orphaned` finalize와 current-link-generation deletion provenance projection을 추가했다. Phase 8은 EventKit snapshot·Event Brief identity와 분리된 role preference만 additive v3에 저장하고, virtual set·typed restriction·duplicate candidate는 파생 projection으로 구현했다. Phase 9은 schema를 추가하지 않고 현재 SQLite 전체의 consistent snapshot과 별도 archive manifest를 만든다.
 
 | 값 | 역할 | 영속 모델과의 차이 |
 | --- | --- | --- |
@@ -44,6 +44,7 @@ Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연�
 | `CalendarEventDraft` | 원본 일정 create/update 입력, recurrence draft와 고정 reference time zone | editor session 동안만 존재하며 DB record가 아님. 저장 시 all-day/floating civil components를 현재 기본 zone에 rebase할 수 있음 |
 | `CalendarEventMutationReceipt` | scoped write 결과 event, 실제 write 여부, scope와 changed fields | provider 결과 값이며 EventKit object나 persisted log 자체가 아님 |
 | `CalendarEventEditorSession` | new/existing target, writable calendar, local mutation context | AppState의 일시 상태이며 앱 재실행 뒤 복구하지 않음 |
+| backup manifest | archive format, app/export metadata, DB schema/migrations, byte count와 SHA-256 | SQLite table이 아닌 ZIP의 `manifest.json`; 기기 이름과 credential을 저장하지 않음 |
 | `EventMutationContext` | local Brief 없음/strong linked/확인 필요 구분 | 기존 context를 안전하게 rebind할지 정하는 일시 preflight 결과 |
 | `CalendarEventMutationPreview` | original, validated draft, scope, changed fields, mutation context와 local impact를 확인 UI에 전달 | immutable preview 값이며 확인 전에는 EventKit·DB를 바꾸지 않음 |
 | `EventMutationImpact` | local notes 유무·글자 수, section별 task count/title, 최근 change history | `ContextStore`의 side-effect-free read projection이며 scope나 EventKit write 권한이 아님 |
@@ -425,25 +426,61 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - Phase 7B는 v1/v2의 기존 status, snapshot, foreign key와 `relinked` type만 사용하므로 migration을 추가하지 않는다.
 - Phase 7C는 v1의 `cancelled`/`orphaned`, v2의 `cancelled`, 기존 scope와 unavailable Undo를 재사용하므로 migration을 추가하지 않는다.
 - Phase 8 role preference는 `v3_calendar_clarity`로만 추가하며 v1/v2 SQL을 고쳐 쓰지 않는다. virtual set·restriction·duplicate projection은 schema를 필요로 하지 않는다.
+- Phase 9 archive manifest와 Local Data settings는 schema table이 아니며 migration을 추가하지 않는다.
 - destructive migration은 v1에서 금지한다.
-- migration 전 자동 backup 또는 복구 안내를 검토한다.
+- import/reset은 active data를 바꾸기 전에 현재 DB의 자동 recovery backup을 만든다.
 
 ## Backup 원칙
 
-Export는 Event Brief·task·change log와 `calendar_preferences`를 포함한 SQLite DB와 metadata를 함께 묶는다. 실제 export/import UX는 Phase 9 범위다.
+Phase 9 export는 Event Brief·task·change log와 `calendar_preferences`를 포함한 현재 SQLite 전체의 online snapshot과 metadata를 함께 묶는다. 같은 live `DatabaseWriter`에서 snapshot/restore하므로 실행 중 DB 파일이나 WAL sidecar를 직접 복사·교체하지 않는다.
 
 ```text
-KaosCal-Backup-YYYY-MM-DD.zip
+KaosCal-Backup-YYYY-MM-DD-HHmm.zip
 ├─ kaoscal.sqlite
 └─ manifest.json
 ```
 
-`manifest.json`에는 최소한 아래 값을 둔다.
+archive는 store-only ZIP이며 root의 위 두 entry만 허용한다. manifest는 최대 64 KiB,
+SQLite는 최대 128 MiB, 전체 archive는 최대 129 MiB다. nested path, symlink,
+duplicate, extra entry, deflate/encryption/data descriptor/ZIP64/multi-disk,
+extra/comment/attribute, trailing/gapped/overlapping payload와 WAL/SHM은 거부한다.
 
-- app_version
-- schema_version
-- exported_at
-- source_machine_name optional
+`manifest.json` format v1은 정확한 key 집합을 요구하며 아래 값을 둔다.
 
-Import는 기존 DB를 바로 덮어쓰지 않는다.
-v1에서는 "현재 DB 백업 후 교체" 방식으로 시작하고, record-level merge는 v2 이후 검토한다.
+- `backup_format_version`
+- `application_identifier`, `application_version`, `exported_at`
+- `schema_version`, `schema_identifier`, `applied_migrations`
+- `database_filename`, `database_byte_count`, `database_sha256`
+- `contains_complete_calendar_events = false`
+- `contains_linked_event_snapshots = true`, `contains_event_briefs = true`
+- `is_encrypted = false`
+
+archive format version은 DB schema v3와 별도다. 현재 migration은 `v1_context_store`,
+`v2_event_change_log`, `v3_calendar_clarity`이며 manifest migration 목록과 SQLite 내부
+migration table이 맞아야 한다. 기기 이름과 `source_machine_name`은 저장하지 않는다.
+SHA-256은 manifest와 DB entry의 byte 일치 확인이며 제작자 서명은 아니다. Phase 9은
+실행 중인 앱과 application identifier, current schema object와 migration 목록이
+정확히 같은 신뢰 가능한 backup만 허용하고 schema upgrade/downgrade를 하지 않는다.
+
+Import는 archive/manifest/hash/schema/migration을 검사한 뒤 추출 DB의 SQLite integrity와 foreign key를 확인한다. 그 뒤 현재 DB를 `Backups`에 자동 ZIP으로 보존하고 검증된 snapshot을 같은 writer에 restore한다. 사후 schema/integrity/FK도 확인하며 실패 시 pre-operation snapshot rollback을 시도한다. record-level merge는 제공하지 않는다.
+
+Reset은 사전 자동 ZIP 뒤 아래 여섯 active user-data table을 한 transaction에서 비운다.
+
+- `event_change_log`
+- `event_tasks`
+- `event_links`
+- `event_contexts`
+- `personal_tasks`
+- `calendar_preferences`
+
+reset은 GRDB migration history와 schema를 유지한다. import/reset/export 어느 경로도 EventKit write를 호출하지 않는다.
+
+SQLite에는 linked title/time/location/calendar identifiers와 change payload의 원본
+event notes snapshot이 있을 수 있으므로 ZIP은 민감한 plaintext다. KaosCal은 계정
+credential, Exchange password/MFA, OAuth token과 attendee 전체 목록을 전용 필드로
+수집·저장하지 않고 EventKit 전체 event store도 export하지 않는다. 그러나 사용자
+notes/tasks 본문은 검사하거나 redact하지 않으므로 거기에 입력한 민감정보는 그대로
+포함될 수 있다. KaosCal은 backup을 자동 암호화·서명하거나 자동 삭제하지 않으며
+retention과 신뢰할 수 있는 출처 확인은 사용자 책임이다.
+
+정상 current-schema DB가 열린 Settings 경로만 Phase 9에서 지원한다. failed-bootstrap corrupt live DB recovery는 Phase 10이다. 상세 계약은 [backup-restore.md](backup-restore.md)와 [ADR-015](adr/ADR-015-backup-import-reset-safety.md)를 따른다.
