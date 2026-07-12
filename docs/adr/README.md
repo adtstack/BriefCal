@@ -26,3 +26,4 @@ ADR은 제품·기술·데이터 안전성에 영향을 주는 결정을 변경 
 | [ADR-011](ADR-011-recurrence-move-change-log-and-session-undo.md) | Accepted | 반복 범위·안전한 이동·변경 기록과 세션 Undo |
 | [ADR-012](ADR-012-lifecycle-after-review-and-orphan-confirmation.md) | Accepted | 시간 생명주기·After Review·orphan 확인 경계 |
 | [ADR-013](ADR-013-app-icon-and-brand-direction.md) | Accepted | 앱 아이콘과 초기 브랜드 방향 |
+| [ADR-014](ADR-014-multi-calendar-clarity.md) | Accepted | 캘린더 역할·가상 Set·중복 후보의 로컬 투영 |

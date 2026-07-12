@@ -28,11 +28,15 @@ KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 ## 표시 모델과 영속 모델
 
-Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연결·맥락만 SQLite에 영속화했다. Phase 6은 이 경계에 impact preview, recurrence scope, additive change log와 process-session Undo token을 구현했다. Phase 7B는 schema를 바꾸지 않고 occurrence-aware lookup 값, 두 단계 missing 확인과 명시적 recovery 명령을 추가했다. Phase 7C도 기존 v1/v2를 재사용해 linked original delete의 saved-link preview, CAS, `cancelled + orphaned` finalize와 current-link-generation deletion provenance projection을 추가했다.
+Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연결·맥락만 SQLite에 영속화했다. Phase 6은 이 경계에 impact preview, recurrence scope, additive change log와 process-session Undo token을 구현했다. Phase 7B는 schema를 바꾸지 않고 occurrence-aware lookup 값, 두 단계 missing 확인과 명시적 recovery 명령을 추가했다. Phase 7C도 기존 v1/v2를 재사용해 linked original delete의 saved-link preview, CAS, `cancelled + orphaned` finalize와 current-link-generation deletion provenance projection을 추가했다. Phase 8은 EventKit snapshot·Event Brief identity와 분리된 role preference만 additive v3에 저장하고, virtual set·typed restriction·duplicate candidate는 파생 projection으로 구현했다.
 
 | 값 | 역할 | 영속 모델과의 차이 |
 | --- | --- | --- |
 | `DisplayEvent` | title, source, calendar color, raw date, read-only, meeting/invitation, canonical `isRecurring`, 정규화된 occurrence anchor, representable/unsupported recurrence snapshot, 원본 notes를 UI에 전달 | 앱 재실행 뒤 영속 ID로 사용하지 않음. `originalNotes`는 Event Brief notes가 아님 |
+| `CalendarDescriptor` | raw `CalendarSource`와 explicit/inferred role을 결합 | 저장 record가 아니며 `CalendarSource`를 변경하지 않음 |
+| `CalendarSetFilter` | `All`과 Work/Personal/Family/Shared/Subscription/Other role별 visible-event filter | process UI state이며 DB에 저장하지 않음 |
+| `CalendarWriteRestriction` | invitation, attendee, subscribed, birthdays, provider read-only를 안전한 우선순위로 설명 | EventKit ACL의 숨은 원인을 추측하지 않는 read projection |
+| `CalendarDuplicateCandidate` | 다른 calendar의 정규화 title·보수적 시간 범위가 같은 review candidate | 비영속·read-only이며 자동 merge/hide/delete 근거가 아님 |
 | `EventTimeSemantics` | `allDay`, `floating`, `zoned` 구분 | `event_links.time_semantics`와 local component snapshot으로 변환 |
 | `LocalDateTimeComponents` | 원 calendar identifier와 civil components 보존 | all-day/floating 표시·due·반복 occurrence 재구성에 사용 |
 | `DisplayEventIdentity` | SwiftUI selection과 occurrence별 card identity | `external → calendar item → event` 우선순위, local occurrence anchor 사용; 영속 resolver와 목적이 다름 |
@@ -136,11 +140,13 @@ create table app_settings (
 );
 ```
 
-## 구현된 V1 baseline
+이 v0의 `calendar_roles` 초안은 실제 Phase 8 schema가 아니다. 구현은 display-name/color/visible을 선행 저장하지 않고 아래 additive `v3_calendar_clarity` 계약을 따른다.
+
+## 구현된 additive schema
 
 첫 GRDB migration `v1_context_store`는 아래 네 테이블만 만든다.
 
-Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immutable v1을 유지하고 아래 `v2_event_change_log` additive migration을 적용했으며 migration·constraint·transaction 회귀 테스트를 통과했다. Phase 7B는 v1 status와 v2 `relinked`, Phase 7C는 v1의 `cancelled`/`orphaned`와 v2 `cancelled`/scope/unavailable Undo를 그대로 사용해 migration을 추가하지 않았다.
+Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immutable v1을 유지하고 아래 `v2_event_change_log` additive migration을 적용했다. Phase 7B는 v1 status와 v2 `relinked`, Phase 7C는 v1의 `cancelled`/`orphaned`와 v2 `cancelled`/scope/unavailable Undo를 그대로 사용해 migration을 추가하지 않았다. Phase 8은 기존 table을 수정하지 않고 `v3_calendar_clarity`를 추가했다.
 
 | 테이블 | 현재 책임 |
 | --- | --- |
@@ -148,6 +154,8 @@ Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immuta
 | `event_links` | EventKit identifiers, source/time/recurrence snapshot, identity 후보 |
 | `event_tasks` | Before/During/After, ordering, completion, fixed/relative due |
 | `personal_tasks` | 독립 개인 할 일, due, ordering, completion |
+| `event_change_log` (v2) | linked 원본 변경 history, scope, Undo audit state |
+| `calendar_preferences` (v3) | calendar identifier별 명시적 local role override와 source/calendar title snapshot |
 
 모든 `Date` column은 GRDB `.deferredToDate`를 명시해 UTC millisecond TEXT로 저장한다. foreign key를 항상 켜고, context 삭제는 link와 event task 및 v2 change log에 cascade한다. local Brief 삭제는 이 cascade만 사용하며 EventKit event는 건드리지 않는다.
 
@@ -246,6 +254,24 @@ linked mutation은 receipt rebind와 log append를 하나의 SQLite transaction�
 
 런타임 provider/scope routing은 canonical `DisplayEvent.isRecurring`만 사용하지만, persisted Undo payload 복원 경로의 recurrence·detached·occurrence 중복 검사는 방어적으로 유지한다. 이는 오래된 record나 모순된 snapshot을 single Undo 후보로 잘못 해석하지 않기 위한 저장 경계 안전장치다.
 
+### 구현된 V3 calendar clarity preference
+
+`v3_calendar_clarity`는 v1/v2 table을 바꾸지 않고 `calendar_preferences`를 추가한다.
+
+| 필드 | 계약 |
+| --- | --- |
+| `calendar_identifier` | non-empty text primary key. EventKit calendar identifier와 exact match할 때만 override 적용 |
+| `source_title_snapshot` | role을 설정할 때의 source title 보조 snapshot |
+| `calendar_title_snapshot` | role을 설정할 때의 calendar title 보조 snapshot |
+| `role` | `work`, `personal`, `family`, `shared`, `subscription`, `other` CHECK |
+| `created_at`, `updated_at` | UTC millisecond TEXT Date 계약 |
+
+`calendar_preferences(role)` index를 둔다. 사용자가 role을 명시적으로 변경할 때만 upsert하므로 단순 calendar/event fetch는 row를 생성하지 않는 sparse 저장소다. subscribed/birthdays의 `Subscription`, 나머지 source의 `Other`는 row가 없을 때 `CalendarRole.inferred`가 만드는 파생값이다.
+
+source/calendar title snapshot은 현재 automatic identifier-churn reconciliation에 사용하지 않는다. 이름이 같다는 이유로 새 calendar identifier에 role을 자동 적용하지 않는다. 현재 source list에 calendar가 없고 exact explicit preference도 없으면 event/task의 account type snapshot으로 역할을 추측하지 않고 `Other`로 표시한다. virtual `CalendarSetFilter`, typed restriction과 duplicate candidate는 모두 비영속 projection이며 v3 row를 만들지 않는다.
+
+duplicate candidate는 fetch 시 `CalendarDuplicateCandidateDetector.candidateIndex`로 한 번 계산해 AppState memory에 event ID별로 보관한다. 카드·Agenda·Inspector는 이 index를 O(1)로 조회하고 DB에 candidate row나 dismissal 상태를 저장하지 않는다. 다음 EventKit refresh에서 index 전체를 새 snapshot으로 교체하고 권한 회수 시 비운다.
+
 ## Status values
 
 `event_contexts.lifecycle_status`:
@@ -292,7 +318,7 @@ linked mutation은 receipt rebind와 log append를 하나의 SQLite transaction�
 
 ## Swift domain model
 
-실제 record는 String ID를 사용하는 `EventContext`, `EventLink`, `EventTask`, `PersonalTask`다. `EventBriefSnapshot`은 context+link+tasks와 current-link-generation deletion provenance 조회 결과이며 별도 테이블이 아니다. `TaskCenterItem`도 event/personal record와 같은 provenance를 합친 파생값이라 저장하지 않는다. lookup query/result와 recovery session도 비영속 값이다. missing/orphaned는 link/context status로 재구성하지만 deleted-original label은 history ordering까지 요구한다.
+실제 record는 String ID를 사용하는 `EventContext`, `EventLink`, `EventTask`, `PersonalTask`, `CalendarRolePreference`다. `EventBriefSnapshot`은 context+link+tasks와 current-link-generation deletion provenance 조회 결과이며 별도 테이블이 아니다. `TaskCenterItem`도 event/personal record와 같은 provenance를 합친 파생값이라 저장하지 않는다. lookup query/result, recovery session, virtual set·restriction·duplicate candidate도 비영속 값이다. missing/orphaned는 link/context status로 재구성하지만 deleted-original label은 history ordering까지 요구한다.
 
 첫 non-empty notes 또는 event task가 context와 link를 함께 만든다. 단순 선택과 빈 notes는 row를 만들지 않는다. 첫 저장의 resolve/create와 linked snapshot 갱신은 하나의 write transaction에서 수행한다.
 
@@ -328,7 +354,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 ## Repository 책임
 
 `AppDatabase`:
-- `DatabaseQueue` open과 `v1_context_store`, `v2_event_change_log` additive migration
+- `DatabaseQueue` open과 `v1_context_store`, `v2_event_change_log`, `v3_calendar_clarity` additive migration
 - foreign key 활성화
 - production Application Support, test in-memory/temporary-file 경계
 
@@ -368,7 +394,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 
 `TaskCenterRepository`:
 - event task와 personal task를 한 DB read에서 결합
-- typed backing task identity와 event section/effective range projection
+- typed backing task identity와 event section/effective range, calendar identifier/title/source projection. role은 UI에서 현재 local preference를 합성
 - `Today`: 미완료이며 내일 시작 전 due 또는 due 없음. overdue를 포함하되 completed context는 After section만 포함
 - `Upcoming`: 미완료이며 내일 시작 이후 due. completed context는 After section만 포함
 - `After Review`: completed context의 미완료 After만 포함하고 personal task는 제외
@@ -384,9 +410,11 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - `rebindAfterUndo`로 after snapshot 검증 뒤 원본 undone, restored append와 context rebind를 atomic 처리
 - 초기 Phase 6에서는 linked future scope를 repository mutation까지 보내지 않음. 후속으로 열 때도 영향 context 전체의 strong reconciliation plan이 provider/use-case preflight에서 성립해야 호출
 
-계획된 `CalendarRoleRepository`(Phase 8):
-- calendar identifier별 role 저장
-- 사용자 표시 이름, 색상 override, visible 상태 관리
+구현된 `CalendarRoleRepository`(Phase 8):
+- calendar identifier별 explicit role preference fetch/upsert/delete/reset/count
+- upsert 시 source/calendar title snapshot 갱신, 최초 `created_at` 유지
+- EventKit provider write와 분리된 local `AppDatabase` transaction만 사용
+- 사용자 표시 이름·색상 override, calendar별 visible 상태와 custom saved set은 현재 repository 범위가 아님
 
 ## Migration 원칙
 
@@ -396,12 +424,13 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - Phase 6 change log는 `v2_event_change_log`라는 additive migration으로만 추가하며 v1 SQL을 고쳐 쓰지 않는다.
 - Phase 7B는 v1/v2의 기존 status, snapshot, foreign key와 `relinked` type만 사용하므로 migration을 추가하지 않는다.
 - Phase 7C는 v1의 `cancelled`/`orphaned`, v2의 `cancelled`, 기존 scope와 unavailable Undo를 재사용하므로 migration을 추가하지 않는다.
+- Phase 8 role preference는 `v3_calendar_clarity`로만 추가하며 v1/v2 SQL을 고쳐 쓰지 않는다. virtual set·restriction·duplicate projection은 schema를 필요로 하지 않는다.
 - destructive migration은 v1에서 금지한다.
 - migration 전 자동 backup 또는 복구 안내를 검토한다.
 
 ## Backup 원칙
 
-Export는 SQLite DB와 metadata를 함께 묶는다.
+Export는 Event Brief·task·change log와 `calendar_preferences`를 포함한 SQLite DB와 metadata를 함께 묶는다. 실제 export/import UX는 Phase 9 범위다.
 
 ```text
 KaosCal-Backup-YYYY-MM-DD.zip

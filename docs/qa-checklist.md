@@ -171,6 +171,22 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 왜 수정할 수 없는지 설명한다.
 - KaosCal local Event Brief는 편집 가능해야 한다.
 
+### 7-c. Multi-calendar clarity (Phase 8)
+
+절차:
+1. `KAOS-TEST`와 `일정`에 서로 다른 role을 지정하고 All/Work/Personal 등 virtual Set을 전환한다.
+2. 같은 제목이며 시작·종료가 각각 15분 이내인 다른-calendar 일정, 같은 all-day civil range인 일정과 경계 밖 일정을 준비한다.
+3. Sidebar, Day, Week, Agenda, Inspector, 원본 editor와 Task Center의 role/source/account/permission 표시를 비교한다.
+4. invitation, attendee, subscription, birthdays와 provider read-only fixture에서 원본 편집을 시도한다.
+
+기대 결과:
+- role 변경은 local `calendar_preferences`만 갱신하고 EventKit create/update/delete를 호출하지 않는다. Set 전환도 원본 fetch·Event Brief·Task Center row를 삭제하지 않는다.
+- 현재 Set 밖의 선택은 pending notes를 저장한 뒤 안전하게 정리되며, Task Center/relink/duplicate 후보 열기는 필요한 경우 All로 전환해 정확한 일정을 선택한다.
+- source가 있는 subscribed/birthdays만 기본 `Subscription`, 나머지는 `Other`다. source와 explicit override가 모두 없으면 account type을 추측하지 않고 `Other`로 표시한다.
+- timed/all-day duplicate는 다른 calendar의 검토 후보로만 표시되고 strong same occurrence, 제목/시간 범위 밖 항목은 제외된다. 자동 merge·hide·delete와 EventKit write는 없다.
+- typed reason 우선순위는 invitation→attendee→subscription→birthdays→provider read-only이며 UI 설명과 원본 write preflight가 같다. local Event Brief는 계속 편집 가능하다.
+- 작은 card는 icon, 자세한 role/source/reason은 help·VoiceOver와 Inspector에 남는다. 44pt 고밀도와 210pt Sidebar, 긴 한국어/source명은 실제 화면에서 잘림과 VoiceOver 순서를 별도 확인한다.
+
 ### 7-a. 종료 일정과 After Review (Phase 7A)
 
 절차:
@@ -536,6 +552,17 @@ Phase 7C linked original delete live Exchange gate:
 - automatic evidence는 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**와 `/private/tmp/KaosCalPhase7CFinal-20260712-022700.xcresult` 그대로 유지
 - recurring server fixture는 `seriesMaster`와 daily occurrence 3개 생성·전체 cleanup, residue 0 **pass**. session auto-lock 이전에 UI에 진입하지 못해 recurring `thisEvent` mutation은 **not tested**, 제품 failure 아님
 - 서버 최종 residue single 0, recurring 0. retained single local Brief의 `Delete Local Brief`와 원본 비재생성 확인은 **manual pending**
+
+Phase 8 Multi-Calendar Clarity 자동·Release gate:
+
+- conservative role inference, explicit sparse role 저장·재열기·delete/reset과 v1/v2→`v3_calendar_clarity` additive migration, role CHECK를 검증
+- virtual Set filtering, selection 밖 전환 전 notes flush, Task Center/duplicate 후보의 All 전환과 calendar identifier 기반 role projection을 검증
+- invitation·attendee·subscription·birthdays·provider read-only typed precedence와 같은 reason을 쓰는 AppState 원본 write preflight, provider write 0회를 검증
+- normalized title, timed 15분 경계, all-day civil range, cross-calendar/strong-occurrence 제외, deterministic candidate index를 검증. index는 fetch 때 한 번 만들고 card lookup은 O(1)
+- 최종 전체 **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase8FinalTests-20260712-1415.xcresult`
+- signed Release `/private/tmp/KaosCalPhase8FinalRelease/Build/Products/Release/KaosCal.app`, CDHash `6c595445dadfb60588410329222557d00865c222`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
+- 전체 test 전후 direct/sandbox 운영 DB의 mtime·size·SHA-256과 WAL/SHM 부재 불변. exact Release 정상 bootstrap에서는 사전 backup 뒤 sandbox DB만 v2→v3로 migration하고 integrity `ok`, FK violation 0, 새 table 0행과 기존 다섯 table count·SHA3 불변, 종료 뒤 process 0을 확인
+- macOS session lock 때문에 Sidebar/Inspector/고밀도 card/VoiceOver 실화면은 **not tested**. shared read-only Viewer가 없어 provider read-only reason live gate도 **manual pending**이며 자동 결과로 대체하지 않음
 
 Mini month 자동/Release gate:
 

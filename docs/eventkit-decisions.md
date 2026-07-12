@@ -22,7 +22,7 @@ Exchange 우선 지원 범위는 macOS Calendar에 구성된 Exchange Online cal
 ## 결정 2: KaosCal 고유 데이터는 EventKit에 저장하지 않는다
 
 EventKit 이벤트에는 원본 일정 데이터만 저장한다.
-Before/During/After 체크리스트, KaosCal notes, Event Brief 상태는 SQLite에 저장한다. change log는 Phase 6에서 같은 로컬 저장소에 추가한다.
+Before/During/After 체크리스트, KaosCal notes, Event Brief 상태는 SQLite에 저장한다. change log는 Phase 6, 명시적 calendar role preference는 Phase 8에서 같은 로컬 저장소에 additive migration으로 추가했다.
 
 금지:
 - 체크리스트를 `EKEvent.notes`에 serialize
@@ -61,9 +61,11 @@ UI 원칙:
 하지만 KaosCal local context는 사용자의 Mac에 저장되는 별도 데이터이므로 Event Brief는 붙일 수 있다.
 
 UI:
-- 원본 일정 편집 버튼은 비활성화한다.
-- Source badge에 read-only 상태를 표시한다.
-- "이 캘린더는 원본 일정을 수정할 수 없지만 KaosCal 메모와 체크리스트는 저장할 수 있습니다." 같은 문구를 사용한다.
+- 원본 일정 편집 버튼 대신 typed restriction reason을 표시한다.
+- Source badge에 role·account type·editable/restriction을 표시하고 calendar/source text를 별도로 유지한다.
+- 수정 불가 이유는 invitation → attendee meeting → subscribed → birthdays → provider-reported read-only의 typed 우선순위를 사용한다.
+- 모든 사유는 원본을 수정하지 못해도 KaosCal 메모와 체크리스트는 local에 저장할 수 있음을 함께 설명한다.
+- EventKit이 공유 owner/admin ACL의 구체 원인을 주지 않으면 Exchange·CalDAV·iCloud의 read-only 사유를 추측하지 않고 “macOS Calendar가 read-only로 보고함”으로 한정한다.
 
 ## 결정 5: 종일·시간대·반복 일정은 명시적 의미를 가진다
 
@@ -104,6 +106,8 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - deleted-original 표시는 status pair만으로 결정하지 않는다. 현재 context에 unavailable `cancelled` log가 있고 그 뒤 `(created_at, rowid)`상 더 최신 `relinked`가 없어야 한다. relink는 과거 deletion provenance를 무효화하므로 이후 같은 상태쌍이 다시 생겨도 새 KaosCal deletion log 없이는 일반 orphan이다.
 - nonrecurring은 log `single`, recurring occurrence는 `this_event`만 허용한다. linked `futureEvents`, attendee meeting/invitation과 read-only 원본은 계속 provider 전에 차단한다.
 - EventKit 성공 뒤 receipt/local finalize가 실패하거나 둘 사이 crash가 나면 원본을 자동 복원하거나 Delete를 재시도하지 않는다. review를 닫고 refresh하며 local Brief 보존과 false log 없음, 실제 외부 성공 범위를 알린다. Phase 7C는 기존 v1/v2 값만 써 migration이 없다.
+
+후속 live gate에서 비반복 linked original delete의 EventKit 삭제, Calendar.app/Outlook 부재와 local Brief/task 보존은 확인했다. 반복 `thisEvent` mutation과 retained local Brief cleanup 화면은 macOS session lock으로 미검증이며 비반복 결과로 대체하지 않는다.
 
 세부 경계는 [ADR-012](adr/ADR-012-lifecycle-after-review-and-orphan-confirmation.md)를 따른다.
 
@@ -187,3 +191,16 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - provider 경계에서는 `isRecurring`이 canonical 판정이지만 persisted Undo payload를 복원·검증하는 경로의 recurrence·detached·occurrence 중복 검사는 과거 데이터와 불일치에 대비한 방어 조건으로 유지한다. 이 중복 검사를 일반 scope routing의 판정 규칙으로 역전파하지 않는다.
 
 세부 schema, 확인 기준과 무효화 조건은 [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md)을 따른다. Exchange `EKSpan`·series split·identifier churn은 `KC-E4` 수동 결과 전까지 지원 통과로 선언하지 않는다.
+
+## 결정 12: Multi-calendar clarity는 EventKit 원본 위의 local/read-only projection이다
+
+- `CalendarSource`와 `DisplayEvent`는 EventKit raw snapshot으로 유지한다. Work/Personal 같은 사용자 역할을 원본 calendar title·notes·color에 쓰지 않는다.
+- role은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`다. subscribed/birthdays만 `Subscription`으로 추론하고 Exchange·CalDAV·iCloud·local은 이름이나 account type으로 용도를 추측하지 않아 `Other`다.
+- 현재 source list에 calendar가 없고 exact explicit override도 없으면 저장된 event/task account type snapshot으로 역할을 추측하지 않고 `Other`로 표시한다.
+- 사용자가 바꾼 role만 additive `v3_calendar_clarity`/`calendar_preferences`에 sparse upsert한다. EventKit fetch는 row를 만들지 않고 role 변경은 `CalendarProviding` write를 호출하지 않는다.
+- Phase 8 Calendar Set은 `All`과 role별 virtual view filter다. raw fetch, local context observation, recovery lookup, Task Center DB query와 editor writable destination은 필터링하지 않는다.
+- duplicate candidate는 다른 calendar의 정규화 title이 같고 timed start/end가 각각 15분 이내이거나 all-day civil range가 같은 경우의 비영속 read projection이다. fetch당 한 번 candidate index를 만들고 UI는 event ID로 O(1) 조회한다. 같은 strong identity/occurrence는 제외하고 자동 merge·hide·delete·EventKit write는 제공하지 않는다.
+- role preference의 source/calendar title snapshot은 자동 identifier-churn 재연결 근거가 아니다. exact calendar identifier가 달라지면 이름 유사성만으로 role을 승계하지 않는다.
+- AppState 원본 write preflight는 UI에 표시하는 것과 같은 `CalendarWriteRestriction`을 직접 throw한다. provider의 Confirm 후 fresh permission check는 독립 방어선으로 유지한다.
+
+세부 계약은 [ADR-014](adr/ADR-014-multi-calendar-clarity.md)를 따른다. shared read-only Exchange fixture의 실제 permission reason과 긴 source/role 조합의 화면 표시는 아직 live visual gate를 통과하지 않았으며 session lock으로 막힌 화면 gate를 자동 결과로 대체하지 않는다.

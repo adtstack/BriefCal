@@ -42,9 +42,9 @@ BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. �
 │ ● Personal   │    11:00  ▌ Dentist                  │ Personal     │
 │ ● Family     │    12:00                             │              │
 │              │    13:00  ▌ Lunch                    │ Before       │
-│ Sets         │    14:00  ▌ Design Review            │ ☐ 신분증      │
-│ All          │    15:00                             │ ☐ 보험 서류   │
-│ Work Mode    │                                      │              │
+│ Role Set     │    14:00  ▌ Design Review            │ ☐ 신분증      │
+│ All Calendars│    15:00                             │ ☐ 보험 서류   │
+│ Work         │                                      │              │
 └──────────────┴──────────────────────────────────────┴──────────────┘
 ```
 
@@ -52,9 +52,9 @@ BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. �
 
 Sidebar:
 - 고정 6×7 mini month 날짜 탐색기
-- calendar list
-- calendar sets
-- visible filters
+- role·source·permission을 함께 보여 주는 calendar list와 role 변경 menu
+- `All Calendars`와 role별 virtual Calendar Set
+- Set은 Day/Week/Agenda visibility만 좁히며 EventKit fetch·Event Brief·editor destination을 제거하지 않음
 
 Calendar Area:
 - Day/Week/Agenda는 모두 v1 필수
@@ -71,7 +71,7 @@ Event Brief Panel:
 
 Task Center:
 - sidebar 항목으로 열고 오늘·예정·After Review·완료를 빠르게 전환
-- event task에는 연결 일정의 시간과 source를 작게 표시
+- event task에는 연결 일정의 시간, role, calendar/source를 작게 표시
 - personal task에는 로컬 저장 badge를 표시
 - 프로젝트·팀 collaboration UI는 제공하지 않음
 
@@ -88,7 +88,7 @@ Task Center:
 - 전체 배경색은 subtle system fill 사용
 - 제목은 한두 줄까지 허용
 - 시간과 calendar role을 작은 metadata로 표시
-- read-only 또는 conflict는 icon/text로 표시하고 색상만으로 전달하지 않는다.
+- read-only 또는 possible duplicate는 화면 밀도에 맞는 icon/text·help·VoiceOver로 표시하고 색상만으로 전달하지 않는다.
 
 ### Phase 2 실제 적용값
 
@@ -97,11 +97,11 @@ Task Center:
 - Week 날짜 최소 너비: 112pt
 - overlap column 최소 너비: 44pt; 더 좁아지면 날짜 열을 늘려 가로 scroll
 - timed card: 최소 22pt, 3pt calendar rail, 5pt radius, 선택 시 2pt outline
-- 높이 34pt 미만은 제목 중심, 34pt 이상은 시간, 58pt 이상은 calendar title까지 표시한다. 생략 정보는 tooltip과 VoiceOver label에 모두 남긴다.
+- 높이 34pt 미만은 제목 중심, 34pt 이상은 시간, 58pt 이상은 role·calendar title까지 표시한다. 생략 정보는 tooltip과 VoiceOver label에 모두 남긴다.
 - all-day row: 26pt, card 22pt. lane은 내용에 맞춰 늘지만 화면 높이의 35%·최대 240pt에서 내부 세로 scroll로 전환한다.
 - 오늘 열은 약한 accent fill, 현재 시각은 red line과 dot으로 표시한다.
 - calendar rail은 EventKit calendar의 실제 sRGB color snapshot을 사용한다. 색을 가져올 수 없을 때만 Exchange 공통 blue 또는 secondary gray를 fallback으로 쓴다.
-- calendar role, 사용자 color override, calendar set은 Phase 8에서 추가한다.
+- Phase 8의 calendar role과 role별 virtual set을 적용했다. 사용자 color override와 임의 이름 saved set은 아직 구현 범위가 아니다.
 
 ### Mini month 실제 적용값
 
@@ -169,22 +169,42 @@ After:
 - 저장 중에는 progress와 interactive-dismiss 차단을 사용한다. stale·identity 모호성은 write 전 복구 가능한 오류로 보여 준다. EventKit save 후 post-save occurrence를 확정하지 못한 부분 성공은 editor/review를 닫고 refresh한 뒤 “Do not retry·Calendar.app에서 확인”을 표시한다. local data는 보존하며 log·Undo를 만들지 않는다.
 - 한 번에 하나의 editor만 허용하고 sheet가 열려 있으면 toolbar와 `⌘N`을 비활성화한다.
 
-## Source badge
+## Phase 8 source·role·permission badge
 
-Source badge는 사용자가 이 일정의 출처와 수정 가능 여부를 빠르게 이해하게 해야 한다.
+Source badge는 EventKit 계정 유형, 실제 calendar/source, 사용자가 정한 role과 원본 수정 가능 여부를 혼합하지 않고 함께 보여 준다.
 
-예시:
-- `Work Google · Editable`
-- `Personal iCloud · Editable`
-- `Holidays · Read-only`
-- `Subscription · Read-only`
+역할:
+- `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`
+- subscribed/birthdays는 row가 없을 때 `Subscription`, 나머지 calendar는 용도를 추측하지 않고 `Other`
+- 현재 source list에 calendar가 없고 exact explicit override도 없으면 이전 event/task의 account type snapshot으로 역할을 추측하지 않고 `Other`
+- Sidebar role menu는 KaosCal local grouping만 바꾸며 Calendar.app의 이름·색·권한을 변경하지 않음
 
-read-only 상세 문구:
+화면별 계층:
+- Sidebar: calendar title 바로 아래 `Role · Source/Account · Editable|Read-only`, lock help에 상세 이유
+- Agenda: 시간 · role · calendar를 항상 표시하고 source/account/restriction은 VoiceOver에 포함
+- timed card: 58pt 이상에서 `Role · Calendar`; 더 낮은 card에서 생략된 role/source/permission/duplicate는 help·VoiceOver에 유지
+- all-day card: 반복·duplicate·lock icon으로 밀도를 유지하고 role/source/restriction은 help·VoiceOver에 유지
+- Inspector: role · account type · editable/restriction badge와 별도 `Calendar · Source` text, 정확한 read-only reason, duplicate candidate 목록
+- Event editor calendar picker와 Task Center event/recovery source에도 현재 role을 포함
 
-```text
-이 캘린더는 원본 일정을 수정할 수 없습니다.
-KaosCal 체크리스트와 메모는 이 Mac에 저장할 수 있습니다.
-```
+수정 불가 이유는 다음 우선순위의 typed projection을 사용한다.
+
+1. Invitation
+2. Meeting with attendees
+3. Subscribed calendar
+4. Birthdays calendar
+5. macOS Calendar의 provider-reported read-only
+
+모든 restriction 문구는 원본은 수정하지 못하더라도 local Event Brief는 editable임을 함께 알린다. Inspector와 AppState write preflight는 같은 typed restriction과 우선순위를 사용한다. Exchange/CalDAV/iCloud 공유 ACL의 구체 원인은 EventKit이 제공하지 않으면 추측하지 않는다.
+
+## Phase 8 Calendar Set과 duplicate candidate
+
+- Calendar Set은 `All Calendars`와 role별 virtual filter다. 임의 이름 set·calendar별 checkbox·set 영속은 현재 계약이 아니다.
+- Set 변경 전 pending Event Brief notes를 flush하고, 새 set에서 숨겨지는 선택은 정리한다.
+- duplicate badge는 다른 calendar의 정규화 title과 시간 범위가 보수적으로 같은 `Possible duplicate`임을 뜻한다. fetch 시 candidate index를 한 번 계산하고 각 card/Inspector는 event ID로 O(1) 조회한다. 확정 판정이 아니며 자동 merge·hide·delete하지 않는다.
+- Inspector는 candidate의 시간, match 근거, role, calendar/account, permission을 보여 준다. candidate를 열면 `All Calendars`로 전환하고 Day에서 선택하며 원본을 바꾸지 않는다.
+
+shared read-only Exchange의 실제 문구와 긴 source/role 조합, 고밀도 card의 시각 품질은 fixture 부재와 session lock 제한으로 live visual gate가 아직 미검증이다. 코드·fixture 투영을 이 gate의 통과로 해석하지 않는다.
 
 ## Phase 6 recurrence와 impact confirmation
 

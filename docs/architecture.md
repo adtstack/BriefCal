@@ -35,13 +35,13 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 | 변경 기록 | KaosCal | Local SQLite |
 | Event Brief 상태 | KaosCal | Local SQLite |
 | Personal task | KaosCal | Local SQLite |
-| 캘린더 역할과 표시 설정 | KaosCal | Local SQLite |
+| 명시적 캘린더 역할 override | KaosCal | Local SQLite |
 
 원칙: KaosCal 고유 데이터는 `EKEvent.notes`에 쓰지 않는다.
 
 ## 현재 모듈 구조
 
-아래 tree는 Phase 7C 구현 checkpoint 시점의 실제 구조다. recurrence editor와 mutation/linked-delete impact review는 `EventEditorView`, scope·partial-success·session Undo와 missing/orphan/deleted-original recovery 조정은 `AppState`, change-log/relink/delete-finalize transaction은 기존 `ContextStore`에 유지했다. Phase 7B/7C는 migration 파일을 바꾸지 않았다.
+아래 tree는 Phase 8 Calendar Clarity 구현을 포함한 실제 구조다. recurrence editor와 mutation/linked-delete impact review는 `EventEditorView`, scope·partial-success·session Undo와 missing/orphan/deleted-original recovery 조정은 `AppState`, change-log/relink/delete-finalize transaction은 기존 `ContextStore`에 유지했다. Phase 8은 EventKit snapshot을 바꾸지 않고 `CalendarClarity`의 로컬 projection과 additive v3 preference 저장소를 추가했다.
 
 ```text
 KaosCal.app
@@ -54,6 +54,7 @@ KaosCal.app
 │  ├─ CalendarModels.swift
 │  ├─ CalendarEventDateFormatting.swift
 │  ├─ CalendarEventLayout.swift
+│  ├─ CalendarClarity.swift
 │  └─ CalendarEventEditing.swift
 ├─ ContextStore/
 │  ├─ AppDatabase.swift
@@ -64,6 +65,7 @@ KaosCal.app
 │  ├─ EventTaskRepository.swift
 │  ├─ PersonalTaskRepository.swift
 │  ├─ TaskCenterRepository.swift
+│  ├─ CalendarRoleRepository.swift
 │  └─ EventIdentityFingerprint.swift
 ├─ Features/
 │  ├─ CalendarShell/
@@ -86,16 +88,18 @@ KaosCal.app
    ├─ CalendarEventLayoutTests.swift
    ├─ CalendarAccessTests.swift
    ├─ CalendarEventEditingTests.swift
+   ├─ CalendarClarityTests.swift
    ├─ AppStateTests.swift
    ├─ LocalWorkspaceTests.swift
+   ├─ ManualEventKitQATests.swift
    └─ FakeCalendarProvider.swift
 ```
 
-`EventBrief`와 `TaskCenter` feature 경계는 Phase 4, `EventEditor`는 Phase 5에서 추가했다. Phase 6과 Phase 7A/7B/7C는 위의 기존 경계를 확장했다. missing/relink와 deleted-original recovery UI도 기존 Calendar shell, Event Brief와 Task Center에 배치했으며 별도 저장 모듈을 만들지 않았다. `Settings`는 해당 phase의 실제 구현 파일이 확정될 때 tree에 추가한다.
+`EventBrief`와 `TaskCenter` feature 경계는 Phase 4, `EventEditor`는 Phase 5에서 추가했다. Phase 6과 Phase 7A/7B/7C는 위의 기존 경계를 확장했다. missing/relink와 deleted-original recovery UI도 기존 Calendar shell, Event Brief와 Task Center에 배치했으며 별도 저장 모듈을 만들지 않았다. Phase 8은 `CalendarClarity.swift`에 role·typed restriction·virtual set·duplicate projection을, `CalendarRoleRepository.swift`에 명시적 role override만 두었다. `Settings`는 해당 phase의 실제 구현 파일이 확정될 때 tree에 추가한다.
 
 ## 런타임 흐름
 
-아래는 Phase 7C 구현 checkpoint의 v1 런타임 흐름이다. 1~8의 기존 일정·local context 흐름에 9의 반복·linked move·change log·session Undo, 10의 missing/orphan recovery와 11의 linked original delete review/finalize를 구현했다.
+아래는 Phase 8 구현을 포함한 v1 런타임 흐름이다. 1~8의 기존 일정·local context 흐름에 9의 반복·linked move·change log·session Undo, 10의 missing/orphan recovery, 11의 linked original delete review/finalize와 12의 multi-calendar clarity projection을 구현했다.
 
 1. `KaosCalApp` 초기화가 `AppBootstrap.makeAppState`를 호출한다.
 2. production에서는 `AppBootstrap`이 Application Support DB를 열고 migration한 단일 `ContextStore`를 만든다. hosted XCTest에서는 production DB open을 건너뛴다.
@@ -108,6 +112,7 @@ KaosCal.app
 9. Phase 6의 위험한 변경은 impact preview와 명시적 scope 확인 뒤 EventKit을 쓰고, linked context rebind와 change log를 한 local transaction으로 조정한다. 마지막 linked 비반복 single calendar/time 변경만 process session 안에서 Undo 후보가 된다.
 10. 사용자가 linked 원본 열기/Recheck를 요청하면 occurrence-aware provider lookup을 실행한다. 첫 명시적 notFound는 missing, 두 번째 명시적 notFound는 orphan review만 열며 Keep/검증된 Relink/local-only Delete를 서로 다른 명령으로 처리한다.
 11. linked 원본 삭제는 saved-link·notes/tasks impact를 고정한 별도 review와 final Confirm을 거친다. 성공한 EventKit receipt 뒤 `cancelled + orphaned`, saved-link unavailable cancellation log와 Undo supersede를 한 SQLite transaction으로 finalize한다. deleted-original projection은 이 current-link-generation provenance까지 확인한다.
+12. calendar fetch 후 sparse role preference를 읽어 `CalendarDescriptor`를 만든다. 선택한 role set은 Day/Week/Agenda의 `visibleEvents`만 좁히고, typed restriction과 duplicate candidate는 원본 write 없이 화면·VoiceOver에 projection한다.
 
 ## Phase 4 local interaction pipeline
 
@@ -177,7 +182,7 @@ protocol CalendarProviding: AnyObject {
 }
 ```
 
-Phase 1은 read-only 경계와 `EventKitProvider` 하나로 시작했고 Phase 5에서 create/update/delete 명령을 확장했다. Phase 6은 scope-aware overload와 write 여부·scope·changed fields를 담는 receipt를 구현했다. Phase 7B는 저장 link와 최종 relink candidate를 확인하는 typed `lookupEvent` read를 추가했다. Phase 7C는 기존 scoped delete receipt를 사용하되 linked Brief의 preparation/CAS/finalize를 AppState와 ContextStore에서 조정한다. UI는 raw `EKSpan`이나 `EKEvent`를 보관하지 않고 기존 fake/provider 경계를 유지한다. 직접 Google/Microsoft/CalDAV adapter는 만들지 않는다.
+Phase 1은 read-only 경계와 `EventKitProvider` 하나로 시작했고 Phase 5에서 create/update/delete 명령을 확장했다. Phase 6은 scope-aware overload와 write 여부·scope·changed fields를 담는 receipt를 구현했다. Phase 7B는 저장 link와 최종 relink candidate를 확인하는 typed `lookupEvent` read를 추가했다. Phase 7C는 기존 scoped delete receipt를 사용하되 linked Brief의 preparation/CAS/finalize를 AppState와 ContextStore에서 조정한다. Phase 8의 role·set·restriction·duplicate는 provider protocol을 늘리지 않는 local/read-only projection이다. UI는 raw `EKSpan`이나 `EKEvent`를 보관하지 않고 기존 fake/provider 경계를 유지한다. 직접 Google/Microsoft/CalDAV adapter는 만들지 않는다.
 
 Provider는 long-lived `EKEventStore`를 소유하지만 UI에 `EKEvent`를 전달하지 않는다. source, identifier, 시간, 종일, 반복, 초대, 수정 가능 상태를 값 타입 snapshot으로 만든다. 연속 store change 알림은 AppState에서 250ms 병합하고 다시 fetch한다.
 
@@ -270,8 +275,10 @@ Linked editor Delete
   editor/review를 닫아 Delete 재시도를 막고 refresh한 뒤 local Brief가 보존됐음을
   알린다. 실패한 local transaction에는 status/log/Undo supersede가 일부만 남지 않는다.
 - Phase 7C는 기존 status, `cancelled` change type, scope와 unavailable Undo를 재사용해
-  schema migration이 없다. 자동 checkpoint는 fake provider/local DB 범위이며 실제
-  Exchange linked delete는 수동 gate다.
+  schema migration이 없다. 비반복 linked original delete는 후속 live gate에서
+  EventKit 삭제, Calendar.app/Outlook 부재, local Brief/task 보존을 확인했다.
+  반복 `thisEvent`와 retained local Brief cleanup 화면은 session lock으로 미검증이며
+  이 제한을 비반복 결과로 대체하지 않는다.
 
 ## Phase 5 원본 일정 쓰기 파이프라인(역사적 baseline)
 
@@ -329,7 +336,7 @@ EventEditor draft + selected occurrence
 ```text
 EventKitProvider
   → DisplayEvent value snapshot
-  → AppState visible period/filter/cache
+  → AppState visible period + virtual role-set filter/cache
   → CalendarEventLayout
   → CalendarTimelineView / AgendaView / EventInspectorView
 ```
@@ -341,6 +348,7 @@ EventKitProvider
 - pending 범위 조회는 다음 navigation 전에 취소해 오래된 결과가 현재 화면을 덮지 않게 한다. `EKEventStoreChanged`는 마지막 loaded interval을 250ms 병합 재조회한다.
 - `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
 - `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
+- Phase 8 role set은 EventKit fetch·`ContextStore.observe`·editor destination을 줄이지 않고 렌더링에 쓰는 `visibleEvents`만 필터링한다. set 변경으로 선택 일정이 숨겨지면 pending notes를 먼저 flush하고 selection을 정리한다. duplicate candidate를 열 때는 `All Calendars`로 돌리고 Day에서 정확한 candidate를 선택한다.
 - Sidebar의 `MiniMonthGrid`는 Foundation calendar로 month start, first-weekday offset과 42개 civil day만 계산한다. SwiftUI `MiniMonthView`는 월 탐색을 local state로 유지하고 날짜 선택만 `AppState.selectMiniMonthDate`로 보내 기존 selection 정리·range fetch 경계를 재사용한다. incomplete fetch를 일정 없음으로 오인하지 않도록 event dot은 만들지 않는다.
 - UI용 `DisplayEventIdentity`는 SwiftUI 선택 안정성을 위한 값이다. all-day/floating 반복은 local occurrence anchor를 써 시스템 시간대 변경에도 같은 civil occurrence ID를 유지한다. 영속 resolver와 같은 ID 또는 같은 우선순위를 보장하지 않는다.
 
@@ -350,13 +358,13 @@ EventKitProvider
 
 ```text
 KaosCalApp / AppBootstrap
-  → AppDatabase(DatabaseQueue + v1 + v2 additive migrations)
+  → AppDatabase(DatabaseQueue + v1 + v2 + v3 additive migrations)
   → ContextStore transaction boundary
-  → EventContext/EventTask/PersonalTask repositories
+  → EventContext/EventTask/PersonalTask/CalendarRole repositories
   → TaskCenterRepository combined read
 ```
 
-- `v1_context_store`는 `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`만 만든 immutable baseline이다. Phase 6은 이 baseline을 바꾸지 않고 `v2_event_change_log`를 additive migration으로 추가했다. Phase 7B는 기존 status/snapshot/foreign key와 v2 `relinked`, Phase 7C는 기존 `cancelled`/`orphaned`, `cancelled` log, scope와 unavailable Undo를 재사용해 migration을 추가하지 않았다. calendar role과 settings는 더 뒤의 migration이다.
+- `v1_context_store`는 `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`만 만든 immutable baseline이다. Phase 6은 이 baseline을 바꾸지 않고 `v2_event_change_log`를 additive migration으로 추가했다. Phase 7B는 기존 status/snapshot/foreign key와 v2 `relinked`, Phase 7C는 기존 `cancelled`/`orphaned`, `cancelled` log, scope와 unavailable Undo를 재사용해 migration을 추가하지 않았다. Phase 8은 기존 table을 바꾸지 않고 `v3_calendar_clarity`의 sparse `calendar_preferences`를 추가했다. Phase 9 app settings/backup metadata는 아직 이 migration에 포함하지 않는다.
 - 테스트 host는 `XCTestConfigurationFilePath`를 감지해 default Application Support DB를 열지 않는다. repository test는 in-memory 또는 임시 파일 DB만 사용한다.
 - 앱 시작 DB open/migration 실패는 in-memory fallback 없이 전역 복구 화면으로 전환한다. 기존 DB를 삭제하거나 덮어쓰지 않는다.
 - 첫 non-empty notes 또는 event task 저장만 context+link를 만들며, resolve부터 insert/update까지 하나의 write transaction이다.
@@ -365,6 +373,28 @@ KaosCalApp / AppBootstrap
 - 반복 identity는 zoned absolute occurrence와 all-day/floating civil occurrence를 분리한다. identifier+occurrence unique index가 동시 중복 생성을 막는다.
 - all-day/floating relative task due와 temporal lifecycle은 저장된 local components를 조회 calendar에서 재구성한다. personal task와 event task는 한 consistent read에서 Today/Upcoming/After Review/Completed item으로 합친다.
 - 날짜는 UTC millisecond TEXT 계약을 명시한다. details와 선택 근거는 [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md)을 따른다.
+
+## Phase 8 multi-calendar clarity pipeline
+
+```text
+CalendarSource + DisplayEvent raw snapshot
+  → sparse CalendarRolePreference lookup
+  → CalendarDescriptor(role + explicit/inferred)
+  → virtual CalendarSetFilter for visibleEvents only
+  → role/source: Sidebar / Day / Week / Agenda / Inspector / Task Center / Editor
+  → typed restriction: Sidebar / Day / Week / Agenda / Inspector + write preflight
+  → duplicate read projection: Day / Week / Agenda / Inspector
+```
+
+- `CalendarRole`은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`다. subscribed/birthdays만 `Subscription`으로 추론하고 Exchange·CalDAV·iCloud·local은 이름이나 account type으로 용도를 추측하지 않아 `Other`다.
+- 사용자가 role을 바꾼 때만 `CalendarRoleRepository`가 `calendar_preferences`를 upsert한다. 단순 EventKit fetch는 preference row를 만들지 않고, role write는 `CalendarProviding` create/update/delete를 호출하지 않는다.
+- `CalendarSetFilter`는 `All`과 role별 virtual filter다. 선택 set은 process UI state이며 v3에 저장하지 않는다. 임의 이름 saved set, calendar별 visibility와 color/name override는 현재 계약이 아니다.
+- `CalendarWriteRestriction` 우선순위는 invitation → attendee → subscribed → birthdays → provider-reported read-only다. provider ACL의 구체 사유를 추측하지 않으며 모든 제한 문구는 local Event Brief가 editable임을 함께 밝힌다.
+- duplicate detector는 다른 calendar의 정규화 title이 같고, timed start/end가 각각 15분 이내이거나 all-day civil exclusive range가 같을 때만 candidate를 만든다. 같은 strong identity/occurrence는 제외하고 deterministic하게 정렬하며 저장·자동 merge·hide·delete하지 않는다. `AppState`는 fetch snapshot을 받을 때 candidate index를 한 번 계산하고 card/Inspector는 event ID로 O(1) 조회하므로 렌더링 중 전체 event pair를 반복 검사하지 않는다.
+- role preference는 exact calendar identifier로만 적용한다. source/calendar title snapshot은 보조 기록이지 identifier churn 후 자동 재연결 근거가 아니다.
+- event/task snapshot이 남아 있어도 현재 `calendarSources`에 source가 없고 exact explicit override도 없으면 account type snapshot으로 role을 다시 추론하지 않고 `Other`로 표시한다.
+
+세부 결정은 [ADR-014](adr/ADR-014-multi-calendar-clarity.md)를 따른다. shared read-only Exchange의 실제 typed reason과 긴 source/role 조합의 화면 표시는 fixture·session lock 제한으로 아직 live visual gate를 통과하지 않았다.
 
 ## Event Brief 경계
 
@@ -404,6 +434,8 @@ EventKit의 eventIdentifier는 영구 절대값으로 취급하지 않는다. �
 앱은 권한 상태를 제품 경험의 일부로 다룬다. macOS 14 이상에서는 이벤트 목록을 읽기 위해 full calendar access를 명시적으로 요청한다.
 권한이 없으면 빈 화면이 아니라 복구 경로를 보여준다.
 읽기 전용 캘린더의 이벤트는 Event Brief 편집은 가능하지만 원본 일정 수정 UI는 비활성화한다.
+
+Phase 8은 원본 수정 불가 사유를 typed projection으로 통일한다. invitation·attendee는 Calendar.app 관리 정책, subscribed·birthdays는 해당 source 특성, 나머지 read-only는 “macOS Calendar가 read-only로 보고함”까지만 설명한다. `AppState.validateOriginalWritePolicy`도 같은 `CalendarWriteRestriction`을 직접 throw하여 Inspector 설명과 write preflight의 이유·우선순위가 다르지 않다. provider는 Confirm 후 fresh EventKit 권한을 다시 검사한다. Exchange 공유 ACL의 구체 원인은 EventKit이 제공하지 않는 한 추측하지 않는다. shared read-only Exchange fixture 실계정 gate는 아직 미검증이다.
 
 ## 오류 처리 원칙
 

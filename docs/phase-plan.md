@@ -14,10 +14,11 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 - Phase 4: **구현·자동·빌드·서명·fixture 시각 검증 완료 / 수동 gate 대기** — notes autosave, event/personal task CRUD·완료·due, typed Task Center, strong-only 원본 탐색 구현; 전체 75 tests와 Release·서명 Debug·strict codesign 통과
 - Phase 5: **구현·자동·Release checkpoint / 비반복 EventKit live CRUD 부분 통과** — attendee가 없는 비반복 writable 일정 create/update/delete를 `KAOS-TEST`에서 수행하고 앱 재실행·server fetch·exact cleanup까지 확인. Calendar.app 시각 round-trip, all-day·floating/zoned live gate는 대기
 - Phase 6: **구현·자동·Release checkpoint / 반복·이동 live gate 대기** — 명시적 반복 범위, 확인 뒤 write, linked safe move, additive change log, 좁은 session Undo와 안전 차단 경계를 구현했다. 비반복 recurrence 오판 버그를 live gate에서 발견·수정하고 legacy Brief의 좁은 자동 정상화도 추가했으며, live 반복 scope·future split·calendar move는 대기
-- Phase 7: **7A~7C 구현 / 7C 189-test 자동·signed Release checkpoint 완료 / live Exchange linked delete 대기** — lifecycle·After Review, occurrence-aware missing/orphan recovery에 이어 saved-link impact review와 final Confirm 뒤 linked original delete를 구현했다. 성공 시 local Brief는 `cancelled + orphaned`로 보존되고 current-link-generation unavailable `cancelled` log가 deleted-original provenance가 된다. 이후 `(created_at, rowid)`상 더 늦은 `relinked` log는 과거 provenance를 무효화하며 Delete Undo는 없다. Phase 7C 신규 14 tests를 포함한 현재 suite는 189 executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures이며 signed Release build/safe bootstrap도 통과했다. 이 결과를 live EventKit/Exchange 통과로 해석하지 않는다.
+- Phase 7: **7A~7C 구현 / 비반복 linked delete live 통과 / recurring gate 대기** — lifecycle·After Review, occurrence-aware missing/orphan recovery와 linked original delete를 구현했다. run `20260712-025027-KST`에서 비반복 원본의 Calendar.app·Outlook 제거와 local Brief/task 보존을 확인했으며, recurring `thisEvent`와 crash-window recovery는 대기다.
 - Mini month: **구현·집중 자동·210pt offscreen 시각 검증 완료** — locale/firstWeekday/time-zone을 따르는 고정 6×7 civil grid, 독립 월 탐색, 날짜 선택의 기존 range-fetch 연결, today/focused/adjacent 상태와 keyboard·VoiceOver 경계를 구현. 전체 Month 화면과 불완전 fetch 기반 event dot은 범위 밖
 - App icon: **구현·호환성·전체 자동·Release 검증 완료** — calendar grid·schedule blocks·Todo check의 원본 표식과 16~1024px alpha slot을 구현. 최초 opaque build를 macOS 14/15 legacy `.icns` 위험으로 제외하고 transparent full-bleed squircle, `.icns` alpha, strict signed Release와 exact bootstrap을 검증했다. Icon Composer layered/dark/tinted variant는 배포 polish로 이월
-- Phase 8~10: 대기
+- Phase 8: **구현·199-test 자동·signed Release·v3 migration 완료 / live UI·shared read-only gate 대기** — local calendar role, role별 virtual Set, source/permission badge, typed read-only reason과 비파괴 duplicate review를 구현했다. 화면 잠금으로 실화면과 shared Viewer는 미검증이다.
+- Phase 9~10: 대기
 
 ## Phase 표
 
@@ -207,7 +208,7 @@ Definition of Done:
 - 반복 write와 linked move는 scope·before/after·유지될 local context를 보여 준 뒤 Confirm해야 하며, Cancel은 provider call·local rebind·log append를 수행하지 않도록 구현했다.
 - `v2_event_change_log`를 v1 baseline을 수정하지 않는 additive migration으로 구현했고, linked rebind·log와 Undo rebind·restored append를 각각 하나의 SQLite transaction으로 묶었다.
 - detached occurrence의 `이번 이후`, 모든 linked `이번 이후`, attendee meeting, complex recurrence의 future/rule 변경은 Calendar.app 또는 안전 안내로 보낸다. complex recurrence의 `이번 일정` ordinary-field patch는 rule을 보존한다. Phase 6 checkpoint 당시 linked delete는 Phase 7C까지 차단했으며 현재는 Phase 7C의 별도 final review 경로만 허용한다.
-- Phase 6의 **121-test 구현 checkpoint**, 122-test read-only gate와 132-test legacy compatibility checkpoint, Phase 7A의 145-test checkpoint, mini month·AppIcon의 154-test checkpoint, Phase 7B의 175-test Release checkpoint를 보존한다. Phase 7C 신규 14-test 보강 뒤 현재 suite는 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**다. 최신 result bundle은 `/private/tmp/KaosCalPhase7CFinal-20260712-022700.xcresult`이고 Phase 7B result는 `/private/tmp/KaosCalPhase7BFinal-20260712-0155.xcresult`로 역사적 Release checkpoint에 유지한다.
+- Phase 6의 **121-test 구현 checkpoint**, 122-test read-only gate와 132-test legacy compatibility checkpoint, Phase 7A의 145-test checkpoint, mini month·AppIcon의 154-test checkpoint, Phase 7B의 175-test와 Phase 7C의 189-test Release checkpoint를 역사적 증거로 보존한다. 현재 최신 suite는 Phase 8의 **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**이며 result bundle은 `/private/tmp/KaosCalPhase8FinalTests-20260712-1415.xcresult`다.
 - live gate에서 EventKit이 비반복 `EKEvent`에도 `occurrenceDate == startDate`를 제공할 수 있어 반복 badge와 scope를 잘못 요구하는 문제를 발견했다. 반복 소속은 `hasRecurrenceRules || isDetached`만으로 판정하고, 비반복 display identity의 `occurrenceDate`는 `nil`로 정규화하도록 수정했다.
 - transparent AppIcon 최종 build-only Release `/private/tmp/KaosCalIconCompatRelease/Build/Products/Release/KaosCal.app`는 CDHash `bc2ddd83c9d7f5e1bfd62241b0e02e63b23308b6`로 strict codesign, hardened runtime, app sandbox, Calendar entitlement, `AppIcon.icns` alpha를 통과했다. 전체 154-test 결과는 `/private/tmp/KaosCalAppIconCompatFinal.xcresult`다. 실계정 run은 recurrence-fix artifact에 계속 귀속하고 AppIcon 작업에서는 fixture write를 실행하지 않았다.
 - 2026-07-11 FinalRelease EventKit run `20260711-1626-B7D2`에서 full access, 두 writable Exchange calendar, `KAOS-TEST` 비반복 create→앱 재실행/refetch→scope 없는 update→single delete를 확인했다. 서버 item은 생성·수정 뒤 모두 `singleInstance`·recurrence 없음이었고 source/destination marker residue는 `0/0`이었다.
@@ -243,7 +244,7 @@ Definition of Done:
 - **Phase 7C 구현·fake-only 자동 checkpoint 완료**: active Brief의 saved link, notes/tasks/history와 snapshot을 read-only로 준비하고 별도 `Delete Original & Keep Brief` Confirm 직전 다시 CAS한다. Confirm 전 provider/local write는 0회다.
 - successful delete receipt 뒤 한 SQLite transaction에서 context `cancelled`, link `orphaned`, 이전 available Undo supersede와 saved-link unavailable `cancelled` log를 저장한다. before/after payload는 같고 `originalNotes`는 nil/unavailable이며 local notes/tasks와 context ID를 유지한다. deleted-original UI는 상태쌍에 더해 현재 link 세대에 이 log가 있고 뒤따르는 `relinked`가 없는지 `(created_at, rowid)`로 확인한다. nonrecurring log scope는 `single`, recurring은 `this_event`; Delete Undo와 Phase 7C migration은 없다.
 - receipt 모순, local CAS/log 실패나 EventKit-local 사이 crash는 자동 원본 복원 없이 no-retry 부분 성공으로 처리한다. local transaction은 rollback되고 Brief/notes/tasks가 남아 Task Center recovery로 이어진다.
-- linked `futureEvents`, attendee meeting/invitation 원본 삭제는 계속 차단한다. 실제 `KAOS-TEST` linked delete, Calendar.app/Outlook 반영, one-off recurring exception과 crash recovery는 **live pending**이며 fake-provider 결과를 Exchange 통과로 올리지 않는다.
+- linked `futureEvents`, attendee meeting/invitation 원본 삭제는 계속 차단한다. 후속 run `20260712-025027-KST`에서 비반복 `single`의 Calendar.app/Outlook 제거와 local 보존은 통과했지만 recurring `thisEvent`, one-off exception과 crash recovery는 **live pending**이다.
 - Phase 7C 신규 회귀 총 14개를 포함한 전체 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**를 통과했다. result bundle은 `/private/tmp/KaosCalPhase7CFinal-20260712-022700.xcresult`다.
 - 최종 build-only Release `/private/tmp/KaosCalPhase7CFinalRelease/Build/Products/Release/KaosCal.app`, CDHash `6b1da198f969cb033946fdb72b2b2e46392310f2`는 strict codesign, hardened runtime, app sandbox, Calendar entitlement, usage description을 통과했고 get-task-allow·XCTest plug-in/link가 없다. exact binary를 production DB 차단 환경으로 5초 이상 기동한 뒤 종료해 process 0과 direct/sandbox DB hash·mtime·size 및 WAL/SHM 부재 불변을 확인했다. computer-use runtime이 없어 이번 checkpoint에는 onscreen tree/크기 증거를 포함하지 않는다.
 
@@ -260,6 +261,17 @@ Definition of Done:
 - 각 일정이 Work/Personal/Subscription 등 역할을 표시
 - 읽기 전용 일정은 왜 수정 불가인지 설명
 - 비슷한 시간/제목의 후보 감지
+
+현재 구현 판정:
+- `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`를 EventKit raw model과 분리된 local projection으로 구현했다. subscribed/birthdays만 현재 source에서 `Subscription`으로 추론하고 다른 source는 `Other`로 둔다. 사용자가 고른 explicit role만 sparse `calendar_preferences` row로 저장한다.
+- `All`과 역할별 virtual Set은 Day/Week/Agenda visibility만 좁힌다. raw fetch, Event Brief observation, Task Center, relink와 writable destination은 숨기지 않으며 custom saved Set은 Phase 9 이후로 이월한다.
+- Sidebar·Agenda·Day/Week timed/all-day card·Inspector에는 role, calendar/source/account와 permission을 연결했고 editor에는 destination role을 표시한다. Task Center는 저장 calendar identifier로 calendar/source/role만 투영한다. invitation→attendee→subscription→birthdays→provider read-only의 typed reason은 해당 원본 UI와 write preflight가 함께 사용한다.
+- duplicate는 서로 다른 calendar에서 정규화 제목과 timed start/end 각 15분 이내 또는 같은 all-day civil range가 맞는 항목만 후보로 만든다. fetch마다 index를 한 번 계산하고 card는 O(1) 조회한다. strong same occurrence는 제외하며 merge·hide·delete·EventKit write는 제공하지 않는다.
+- additive `v3_calendar_clarity`와 `CalendarRoleRepository`를 구현했다. v1/v2→v3, CHECK, sparse row, upsert/reopen/delete/reset, 역할 변경·Set·duplicate에서 provider write 0회를 자동 검증했다.
+- 최종 전체 **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**. result bundle은 `/private/tmp/KaosCalPhase8FinalTests-20260712-1415.xcresult`다.
+- Release `/private/tmp/KaosCalPhase8FinalRelease/Build/Products/Release/KaosCal.app`, CDHash `6c595445dadfb60588410329222557d00865c222`는 strict codesign·hardened runtime·sandbox·Calendar entitlement를 통과했고 get-task-allow·XCTest가 없다.
+- exact Release 정상 bootstrap으로 sandbox 운영 DB를 v2→v3로 migration했다. integrity `ok`, FK violation 0, `calendar_preferences` 0행, 기존 v1/v2 table count·SHA3 불변, 종료 뒤 WAL/SHM 부재와 process 0을 확인했다. 사전 copy는 `/private/tmp/KaosCalPhase8MigrationPreflight-20260712-1406/kaoscal-pre-v3.sqlite`에 있다.
+- 화면 잠금 때문에 role/source가 긴 Sidebar·Inspector, 44pt 고밀도 card와 VoiceOver 순서는 실화면 확인하지 못했다. shared read-only Exchange fixture도 없어 provider-reported reason의 live gate는 **manual pending**이다. 이 두 항목을 자동·Release 통과로 대체하지 않는다.
 
 ## Phase 9: Backup / Settings
 

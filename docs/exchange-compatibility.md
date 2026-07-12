@@ -1,6 +1,6 @@
 # Exchange Compatibility
 
-> 상태: Phase 7C linked original delete fake/local 자동·signed Release checkpoint / 비반복 linked delete EventKit·Calendar.app·Outlook live 통과 / recurring `thisEvent` live mutation과 retained local Brief cleanup 대기
+> 상태: Phase 8 Multi-Calendar Clarity 구현·199-test 자동·signed Release·v3 migration 완료 / 비반복 linked delete live 통과 / shared read-only·recurring·실화면 gate 대기
 > 제품 대상: macOS Calendar에 구성된 Exchange Online
 > 현재 테스트 환경: backend 종류 미확인. Outlook connector run `20260711-1512-7C4E`에서 `KAOS-TEST`(source)·`일정`(destination)이 각각 exact-name 1개, editable, distinct, same owner로 관찰됐고, signed FinalRelease/EventKit run `20260711-1626-B7D2`에서 두 calendar의 비반복 CRUD를 확인했다. Phase 7C run `20260712-025027-KST`에서는 exact signed Release의 full access와 두 calendar의 `Exchange`·writable 표시, linked 비반복 원본의 KaosCal→Calendar.app→Outlook 삭제 및 local Brief 보존을 확인했다. backend의 Exchange Online 판정 증거는 아니다.
 > 마지막 갱신: 2026-07-12
@@ -14,7 +14,9 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 | full calendar access | signed FinalRelease에서 full access와 재실행 후 EventKit refetch 확인 | 로컬 통과 | run `20260711-1626-B7D2`, Phase 7C run `20260712-025027-KST`; 권한 철회·재허용 회귀는 별도 |
 | Exchange source·calendar 식별 | 서버 connector에서 두 exact-name calendar를 구분하고 FinalRelease sidebar에서 둘 다 `Exchange`로 표시 | 서버·EventKit 통과 / backend 미판정 | `KAOS-TEST`·`일정`을 distinct calendar로 확인. 이 표시만으로 Exchange Online backend라고 추론하지 않음 |
 | editable calendar 확인 | FinalRelease에서 두 calendar 모두 lock 없이 writable로 표시 | 서버·EventKit 통과 | `KAOS-TEST` 실제 create/update/delete 통과; `일정`은 이번 local run에서 mutation하지 않음 |
-| read-only 구분 | `allowsContentModifications` mapping·unit state 구현 | blocked | Viewer calendar 미준비, Phase 8 전 해소 |
+| read-only 구분 | typed invitation·attendee·subscription·birthdays·provider reason과 write preflight 자동 통과 | 구현 통과 / live blocked | Viewer calendar 미준비. Exchange ACL을 추측하지 않고 EventKit provider read-only로 설명하며 실화면 gate는 대기 |
+| local role·virtual Set | Work/Personal/Family/Shared/Subscription/Other sparse local role과 role별 Day/Week/Agenda filter 자동 통과 | 로컬 구현 통과 / live UI 대기 | EventKit write 0회. source가 사라지고 explicit role도 없으면 Other; custom saved Set은 후속 범위 |
+| possible duplicate review | cross-calendar normalized title·15분 timed/same all-day range candidate index 자동 통과 | 로컬 구현 통과 / live UI 대기 | 자동 merge·hide·delete 없음. 실제 Exchange 일정의 dense card/Inspector 표시는 session lock으로 미확인 |
 | 시간 일정 조회 | 서버 fixture와 signed FinalRelease create·재실행·refetch 확인 | 서버·EventKit 통과 | local fixture가 재실행 후에도 단일 일정으로 표시되고 서버에서 `singleInstance`·recurrence null·UTC 정규화 확인 |
 | 비반복 일정 생성 | FinalRelease에서 `KAOS-TEST`에 실제 생성 | 서버·EventKit 통과 / Calendar.app 대기 | 서버에서 단일 instance와 recurrence null 확인; Calendar.app visual round-trip은 미실행 |
 | 비반복 일정 수정 | FinalRelease에서 동일 fixture를 한 번 수정하고 refetch | 서버·EventKit 통과 / Calendar.app 대기 | 재실행 후 잘못된 반복 badge/scope 없이 single update, 서버 recurrence null 유지 |
@@ -223,6 +225,18 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 - cleanup: recurring exact series 전체를 Outlook에서 삭제했고 최종 서버 residue는 single 0, recurring 0이다. nonrecurring 원본도 외부 residue 0이다. single local Brief는 증거로 의도적으로 남겨 두었고 화면 잠금으로 UI-only cleanup을 완료하지 못했다. 다음 수동 세션에서 `Delete Local Brief`로 정리하고 원본 비재생성을 확인해야 한다.
 - 비밀정보 경계: raw calendar/event identifier, account/email, Notes·task 본문과 실제 combined hash는 문서에 기록하지 않았다.
 - 판정: Phase 7C nonrecurring linked original delete의 exact Release→EventKit→Calendar.app/Outlook→local provenance 경로는 **pass**. recurring `thisEvent` mutation과 retained single local Brief cleanup은 **blocked by session lock / manual pending**이며 backend 종류와 process crash recovery도 계속 미판정이다.
+
+## 2026-07-12 Phase 8 Multi-Calendar Clarity checkpoint
+
+- 관련 범위: local role, role별 virtual Set, source/account/permission presentation, typed read-only reason, 비파괴 duplicate candidate. 이 단계는 Exchange calendar/event 이름·색·권한이나 원본 event를 쓰지 않는다.
+- 역할은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`다. subscribed/birthdays만 현재 EventKit source에서 Subscription으로 추론하고, 사용자가 고른 explicit role만 `v3_calendar_clarity.calendar_preferences`에 sparse 저장한다. source와 override가 모두 없으면 account type을 추측하지 않고 Other다.
+- Set은 All과 역할별 runtime filter이며 Day/Week/Agenda visibility만 좁힌다. raw EventKit fetch, Event Brief observation, Task Center, relink와 writable destination은 필터링하지 않는다.
+- read-only reason은 invitation→attendee→subscription→birthdays→provider-reported read-only 순서이며 UI와 AppState write preflight가 같은 typed projection을 사용한다. 공유 Exchange의 Owner/Editor/Viewer ACL 원인은 EventKit이 제공하지 않으므로 추측하지 않는다.
+- duplicate는 다른 calendar의 normalized title과 timed start/end 각 15분 이내 또는 같은 all-day civil range를 검토 후보로 만든다. strong same occurrence를 제외하고 자동 merge·hide·delete·EventKit write는 없다. fetch마다 index를 한 번 계산한다.
+- 자동 검증: **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**. result bundle `/private/tmp/KaosCalPhase8FinalTests-20260712-1415.xcresult`.
+- Release: `/private/tmp/KaosCalPhase8FinalRelease/Build/Products/Release/KaosCal.app`; CDHash `6c595445dadfb60588410329222557d00865c222`. strict codesign, hardened runtime, sandbox·Calendar entitlement와 full-access usage description을 통과했고 get-task-allow·XCTest를 포함하지 않는다.
+- DB gate: test 전후 direct/sandbox production DB는 불변이었다. exact Release 정상 bootstrap 전 sandbox v2 DB를 `/private/tmp/KaosCalPhase8MigrationPreflight-20260712-1406/kaoscal-pre-v3.sqlite`로 복사하고 v3를 적용했다. 이후 integrity `ok`, FK violation 0, `calendar_preferences` 0행, 기존 context/link/task/personal/change-log count·SHA3 불변과 WAL/SHM 부재, process 0을 확인했다.
+- 증거 경계: 정상 bootstrap은 기존 EventKit 일정을 읽었지만 Phase 8 write를 실행하지 않았고 새 role row도 만들지 않았다. session이 잠겨 Sidebar·Inspector·고밀도 card·VoiceOver 실화면은 확인하지 못했다. Viewer calendar도 없어 shared read-only reason은 **live blocked**다. 이 결과만으로 backend를 Exchange Online이라고 판정하지 않는다.
 
 ## 테스트 기록 형식
 

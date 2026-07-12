@@ -687,6 +687,41 @@
   - raw calendar/event ID, account/email, Notes·task 본문과 실제 combined hash는 기록하지 않았다. run에서 만든 exact fixture 외 기존 일정은 수정·삭제하지 않았다.
 - 결과: nonrecurring linked original delete의 exact Release, EventKit write, Calendar.app·Outlook 제거, local Brief/task 보존과 current-link-generation deletion provenance는 **pass**. recurring `thisEvent` mutation과 retained single local Brief cleanup은 session lock으로 **blocked / manual pending**이며 process crash recovery와 backend 종류도 계속 미판정이다.
 
+## 2026-07-12 — Phase 8 Multi-Calendar Clarity
+
+- 관련 ADR: ADR-001, ADR-003, ADR-005, ADR-008, ADR-010, ADR-014
+- 범위·모델:
+  - EventKit `CalendarSource`와 `DisplayEvent`를 수정하지 않고 `CalendarRole`, `CalendarDescriptor`, `CalendarSetFilter`, `CalendarWriteRestriction`, `CalendarDuplicateCandidate`를 local/read-only projection으로 추가했다.
+  - role은 Work/Personal/Family/Shared/Subscription/Other다. subscribed/birthdays만 현재 source에서 Subscription으로 추론하며 나머지는 Other다. source가 사라지고 explicit override도 없으면 과거 account type을 추측하지 않고 Other로 둔다.
+  - All과 역할별 virtual Set은 Day/Week/Agenda `visibleEvents`만 좁힌다. raw fetch·Context observation·Task Center·relink·editor destination은 그대로 유지하고, Set 밖의 선택 전 pending notes를 flush한다. Task Center/relink/duplicate navigation은 필요한 경우 All로 전환한다.
+- 영속 저장:
+  - immutable v1/v2 뒤 additive `v3_calendar_clarity`를 추가했다. `calendar_preferences`는 calendar identifier PK, source/calendar title snapshot, role CHECK와 created/updated timestamp만 가진다.
+  - 단순 EventKit fetch는 row를 만들지 않고 사용자 role 변경만 sparse upsert한다. repository는 fetch/upsert/reopen/delete/reset/count를 제공하며 Calendar provider를 참조하지 않는다.
+  - Task Center event source에 저장 calendar identifier를 typed field로 추가해 권한이 없거나 event가 range 밖이어도 explicit role을 투영한다.
+- source·permission·duplicate UX:
+  - Sidebar에 virtual Set picker와 calendar별 role menu, source/account/editable state와 구체 lock help를 추가했다. Agenda, Day/Week timed/all-day card와 Inspector에는 role/source/restriction을, original editor에는 destination role을 연결했다. Task Center는 저장 calendar identifier로 calendar/source/role만 투영한다.
+  - restriction 우선순위는 invitation, attendee, subscription, birthdays, provider read-only다. Inspector 설명과 AppState original-write preflight가 같은 typed value를 사용하고 local Event Brief 편집 가능성을 분리해 알린다.
+  - duplicate는 다른 calendar에서 normalized title과 timed start/end 각 15분 이내 또는 같은 all-day civil range가 맞는 항목만 review candidate로 만든다. 동일 strong occurrence는 제외하며 자동 merge·hide·delete·EventKit write를 제공하지 않는다.
+  - initial 구현의 card별 전체 재계산 성능 위험을 최종 감사에서 발견해, fetch 때 title group별 candidate index를 한 번 만들고 UI는 event ID로 O(1) 조회하도록 수정했다.
+- 자동 검증:
+  - role inference/Set, restriction precedence, normalized title·15분 경계·all-day·strong occurrence·deterministic index, v1/v2→v3 보존, invalid role CHECK와 repository reopen을 추가했다.
+  - role 변경 persistence와 provider create/update/delete 0회, Set filter와 notes flush/selection, hidden duplicate candidate navigation, subscription/birthdays의 모순된 writable snapshot도 write preflight에서 차단함을 검증했다.
+  - 최종 전체 **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**.
+  - result bundle: `/private/tmp/KaosCalPhase8FinalTests-20260712-1415.xcresult`.
+  - 전체 test 전후 direct DB `1783704658|126976`, SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`; sandbox pre-migration DB `1783793410|126976`, SHA-256 `ab2347f7c2de41996d5fd67fd4d34ee6fda890554bee0308156265f0dde154cb`와 WAL/SHM 부재가 불변이었다.
+- Release·운영 migration:
+  - artifact: `/private/tmp/KaosCalPhase8FinalRelease/Build/Products/Release/KaosCal.app`.
+  - CDHash: `6c595445dadfb60588410329222557d00865c222`.
+  - `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO` ad-hoc Release, hardened runtime, `codesign --verify --deep --strict`: **pass**. entitlement는 app sandbox와 Calendar access만 포함하며 get-task-allow·XCTest plug-in/link가 없다. full-access usage description과 AppIcon keys도 확인했다.
+  - session lock 상태에서 exact Release를 정상 bootstrap하기 전 sandbox v2 DB를 `/private/tmp/KaosCalPhase8MigrationPreflight-20260712-1406/kaoscal-pre-v3.sqlite`로 복사했다. pre-copy SHA-256은 `ab2347f7c2de41996d5fd67fd4d34ee6fda890554bee0308156265f0dde154cb`다.
+  - bootstrap 뒤 migration은 v1/v2/v3 순서, integrity `ok`, foreign-key violation 0, `calendar_preferences` 0행이었다. event context/link/task/personal/change-log row count는 1/1/3/0/1이고 각 table SHA3가 migration 전후 같았다. 이는 Phase 7C retained local Brief의 본문을 기록하지 않는 content-preservation 증거다.
+  - 최종 코드로 다시 만든 위 CDHash Release도 정상 기동한 뒤 직접 종료했다. 기동 전후 direct DB `1783704658|126976`, SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 sandbox DB `1783832834|139264`, SHA-256 `7cd91d35ceaa7f04a43c00e88cf1c99d7d8f778ebeffa8c55af0f9f269251d23`가 불변이었다. v1/v2/v3, integrity `ok`, foreign-key violation 0, `calendar_preferences` 0행과 기존 table count/hash도 다시 확인했고 WAL/SHM 없음, KaosCal process 0이다. sandbox 파일 hash의 pre-v3 대비 변화는 schema 추가에 따른 것이며 기존 table content hash는 불변이다.
+- 증거 경계·남은 위험:
+  - Phase 8 checkpoint는 EventKit read만 수행했고 원본 event/calendar write와 role live mutation을 실행하지 않았다. role write 0회는 fake-provider 자동 검증이며 `calendar_preferences`가 0행인 정상 bootstrap도 단순 조회가 row를 만들지 않는다는 증거다.
+  - macOS session이 잠겨 210pt Sidebar, 긴 한국어/source명, 44pt overlap card의 repeat/duplicate/lock 조합과 Inspector/VoiceOver 순서를 실화면으로 확인하지 못했다.
+  - shared read-only Exchange Viewer calendar가 없어 provider-reported reason의 live 판정도 blocked다. custom saved Set, `No calendars assigned to Work` 같은 role 전용 empty-state copy, color/name override와 자동 duplicate 처리는 Phase 8 완료 범위에 포함하지 않는다.
+- 결과: Phase 8 구현·자동·signed Release·운영 additive migration은 **pass**. live visual과 shared read-only Exchange는 **manual pending**이며 이 둘을 자동 결과로 대체하지 않는다.
+
 ## 다음 항목 템플릿
 
 ```markdown
