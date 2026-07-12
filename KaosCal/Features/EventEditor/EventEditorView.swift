@@ -272,13 +272,19 @@ struct EventEditorView: View {
             LabeledContent("Calendar") {
                 Picker("Calendar", selection: $draft.calendarIdentifier) {
                     ForEach(session.writableCalendars) { calendar in
-                        Text("\(calendar.title) · \(calendar.sourceTitle)")
-                            .tag(calendar.id)
+                        let role = appState.calendarRole(for: calendar)
+                        Label(
+                            "\(role.title) · \(calendar.title) · "
+                                + "\(calendar.sourceTitle)",
+                            systemImage: role.symbolName
+                        )
+                        .tag(calendar.id)
                     }
                 }
                 .labelsHidden()
                 .frame(maxWidth: 320)
                 .disabled(isBusy)
+                .accessibilityIdentifier("eventEditor.calendar")
             }
 
             if case .linked = session.mutationContext {
@@ -573,7 +579,7 @@ struct EventEditorView: View {
                 if change.changedFields.contains(.calendar) {
                     impactRow(
                         title: "Calendar",
-                        before: "\(change.original.calendarTitle) · \(change.original.sourceTitle)",
+                        before: calendarLabel(for: change.original),
                         after: calendarLabel(
                             identifier: change.draft.calendarIdentifier
                         )
@@ -696,7 +702,7 @@ struct EventEditorView: View {
                 )
                 .font(.callout)
                 Text(
-                    "\(deletion.original.calendarTitle) · \(deletion.original.sourceTitle)"
+                    calendarLabel(for: deletion.original)
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1133,7 +1139,13 @@ struct EventEditorView: View {
         }) else {
             return "Selected calendar"
         }
-        return "\(calendar.title) · \(calendar.sourceTitle)"
+        let role = appState.calendarRole(for: calendar)
+        return "\(role.title) · \(calendar.title) · \(calendar.sourceTitle)"
+    }
+
+    private func calendarLabel(for event: DisplayEvent) -> String {
+        let role = appState.calendarRole(for: event)
+        return "\(role.title) · \(event.calendarTitle) · \(event.sourceTitle)"
     }
 
     private var editorTimeZone: TimeZone {

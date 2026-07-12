@@ -93,6 +93,7 @@ final class TaskCenterRepository {
                             contextID: context.id,
                             section: task.section,
                             eventTitle: context.titleSnapshot,
+                            calendarIdentifier: link.calendarIdentifier,
                             calendarTitle: link.calendarTitleSnapshot,
                             sourceTitle: link.sourceTitle,
                             eventStart: eventRange.start,

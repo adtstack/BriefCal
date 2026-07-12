@@ -946,6 +946,120 @@ final class Phase6AppStateTests: XCTestCase {
         )
     }
 
+    func testCalendarRolePersistsLocallyWithoutCalendarProviderWrites() async throws {
+        let event = makeEvent(id: "role-event")
+        let provider = makeProvider(events: [event])
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        let source = try XCTUnwrap(
+            state.calendarSources.first(where: { $0.id == "calendar" })
+        )
+        XCTAssertEqual(state.calendarRole(for: source), .other)
+        XCTAssertTrue(state.setCalendarRole(.work, for: source))
+        XCTAssertEqual(state.calendarRole(for: event), .work)
+        XCTAssertEqual(try store.calendarRoles.count(), 1)
+        XCTAssertEqual(provider.createCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+
+        let reopened = makeState(provider: provider, store: store)
+        await reopened.loadCalendarStatus()
+        XCTAssertEqual(reopened.calendarRole(for: event), .work)
+
+        provider.authorizationState = .denied
+        await reopened.loadCalendarStatus()
+        XCTAssertEqual(
+            reopened.calendarRole(calendarIdentifier: event.calendarIdentifier),
+            .work
+        )
+    }
+
+    func testRoleCalendarSetFiltersViewsAndFlushesHiddenSelectionNotes() async throws {
+        let work = makeEvent(
+            id: "work-event",
+            title: "Work focus",
+            calendarIdentifier: "calendar"
+        )
+        let personal = makeEvent(
+            id: "personal-event",
+            title: "Personal focus",
+            calendarIdentifier: "destination"
+        )
+        let provider = makeProvider(events: [work, personal])
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        let workSource = try XCTUnwrap(
+            state.calendarSources.first(where: { $0.id == "calendar" })
+        )
+        let personalSource = try XCTUnwrap(
+            state.calendarSources.first(where: { $0.id == "destination" })
+        )
+        XCTAssertTrue(state.setCalendarRole(.work, for: workSource))
+        XCTAssertTrue(state.setCalendarRole(.personal, for: personalSource))
+
+        state.selectEvent(work.id)
+        state.updateSelectedEventNotes("Preserve before role filter")
+        state.selectCalendarSet(.personal)
+
+        XCTAssertNil(state.selectedEventID)
+        XCTAssertEqual(state.visibleEvents.map(\.id), [personal.id])
+        guard case let .loaded(brief, _) = try store.loadBrief(for: work) else {
+            return XCTFail("Expected flushed work Event Brief")
+        }
+        XCTAssertEqual(brief.context.notes, "Preserve before role filter")
+        XCTAssertEqual(provider.createCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
+    func testPossibleDuplicateCanOpenCandidateOutsideCurrentRoleSet() async throws {
+        let work = makeEvent(
+            id: "duplicate-work",
+            title: "Team Sync",
+            start: date(2026, 7, 10, 9),
+            calendarIdentifier: "calendar"
+        )
+        let personal = makeEvent(
+            id: "duplicate-personal",
+            title: "  team   sync  ",
+            start: date(2026, 7, 10, 9).addingTimeInterval(10 * 60),
+            calendarIdentifier: "destination"
+        )
+        let provider = makeProvider(events: [work, personal])
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        XCTAssertTrue(state.setCalendarRole(
+            .work,
+            for: try XCTUnwrap(state.calendarSources.first(where: {
+                $0.id == "calendar"
+            }))
+        ))
+        XCTAssertTrue(state.setCalendarRole(
+            .personal,
+            for: try XCTUnwrap(state.calendarSources.first(where: {
+                $0.id == "destination"
+            }))
+        ))
+        state.selectCalendarSet(.work)
+
+        let candidate = try XCTUnwrap(
+            state.duplicateCandidates(for: work).first
+        )
+        XCTAssertEqual(candidate.event.id, personal.id)
+        state.selectDuplicateCandidate(candidate)
+
+        XCTAssertEqual(state.selectedCalendarSet, .all)
+        XCTAssertEqual(state.selectedEventID, personal.id)
+        XCTAssertEqual(provider.createCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
     private var calendar: Calendar {
         var result = Calendar(identifier: .gregorian)
         result.timeZone = TimeZone(secondsFromGMT: 0)!

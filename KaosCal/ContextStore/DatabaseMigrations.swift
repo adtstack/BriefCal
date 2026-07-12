@@ -274,6 +274,26 @@ enum DatabaseMigrations {
                     WHERE undo_of_change_id IS NOT NULL;
                 """)
         }
+
+        migrator.registerMigration("v3_calendar_clarity") { db in
+            try db.execute(sql: """
+                CREATE TABLE calendar_preferences (
+                    calendar_identifier TEXT PRIMARY KEY NOT NULL
+                        CHECK (length(trim(calendar_identifier)) > 0),
+                    source_title_snapshot TEXT NOT NULL,
+                    calendar_title_snapshot TEXT NOT NULL,
+                    role TEXT NOT NULL
+                        CHECK (role IN (
+                            'work', 'personal', 'family', 'shared',
+                            'subscription', 'other'
+                        )),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX calendar_preferences_role
+                    ON calendar_preferences(role);
+                """)
+        }
         return migrator
     }
 }

@@ -1,6 +1,44 @@
 import Foundation
 import GRDB
 
+extension CalendarRole: DatabaseValueConvertible {}
+
+struct CalendarRolePreference: Equatable, Identifiable {
+    let calendarIdentifier: String
+    var sourceTitleSnapshot: String
+    var calendarTitleSnapshot: String
+    var role: CalendarRole
+    let createdAt: Date
+    var updatedAt: Date
+
+    var id: String { calendarIdentifier }
+}
+
+extension CalendarRolePreference: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "calendar_preferences"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy {
+        .deferredToDate
+    }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy {
+        .deferredToDate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case calendarIdentifier = "calendar_identifier"
+        case sourceTitleSnapshot = "source_title_snapshot"
+        case calendarTitleSnapshot = "calendar_title_snapshot"
+        case role
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
 enum EventLifecycleStatus: String, Codable, CaseIterable, DatabaseValueConvertible {
     case scheduled
     case completed
@@ -351,6 +389,7 @@ enum TaskCenterItemSource: Equatable {
         contextID: String,
         section: EventTaskSection,
         eventTitle: String,
+        calendarIdentifier: String,
         calendarTitle: String,
         sourceTitle: String,
         eventStart: Date,

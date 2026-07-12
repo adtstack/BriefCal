@@ -219,6 +219,8 @@ final class AppState: ObservableObject {
     @Published var calendarContentState: CalendarContentState = .disconnected
     @Published private(set) var calendarAuthorizationState: CalendarAuthorizationState
     @Published private(set) var calendarSources: [CalendarSource] = []
+    @Published private(set) var calendarRoleOverrides: [String: CalendarRole] = [:]
+    @Published private(set) var selectedCalendarSet: CalendarSetFilter = .all
     @Published private(set) var events: [DisplayEvent] = []
     @Published private(set) var localContextStoreState: LocalContextStoreState
     @Published private(set) var eventBriefState: EventBriefState = .noSelection
@@ -251,6 +253,8 @@ final class AppState: ObservableObject {
     private var persistedEventNotes = ""
     private var failedNotesDrafts: [String: FailedNotesDraft] = [:]
     private var lastEventMutationUndoCandidate: CalendarEventUndoCandidate?
+    private var duplicateCandidateIndex:
+        [String: [CalendarDuplicateCandidate]] = [:]
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
@@ -273,6 +277,7 @@ final class AppState: ObservableObject {
                 self?.scheduleStoreRefresh()
             }
         }
+        loadCalendarRolePreferences()
     }
 
     var selectedEvent: DisplayEvent? {
@@ -320,7 +325,9 @@ final class AppState: ObservableObject {
                 for: $0,
                 calendar: calendar
             )
-            return range.start < interval.end && range.end > interval.start
+            return range.start < interval.end
+                && range.end > interval.start
+                && selectedCalendarSet.includes(role: calendarRole(for: $0))
         }.sorted { lhs, rhs in
             let lhsRange = CalendarEventDateFormatting.effectiveDateRange(
                 for: lhs,
@@ -370,6 +377,94 @@ final class AppState: ObservableObject {
     func selectTaskFilter(_ filter: TaskFilter) {
         selectedTaskFilter = filter
         refreshTaskCenter()
+    }
+
+    func selectCalendarSet(_ filter: CalendarSetFilter) {
+        guard selectedCalendarSet != filter else { return }
+        flushPendingEventNotes()
+        selectedCalendarSet = filter
+        clearSelectionOutsideVisiblePeriod()
+    }
+
+    func calendarDescriptor(for source: CalendarSource) -> CalendarDescriptor {
+        CalendarDescriptor(
+            source: source,
+            explicitRole: calendarRoleOverrides[source.id]
+        )
+    }
+
+    func calendarRole(for source: CalendarSource) -> CalendarRole {
+        calendarDescriptor(for: source).role
+    }
+
+    func calendarRole(for event: DisplayEvent) -> CalendarRole {
+        if let source = calendarSources.first(where: {
+            $0.id == event.calendarIdentifier
+        }) {
+            return calendarRole(for: source)
+        }
+        return calendarRoleOverrides[event.calendarIdentifier] ?? .other
+    }
+
+    func calendarRole(calendarIdentifier: String) -> CalendarRole {
+        if let source = calendarSources.first(where: {
+            $0.id == calendarIdentifier
+        }) {
+            return calendarRole(for: source)
+        }
+        return calendarRoleOverrides[calendarIdentifier] ?? .other
+    }
+
+    @discardableResult
+    func setCalendarRole(
+        _ role: CalendarRole,
+        for source: CalendarSource
+    ) -> Bool {
+        localOperationError = nil
+        guard let contextStore else {
+            localOperationError = "Local calendar role storage is unavailable. No calendar data was changed."
+            return false
+        }
+        do {
+            let preference = try contextStore.calendarRoles.upsert(
+                source: source,
+                role: role
+            )
+            calendarRoleOverrides[source.id] = preference.role
+            clearSelectionOutsideVisiblePeriod()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    func calendarWriteRestriction(
+        for event: DisplayEvent
+    ) -> CalendarWriteRestriction? {
+        CalendarWriteRestriction.restriction(for: event)
+    }
+
+    func duplicateCandidates(
+        for event: DisplayEvent
+    ) -> [CalendarDuplicateCandidate] {
+        duplicateCandidateIndex[event.id] ?? []
+    }
+
+    func hasDuplicateCandidates(for event: DisplayEvent) -> Bool {
+        duplicateCandidateIndex[event.id]?.isEmpty == false
+    }
+
+    func selectDuplicateCandidate(_ candidate: CalendarDuplicateCandidate) {
+        selectedCalendarSet = .all
+        let range = CalendarEventDateFormatting.effectiveDateRange(
+            for: candidate.event,
+            calendar: calendar
+        )
+        focusedDate = calendar.startOfDay(for: range.start)
+        selectedSection = .day
+        visiblePeriodDidChange()
+        selectEvent(candidate.event.id)
     }
 
     func selectEvent(_ id: String?) {
@@ -816,6 +911,7 @@ final class AppState: ObservableObject {
     func beginSelectingRelinkCandidate() {
         guard let session = linkedEventRecoverySession else { return }
         pendingRelinkContextID = session.brief.context.id
+        selectedCalendarSet = .all
         focusedDate = calendar.startOfDay(
             for: session.brief.link.effectiveDateRange(
                 calendar: calendar
@@ -1020,6 +1116,7 @@ final class AppState: ObservableObject {
         _ event: DisplayEvent,
         contextID: String
     ) async {
+        selectedCalendarSet = .all
         let range = CalendarEventDateFormatting.effectiveDateRange(
             for: event,
             calendar: calendar
@@ -1076,7 +1173,9 @@ final class AppState: ObservableObject {
             )
             return
         }
-        let writableCalendars = calendarSources.filter(\.isWritable)
+        let writableCalendars = calendarSources.filter {
+            CalendarWriteRestriction.restriction(for: $0) == nil
+        }
         guard !writableCalendars.isEmpty else {
             eventEditorError = Self.message(
                 for: CalendarEventWriteError.noWritableCalendar
@@ -1122,12 +1221,12 @@ final class AppState: ObservableObject {
     func originalEventWriteRestriction(
         for event: DisplayEvent
     ) -> String? {
-        do {
-            try validateOriginalWritePolicy(event)
-            return nil
-        } catch {
-            return Self.message(for: error)
+        guard calendarAuthorizationState.canReadEvents else {
+            return Self.message(
+                for: CalendarEventWriteError.fullAccessRequired
+            )
         }
+        return calendarWriteRestriction(for: event)?.message
     }
 
     func beginEditingSelectedEvent() {
@@ -1174,7 +1273,9 @@ final class AppState: ObservableObject {
             } else {
                 mutationImpact = nil
             }
-            let writableCalendars = calendarSources.filter(\.isWritable)
+            let writableCalendars = calendarSources.filter {
+                CalendarWriteRestriction.restriction(for: $0) == nil
+            }
             guard writableCalendars.contains(where: {
                 $0.id == event.calendarIdentifier
             }) else {
@@ -1905,6 +2006,12 @@ final class AppState: ObservableObject {
             observeLocalContexts(fetchedEvents)
             calendarSources = sources
             events = fetchedEvents
+            duplicateCandidateIndex = CalendarDuplicateCandidateDetector
+                .candidateIndex(
+                    among: fetchedEvents,
+                    calendar: calendar
+                )
+            loadCalendarRolePreferences()
             loadedEventInterval = interval
 
             if let selectedEventID, !fetchedEvents.contains(where: { $0.id == selectedEventID }) {
@@ -1941,6 +2048,23 @@ final class AppState: ObservableObject {
             localContextStoreState = .ready
         } catch {
             localContextStoreState = .failed(Self.message(for: error))
+        }
+    }
+
+    private func loadCalendarRolePreferences() {
+        guard let contextStore else {
+            calendarRoleOverrides = [:]
+            return
+        }
+        do {
+            calendarRoleOverrides = Dictionary(
+                uniqueKeysWithValues: try contextStore.calendarRoles
+                    .fetchAll()
+                    .map { ($0.calendarIdentifier, $0.role) }
+            )
+        } catch {
+            calendarRoleOverrides = [:]
+            localOperationError = Self.message(for: error)
         }
     }
 
@@ -2234,11 +2358,8 @@ final class AppState: ObservableObject {
         guard calendarAuthorizationState.canReadEvents else {
             throw CalendarEventWriteError.fullAccessRequired
         }
-        if event.isInvitation || event.hasAttendees {
-            throw CalendarEventWriteError.meetingIsCalendarAppOnly
-        }
-        if event.isReadOnly {
-            throw CalendarEventWriteError.readOnlyCalendar
+        if let restriction = calendarWriteRestriction(for: event) {
+            throw restriction
         }
     }
 
@@ -2282,6 +2403,7 @@ final class AppState: ObservableObject {
         selectEvent(nil)
         calendarSources = []
         events = []
+        duplicateCandidateIndex = [:]
         loadedEventInterval = nil
     }
 

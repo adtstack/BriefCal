@@ -54,6 +54,7 @@ final class ContextStore {
     let eventTasks: EventTaskRepository
     let personalTasks: PersonalTaskRepository
     let taskCenter: TaskCenterRepository
+    let calendarRoles: CalendarRoleRepository
 
     private let database: AppDatabase
     private let now: () -> Date
@@ -83,6 +84,10 @@ final class ContextStore {
             makeID: makeID
         )
         taskCenter = TaskCenterRepository(database: database)
+        calendarRoles = CalendarRoleRepository(
+            database: database,
+            now: now
+        )
     }
 
     func resolve(event: DisplayEvent) throws -> EventContextResolution {

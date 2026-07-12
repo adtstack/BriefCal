@@ -1641,7 +1641,9 @@ final class CalendarEventEditingTests: XCTestCase {
         let blockedEvents = [
             makeEvent(id: "read-only", isReadOnly: true),
             makeEvent(id: "invitation", isInvitation: true),
-            makeEvent(id: "meeting", hasAttendees: true)
+            makeEvent(id: "meeting", hasAttendees: true),
+            makeEvent(id: "subscribed", accountType: .subscribed),
+            makeEvent(id: "birthdays", accountType: .birthdays)
         ]
 
         for event in blockedEvents {
@@ -1653,7 +1655,10 @@ final class CalendarEventEditingTests: XCTestCase {
             state.beginEditingSelectedEvent()
 
             XCTAssertNil(state.eventEditorSession)
-            XCTAssertNotNil(state.eventEditorError)
+            XCTAssertEqual(
+                state.eventEditorError,
+                state.calendarWriteRestriction(for: event)?.message
+            )
             XCTAssertEqual(provider.updateCallCount, 0)
             XCTAssertEqual(provider.deleteCallCount, 0)
         }
@@ -2076,6 +2081,7 @@ final class CalendarEventEditingTests: XCTestCase {
         isReadOnly: Bool = false,
         isInvitation: Bool = false,
         hasAttendees: Bool = false,
+        accountType: CalendarAccountType = .exchange,
         isRecurring: Bool = false,
         recurrence: CalendarEventRecurrence? = nil,
         startDate: Date? = nil,
@@ -2098,7 +2104,7 @@ final class CalendarEventEditingTests: XCTestCase {
             calendarIdentifier: calendarIdentifier ?? writableExchangeCalendar.id,
             calendarTitle: writableExchangeCalendar.title,
             sourceTitle: writableExchangeCalendar.sourceTitle,
-            accountType: .exchange,
+            accountType: accountType,
             calendarColor: nil,
             title: "Event \(id)",
             location: nil,

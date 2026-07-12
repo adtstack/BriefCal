@@ -568,12 +568,27 @@ private struct SidebarView: View {
                     }
                 }
 
+                Section("Calendar Set") {
+                    Picker("Calendar Set", selection: calendarSetSelection) {
+                        ForEach(CalendarSetFilter.allCases) { filter in
+                            Label(filter.title, systemImage: filter.symbolName)
+                                .tag(filter)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("sidebar.calendarSet")
+                    .help("Show events from calendars with the selected KaosCal role")
+                }
+
                 Section("Calendars") {
                     if appState.calendarSources.isEmpty {
                         Label("No calendars loaded", systemImage: "calendar.badge.exclamationmark")
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(appState.calendarSources) { source in
+                            let role = appState.calendarRole(for: source)
+                            let restriction = calendarRestriction(for: source)
+
                             HStack(spacing: 8) {
                                 RoundedRectangle(cornerRadius: 2)
                                     .fill(KaosCalTheme.calendarColor(
@@ -585,20 +600,70 @@ private struct SidebarView: View {
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text(source.title)
                                         .lineLimit(1)
-                                    Text("\(source.sourceTitle) · \(source.accountType.title)")
+                                    Text(
+                                        "\(role.title) · \(sourceAccountText(source)) · "
+                                            + (restriction == nil ? "Editable" : "Read-only")
+                                    )
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                         .lineLimit(1)
+                                        .help(calendarMetadataHelp(
+                                            source: source,
+                                            role: role,
+                                            restriction: restriction
+                                        ))
                                 }
 
                                 Spacer(minLength: 4)
 
-                                if !source.isWritable {
+                                if let restriction {
                                     Image(systemName: "lock")
                                         .foregroundStyle(.secondary)
-                                        .accessibilityLabel("Read-only calendar")
+                                        .help(restriction.message)
+                                        .accessibilityLabel(
+                                            "\(restriction.title). \(restriction.message)"
+                                        )
                                 }
+
+                                Menu {
+                                    ForEach(CalendarRole.allCases) { option in
+                                        Button {
+                                            _ = appState.setCalendarRole(
+                                                option,
+                                                for: source
+                                            )
+                                        } label: {
+                                            if option == role {
+                                                Label(
+                                                    option.title,
+                                                    systemImage: "checkmark"
+                                                )
+                                            } else {
+                                                Label(
+                                                    option.title,
+                                                    systemImage: option.symbolName
+                                                )
+                                            }
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis.circle")
+                                }
+                                .menuStyle(.borderlessButton)
+                                .fixedSize()
+                                .accessibilityLabel(
+                                    "Change role for \(source.title) calendar"
+                                )
+                                .accessibilityHint(
+                                    "Changes KaosCal grouping only. The Calendar.app calendar is not renamed."
+                                )
+                                .accessibilityIdentifier(
+                                    "sidebar.calendar.\(source.id).role"
+                                )
                             }
+                            .accessibilityIdentifier(
+                                "sidebar.calendar.\(source.id)"
+                            )
                         }
                     }
                 }
@@ -618,6 +683,39 @@ private struct SidebarView: View {
                 appState.select(section)
             }
         )
+    }
+
+    private var calendarSetSelection: Binding<CalendarSetFilter> {
+        Binding(
+            get: { appState.selectedCalendarSet },
+            set: { appState.selectCalendarSet($0) }
+        )
+    }
+
+    private func calendarRestriction(
+        for source: CalendarSource
+    ) -> CalendarWriteRestriction? {
+        CalendarWriteRestriction.restriction(for: source)
+    }
+
+    private func sourceAccountText(_ source: CalendarSource) -> String {
+        if source.sourceTitle.compare(
+            source.accountType.title,
+            options: [.caseInsensitive, .diacriticInsensitive]
+        ) == .orderedSame {
+            return source.accountType.title
+        }
+        return "\(source.sourceTitle) · \(source.accountType.title)"
+    }
+
+    private func calendarMetadataHelp(
+        source: CalendarSource,
+        role: CalendarRole,
+        restriction: CalendarWriteRestriction?
+    ) -> String {
+        let permission = restriction?.message ?? "Original events are editable."
+        return "\(role.title) role · \(source.title) · \(source.sourceTitle) · "
+            + "\(source.accountType.title). \(permission)"
     }
 }
 
@@ -1137,7 +1235,7 @@ private struct AgendaView: View {
         } else {
             List(selection: eventSelection) {
                 ForEach(appState.visibleEvents) { event in
-                    AgendaEventRow(event: event, calendar: appState.calendar)
+                    AgendaEventRow(appState: appState, event: event)
                         .tag(event.id)
                         .accessibilityIdentifier("agenda.event.\(event.id)")
                 }
@@ -1155,8 +1253,8 @@ private struct AgendaView: View {
 }
 
 private struct AgendaEventRow: View {
+    @ObservedObject var appState: AppState
     let event: DisplayEvent
-    let calendar: Calendar
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1176,10 +1274,9 @@ private struct AgendaEventRow: View {
                     Text(timeText)
                         .monospacedDigit()
                     Text("·")
+                    Text(role.title)
+                    Text("·")
                     Text(event.calendarTitle)
-                    if event.accountType == .exchange {
-                        Text("· Exchange")
-                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -1191,10 +1288,17 @@ private struct AgendaEventRow: View {
             if event.isRecurring {
                 Image(systemName: "repeat")
                     .help("Recurring event")
+                    .accessibilityHidden(true)
             }
-            if event.isReadOnly || event.isInvitation || event.hasAttendees {
+            if hasDuplicateCandidates {
+                Image(systemName: "square.on.square")
+                    .help("Possible duplicate calendar event")
+                    .accessibilityHidden(true)
+            }
+            if let restriction {
                 Image(systemName: "lock")
-                    .help(originalEditLockHelp)
+                    .help(restriction.message)
+                    .accessibilityHidden(true)
             }
         }
         .padding(.vertical, 4)
@@ -1203,26 +1307,43 @@ private struct AgendaEventRow: View {
     }
 
     private var timeText: String {
-        CalendarEventDateFormatting.agendaText(for: event, calendar: calendar)
+        CalendarEventDateFormatting.agendaText(
+            for: event,
+            calendar: appState.calendar
+        )
     }
 
     private var accessibilityText: String {
-        let permission = event.isReadOnly
-            || event.isInvitation
-            || event.hasAttendees
-            ? "original editing unavailable"
-            : "editable"
-        return "\(event.title), \(timeText), \(event.calendarTitle), \(permission)"
+        var parts = [
+            event.title,
+            timeText,
+            "\(role.title) role",
+            event.calendarTitle,
+            event.sourceTitle,
+            event.accountType.title
+        ]
+        if let restriction {
+            parts.append("\(restriction.title), \(restriction.message)")
+        } else {
+            parts.append("original event editable")
+        }
+        if event.isRecurring { parts.append("recurring") }
+        if hasDuplicateCandidates {
+            parts.append("possible duplicate calendar event")
+        }
+        return parts.joined(separator: ", ")
     }
 
-    private var originalEditLockHelp: String {
-        if event.isInvitation {
-            return "Invitation: original editing stays in Calendar.app"
-        }
-        if event.hasAttendees {
-            return "Meeting with attendees: original editing stays in Calendar.app"
-        }
-        return "Read-only event"
+    private var role: CalendarRole {
+        appState.calendarRole(for: event)
+    }
+
+    private var restriction: CalendarWriteRestriction? {
+        appState.calendarWriteRestriction(for: event)
+    }
+
+    private var hasDuplicateCandidates: Bool {
+        appState.hasDuplicateCandidates(for: event)
     }
 }
 
@@ -1272,24 +1393,12 @@ private struct EventInspectorView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
 
-                HStack(spacing: 6) {
-                    Text("\(event.sourceTitle) · \(event.calendarTitle)")
-                    Text(originalEventPermissionText(event))
-                }
-                .font(.caption.weight(.medium))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(KaosCalTheme.accentSoft, in: Capsule())
+                sourceIdentity(event)
 
-                if event.isInvitation || event.hasAttendees {
-                    Label(
-                        event.isInvitation
-                            ? "Invitation and RSVP stay in Calendar.app; the local Event Brief remains editable."
-                            : "This meeting has attendees. Original changes stay in Calendar.app; the local Event Brief remains editable.",
-                        systemImage: "person.crop.circle.badge.exclamationmark"
-                    )
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                if let restriction = appState.calendarWriteRestriction(
+                    for: event
+                ) {
+                    originalWriteRestriction(restriction)
                 }
                 if let timeZoneIdentifier = event.timeZoneIdentifier {
                     Label(timeZoneIdentifier, systemImage: "globe")
@@ -1307,13 +1416,9 @@ private struct EventInspectorView: View {
                     .foregroundStyle(.secondary)
                 }
 
-                if let restriction = appState.originalEventWriteRestriction(
-                    for: event
-                ) {
-                    Label(restriction, systemImage: "lock")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
+                duplicateCandidateSection(for: event)
+
+                if appState.calendarWriteRestriction(for: event) == nil {
                     Button("Edit Original Event") {
                         appState.beginEditingSelectedEvent()
                     }
@@ -1348,17 +1453,185 @@ private struct EventInspectorView: View {
         }
     }
 
-    private func originalEventPermissionText(_ event: DisplayEvent) -> String {
-        if event.isInvitation {
-            return "Invitation · Original in Calendar.app"
+    private func sourceIdentity(_ event: DisplayEvent) -> some View {
+        let role = appState.calendarRole(for: event)
+        let restriction = appState.calendarWriteRestriction(for: event)
+
+        return VStack(alignment: .leading, spacing: 5) {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 5) {
+                    Label(role.title, systemImage: role.symbolName)
+                    Text("·")
+                    Text(event.accountType.title)
+                    Text("·")
+                    Text(restriction?.title ?? "Editable")
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(
+                        "\(role.title) · \(event.accountType.title)",
+                        systemImage: role.symbolName
+                    )
+                    Text(restriction?.title ?? "Editable")
+                }
+            }
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                KaosCalTheme.accentSoft,
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "\(role.title) role, \(event.accountType.title), "
+                    + (restriction?.title ?? "original event editable")
+            )
+            .accessibilityIdentifier("inspector.sourceBadge")
+
+            Text("\(event.calendarTitle) calendar · Source: \(event.sourceTitle)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         }
-        if event.hasAttendees {
-            return "Meeting with attendees · Original in Calendar.app"
+    }
+
+    private func originalWriteRestriction(
+        _ restriction: CalendarWriteRestriction
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(restriction.title, systemImage: restriction.symbolName)
+                .font(.caption.weight(.semibold))
+            Text(restriction.message)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        if event.isReadOnly {
-            return "Calendar event · Read-only"
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor).opacity(0.72),
+            in: RoundedRectangle(cornerRadius: 9)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(restriction.title). \(restriction.message)")
+        .accessibilityIdentifier("inspector.readOnlyReason")
+    }
+
+    @ViewBuilder
+    private func duplicateCandidateSection(for event: DisplayEvent) -> some View {
+        let candidates = appState.duplicateCandidates(for: event)
+        if !candidates.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(
+                    "Possible duplicate · \(candidates.count) similar "
+                        + (candidates.count == 1 ? "event" : "events"),
+                    systemImage: "square.on.square"
+                )
+                .font(.caption.weight(.semibold))
+
+                Text(
+                    "These are review candidates only. KaosCal will not merge, "
+                        + "delete, or hide calendar events automatically."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                ForEach(candidates) { candidate in
+                    let candidateEvent = candidate.event
+                    let candidateRole = appState.calendarRole(
+                        for: candidateEvent
+                    )
+                    let candidateRestriction = appState
+                        .calendarWriteRestriction(for: candidateEvent)
+
+                    Button {
+                        appState.selectDuplicateCandidate(candidate)
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: candidateRole.symbolName)
+                                .foregroundStyle(KaosCalTheme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(candidateEvent.title)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                Text(
+                                    CalendarEventDateFormatting.agendaText(
+                                        for: candidateEvent,
+                                        calendar: appState.calendar
+                                    )
+                                )
+                                Text(duplicateMatchText(candidate.matchKind))
+                                Text(
+                                    "\(candidateRole.title) · "
+                                        + "\(candidateEvent.calendarTitle) · "
+                                        + "\(candidateEvent.accountType.title) · "
+                                        + "\(candidateRestriction?.title ?? "Editable")"
+                                )
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                        }
+                        .padding(8)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        duplicateCandidateAccessibilityLabel(candidate)
+                    )
+                    .accessibilityHint(
+                        "Selects this candidate in Day view. No calendar event is changed."
+                    )
+                    .accessibilityIdentifier(
+                        "inspector.duplicateCandidate.\(candidate.id)"
+                    )
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                Color.orange.opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 9)
+            )
+            .accessibilityIdentifier("inspector.duplicateCandidates")
         }
-        return "Calendar event · Editable"
+    }
+
+    private func duplicateMatchText(
+        _ matchKind: CalendarDuplicateMatchKind
+    ) -> String {
+        switch matchKind {
+        case .timedWithinTolerance:
+            "starts and ends within fifteen minutes"
+        case .sameAllDayRange:
+            "same all-day date range"
+        }
+    }
+
+    private func duplicateCandidateAccessibilityLabel(
+        _ candidate: CalendarDuplicateCandidate
+    ) -> String {
+        let event = candidate.event
+        let role = appState.calendarRole(for: event)
+        let permission = appState.calendarWriteRestriction(for: event)?.title
+            ?? "editable"
+        return [
+            "Possible duplicate",
+            event.title,
+            CalendarEventDateFormatting.agendaText(
+                for: event,
+                calendar: appState.calendar
+            ),
+            duplicateMatchText(candidate.matchKind),
+            "\(role.title) role",
+            event.calendarTitle,
+            event.sourceTitle,
+            event.accountType.title,
+            permission
+        ].joined(separator: ", ")
     }
 }
 

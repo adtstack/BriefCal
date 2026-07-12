@@ -9,7 +9,11 @@ final class ContextStoreTests: XCTestCase {
 
         XCTAssertEqual(
             try database.appliedMigrations(),
-            ["v1_context_store", "v2_event_change_log"]
+            [
+                "v1_context_store",
+                "v2_event_change_log",
+                "v3_calendar_clarity"
+            ]
         )
         XCTAssertTrue(try database.foreignKeysEnabled())
     }
@@ -1122,26 +1126,29 @@ final class ContextStoreTests: XCTestCase {
                 .personalTask(taskID: personalToday.id)
             ])
         )
+        let eventSourceItem = try XCTUnwrap(today.first {
+            $0.id == .eventTask(
+                taskID: eventTask.id,
+                contextID: eventTask.contextID
+            )
+        })
         guard case let .event(
             contextID,
             section,
             eventTitle,
+            calendarIdentifier,
             calendarTitle,
             sourceTitle,
             eventStart,
             eventEnd,
             isAllDay
-        ) = try XCTUnwrap(today.first {
-            $0.id == .eventTask(
-                taskID: eventTask.id,
-                contextID: eventTask.contextID
-            )
-        }).source else {
+        ) = eventSourceItem.source else {
             return XCTFail("Expected event task source")
         }
         XCTAssertEqual(contextID, eventTask.contextID)
-        XCTAssertEqual(section, .before)
+        XCTAssertEqual(section, EventTaskSection.before)
         XCTAssertEqual(eventTitle, event.title)
+        XCTAssertEqual(calendarIdentifier, event.calendarIdentifier)
         XCTAssertEqual(calendarTitle, "KAOS-TEST")
         XCTAssertEqual(sourceTitle, "Work")
         XCTAssertEqual(eventStart, event.startDate)
@@ -2893,7 +2900,11 @@ final class ContextStoreTests: XCTestCase {
 
             XCTAssertEqual(
                 try database.appliedMigrations(),
-                ["v1_context_store", "v2_event_change_log"]
+                [
+                    "v1_context_store",
+                    "v2_event_change_log",
+                    "v3_calendar_clarity"
+                ]
             )
             XCTAssertEqual(brief.context.notes, "Persistent notes")
             XCTAssertEqual(brief.tasks.map(\.id), [eventTaskID])

@@ -219,7 +219,17 @@ struct CalendarTimelineView: View {
                                 placement: placement,
                                 isSelected: appState.selectedEventID
                                     == placement.event.id,
-                                calendar: appState.calendar
+                                calendar: appState.calendar,
+                                role: appState.calendarRole(
+                                    for: placement.event
+                                ),
+                                restriction: appState.calendarWriteRestriction(
+                                    for: placement.event
+                                ),
+                                hasDuplicateCandidates: appState
+                                    .hasDuplicateCandidates(
+                                        for: placement.event
+                                    )
                             )
                         }
                         .buttonStyle(.plain)
@@ -302,7 +312,13 @@ struct CalendarTimelineView: View {
                         placement: placement,
                         height: frame.height,
                         isSelected: appState.selectedEventID == placement.event.id,
-                        calendar: appState.calendar
+                        calendar: appState.calendar,
+                        role: appState.calendarRole(for: placement.event),
+                        restriction: appState.calendarWriteRestriction(
+                            for: placement.event
+                        ),
+                        hasDuplicateCandidates: appState
+                            .hasDuplicateCandidates(for: placement.event)
                     )
                 }
                 .buttonStyle(.plain)
@@ -460,6 +476,9 @@ private struct TimedEventCard: View {
     let height: CGFloat
     let isSelected: Bool
     let calendar: Calendar
+    let role: CalendarRole
+    let restriction: CalendarWriteRestriction?
+    let hasDuplicateCandidates: Bool
 
     var body: some View {
         HStack(spacing: 0) {
@@ -484,7 +503,7 @@ private struct TimedEventCard: View {
                 }
 
                 if height >= 58 {
-                    Text(placement.event.calendarTitle)
+                    Text("\(role.title) · \(placement.event.calendarTitle)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -518,9 +537,12 @@ private struct TimedEventCard: View {
                 .font(.system(size: 8))
                 .accessibilityHidden(true)
         }
-        if placement.event.isReadOnly
-            || placement.event.isInvitation
-            || placement.event.hasAttendees {
+        if hasDuplicateCandidates {
+            Image(systemName: "square.on.square")
+                .font(.system(size: 8))
+                .accessibilityHidden(true)
+        }
+        if restriction != nil {
             Image(systemName: "lock")
                 .font(.system(size: 8))
                 .accessibilityHidden(true)
@@ -562,15 +584,19 @@ private struct TimedEventCard: View {
                 for: placement.event,
                 calendar: calendar
             ),
-            placement.event.calendarTitle
+            "\(role.title) role",
+            placement.event.calendarTitle,
+            placement.event.sourceTitle,
+            placement.event.accountType.title
         ]
         if placement.event.isRecurring { parts.append("recurring") }
-        if placement.event.isReadOnly {
-            parts.append("read-only")
-        } else if placement.event.isInvitation {
-            parts.append("invitation, original editing in Calendar app")
-        } else if placement.event.hasAttendees {
-            parts.append("meeting with attendees, original editing in Calendar app")
+        if let restriction {
+            parts.append("\(restriction.title), \(restriction.message)")
+        } else {
+            parts.append("original event editable")
+        }
+        if hasDuplicateCandidates {
+            parts.append("possible duplicate calendar event")
         }
         if placement.continuesBefore { parts.append("continues from previous day") }
         if placement.continuesAfter { parts.append("continues to next day") }
@@ -582,6 +608,9 @@ private struct AllDayEventCard: View {
     let placement: AllDayEventPlacement
     let isSelected: Bool
     let calendar: Calendar
+    let role: CalendarRole
+    let restriction: CalendarWriteRestriction?
+    let hasDuplicateCandidates: Bool
 
     var body: some View {
         HStack(spacing: 4) {
@@ -599,16 +628,22 @@ private struct AllDayEventCard: View {
             if placement.event.isRecurring {
                 Image(systemName: "repeat")
                     .font(.system(size: 8))
+                    .accessibilityHidden(true)
             }
-            if placement.event.isReadOnly
-                || placement.event.isInvitation
-                || placement.event.hasAttendees {
+            if hasDuplicateCandidates {
+                Image(systemName: "square.on.square")
+                    .font(.system(size: 8))
+                    .accessibilityHidden(true)
+            }
+            if restriction != nil {
                 Image(systemName: "lock")
                     .font(.system(size: 8))
+                    .accessibilityHidden(true)
             }
             if placement.continuesAfter {
                 Image(systemName: "chevron.right")
                     .font(.system(size: 7, weight: .bold))
+                    .accessibilityHidden(true)
             }
         }
         .padding(.horizontal, 5)
@@ -644,16 +679,20 @@ private struct AllDayEventCard: View {
                 for: placement.event,
                 calendar: calendar
             ),
+            "\(role.title) role",
             placement.event.calendarTitle,
+            placement.event.sourceTitle,
+            placement.event.accountType.title,
             "all-day"
         ]
         if placement.event.isRecurring { parts.append("recurring") }
-        if placement.event.isReadOnly {
-            parts.append("read-only")
-        } else if placement.event.isInvitation {
-            parts.append("invitation, original editing in Calendar app")
-        } else if placement.event.hasAttendees {
-            parts.append("meeting with attendees, original editing in Calendar app")
+        if let restriction {
+            parts.append("\(restriction.title), \(restriction.message)")
+        } else {
+            parts.append("original event editable")
+        }
+        if hasDuplicateCandidates {
+            parts.append("possible duplicate calendar event")
         }
         if placement.continuesBefore { parts.append("continues from previous period") }
         if placement.continuesAfter { parts.append("continues to next period") }

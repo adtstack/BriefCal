@@ -258,6 +258,10 @@ private struct RecoveryBriefSection: View {
 
             VStack(spacing: 0) {
                 ForEach(briefs, id: \.context.id) { brief in
+                    let role = appState.calendarRole(
+                        calendarIdentifier: brief.link.calendarIdentifier
+                    )
+
                     Button {
                         Task {
                             await appState.openOriginalEvent(
@@ -277,6 +281,8 @@ private struct RecoveryBriefSection: View {
                                     recoveryStatus(brief)
                                         + " · \(brief.tasks.count) tasks"
                                         + (brief.context.notes.isEmpty ? "" : " · Notes")
+                                        + " · \(role.title)"
+                                        + " · \(brief.link.calendarTitleSnapshot)"
                                 )
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -492,6 +498,7 @@ private struct TaskCenterRow: View {
             .accessibilityLabel("Delete task")
         }
         .padding(12)
+        .accessibilityIdentifier(taskRowAccessibilityIdentifier)
         .onChange(of: isEditing) { wasEditing, isEditing in
             if wasEditing && !isEditing {
                 commitTitle()
@@ -533,12 +540,16 @@ private struct TaskCenterRow: View {
             contextID,
             section,
             eventTitle,
+            calendarIdentifier,
             calendarTitle,
             sourceTitle,
             eventStart,
             eventEnd,
             isAllDay
         ):
+            let role = appState.calendarRole(
+                calendarIdentifier: calendarIdentifier
+            )
             Button {
                 guard commitTitle() else { return }
                 Task {
@@ -547,16 +558,26 @@ private struct TaskCenterRow: View {
             } label: {
                 Label(
                     eventLinkPrefix
-                        + "\(section.shortTitle) · \(eventTitle) · "
+                        + "\(role.title) · \(section.shortTitle) · "
+                        + "\(eventTitle) · "
                         + "\(eventTimeText(start: eventStart, end: eventEnd, isAllDay: isAllDay)) · "
                         + "\(calendarTitle) · \(sourceTitle)",
                     systemImage: "calendar"
                 )
             }
             .buttonStyle(.plain)
-            .help(eventSourceHelp)
+            .help(
+                "\(eventSourceHelp). \(role.title) role · "
+                    + "\(calendarTitle) · \(sourceTitle)"
+            )
+            .accessibilityIdentifier(
+                "taskCenter.eventSource.\(contextID)"
+            )
         case .personal:
-            Label("Personal · Local", systemImage: "person.crop.circle")
+            Label(
+                "Personal task · Local",
+                systemImage: "person.crop.circle"
+            )
         }
     }
 
@@ -589,6 +610,15 @@ private struct TaskCenterRow: View {
         case .missing: "Review the missing original event"
         case .orphaned: "Review the local orphan Event Brief"
         case .active, .none: "Open original event"
+        }
+    }
+
+    private var taskRowAccessibilityIdentifier: String {
+        switch item.id {
+        case let .eventTask(taskID, contextID):
+            return "taskCenter.item.event.\(contextID).\(taskID)"
+        case let .personalTask(taskID):
+            return "taskCenter.item.personal.\(taskID)"
         }
     }
 
@@ -641,7 +671,7 @@ private struct TaskCenterRow: View {
     }
 
     private func dueText(_ date: Date) -> String {
-        if case let .event(_, _, _, _, _, _, _, isAllDay) = item.source,
+        if case let .event(_, _, _, _, _, _, _, _, isAllDay) = item.source,
            isAllDay {
             return CalendarEventDateFormatting.abbreviatedDate(
                 date,
