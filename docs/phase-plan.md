@@ -18,7 +18,7 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 - Mini month: **구현·집중 자동·210pt offscreen 시각 검증 완료** — locale/firstWeekday/time-zone을 따르는 고정 6×7 civil grid, 독립 월 탐색, 날짜 선택의 기존 range-fetch 연결, today/focused/adjacent 상태와 keyboard·VoiceOver 경계를 구현. 전체 Month 화면과 불완전 fetch 기반 event dot은 범위 밖
 - App icon: **구현·호환성·전체 자동·Release 검증 완료** — calendar grid·schedule blocks·Todo check의 원본 표식과 16~1024px alpha slot을 구현. 최초 opaque build를 macOS 14/15 legacy `.icns` 위험으로 제외하고 transparent full-bleed squircle, `.icns` alpha, strict signed Release와 exact bootstrap을 검증했다. Icon Composer layered/dark/tinted variant는 배포 polish로 이월
 - Phase 8: **구현·199-test 자동·signed Release·v3 migration 완료 / live UI·shared read-only gate 대기** — local calendar role, role별 virtual Set, source/permission badge, typed read-only reason과 비파괴 duplicate review를 구현했다. 화면 잠금으로 실화면과 shared Viewer는 미검증이다.
-- Phase 9: **구현·213-test 자동·signed Release·운영 DB 무변경 완료 / live Settings panel gate 대기** — healthy current-schema DB의 수동 export, strict two-entry ZIP import, import/reset 전 자동 recovery backup, six-table local reset, rollback 실패 session quarantine과 privacy/storage 설명을 구현했다. 같은 current-schema의 신뢰 가능한 backup만 허용하며 손상 live DB의 bootstrap recovery는 Phase 10이다.
+- Phase 9: **구현·213-test 자동·signed Release·운영 DB 무변경 완료 / live Settings visual·file-panel·typed `RESET` gate 통과** — healthy current-schema DB의 수동 export, strict two-entry ZIP import, import/reset 전 자동 recovery backup, six-table local reset, rollback 실패 session quarantine과 privacy/storage 설명을 구현했다. 실제 export/import/reset 실행과 손상 live DB의 bootstrap recovery는 별도 gate다.
 - Phase 10: 대기
 
 ## Phase 표
@@ -299,7 +299,7 @@ Definition of Done:
 - DB open/migration 실패로 정상 store가 없는 시작 상태에서 corrupt live DB를 교체하는 recovery UI는 Phase 10으로 이월한다. 상세 계약은 [backup-restore.md](backup-restore.md)와 [ADR-015](adr/ADR-015-backup-import-reset-safety.md)를 따른다.
 - 최종 전체 **213 tests executed, 212 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**이며 result bundle은 `/private/tmp/KaosCalPhase9FinalTests-20260712-1535.xcresult`다. core 8개와 AppState 6개 Phase 9 집중 테스트에는 strict archive/schema/destination, same-writer import/reset recovery, rollback 실패 quarantine, file-backed 620×620 Settings render와 fake provider write 0회가 포함된다.
 - signed Release `/private/tmp/KaosCalPhase9FinalRelease-20260712-1535/Build/Products/Release/KaosCal.app`, CDHash `4f6eb184110ca317a440c5d640cf0670e4c42753`는 strict codesign·hardened runtime, sandbox·Calendar·user-selected read/write entitlement와 usage description/AppIcon을 통과했고 get-task-allow·XCTest가 없다.
-- exact Release는 1512×949 visible window를 만들고 종료됐다. 전체 test와 두 차례 exact bootstrap 전후 direct/sandbox 운영 DB의 mtime·size·SHA-256, integrity/FK, WAL/SHM/journal 부재가 불변이고 최종 process는 0이다. macOS accessibility가 이 창을 AX window로 노출하지 않아 실제 Settings/Open·Save panel과 typed reset은 **manual pending**이며 620×620 offscreen render로 대체하지 않는다.
+- exact Release는 1512×949 visible window를 만들고 종료됐다. 전체 test와 두 차례 exact bootstrap 전후 direct/sandbox 운영 DB의 mtime·size·SHA-256, integrity/FK, WAL/SHM/journal 부재가 불변이고 최종 process는 0이다. 후속 live run `20260712-1616-KST`에서 같은 Release의 620×652 Settings 전체 scroll, 880×448 Export/Import panel, privacy/storage copy와 `RESET` 입력 뒤 destructive button 활성화를 확인했다. 모든 panel과 reset sheet는 취소했으며 실제 export/import/reset은 실행하지 않았다. 종료 뒤 운영 DB와 sidecar 부재는 다시 불변이고 process는 0이다.
 
 ## Phase 10: Paid Beta Polish
 

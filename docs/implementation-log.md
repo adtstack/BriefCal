@@ -758,6 +758,26 @@
   - 손상 live DB 때문에 app open/migration이 실패한 상태의 backup import recovery는 Phase 10이다.
 - 결과: Phase 9 healthy current-schema backup/export/import/reset, strict archive/schema/destination, Settings·privacy, rollback 실패 quarantine, 전체 자동·signed Release·운영 DB 격리 checkpoint는 **pass**. live Settings panel과 failed-bootstrap recovery는 명시적으로 이월한다.
 
+## 2026-07-12 — Phase 9 live Settings visual 후속 gate
+
+- 대상 artifact: `/private/tmp/KaosCalPhase9FinalRelease-20260712-1535/Build/Products/Release/KaosCal.app`, CDHash `4f6eb184110ca317a440c5d640cf0670e4c42753`.
+- 실행 방법·범위:
+  - run `20260712-1616-KST`에서 Orca를 사용하지 않고 Codex의 macOS `System Events` accessibility와 CoreGraphics window capture로 exact Release를 조작·확인했다.
+  - 620×652 `KaosCal Settings`에서 Local Data 전체 scroll, active sandbox DB 경로, Export/Import/Finder/Reset button enabled 상태와 privacy/storage copy를 확인했다.
+  - 880×448 `Export KaosCal Backup` panel은 Documents와 기본 이름 `KaosCal-Backup-2026-07-12-1616.zip`, enabled Cancel/Export를 표시했다. 880×448 `Import KaosCal Backup` panel은 선택 전 Cancel enabled, `Choose Backup` disabled를 표시했다.
+  - 470×256 reset sheet에서 local data만 제거하고 Calendar/Exchange 일정은 삭제하지 않는다는 경고, `RESET` 입력 전 Delete disabled, 정확한 `RESET` 입력 뒤 Delete enabled를 확인했다.
+- 안전 경계:
+  - Export와 Import panel, reset sheet를 모두 Cancel로 닫았다. 파일 생성·backup 선택·import·reset과 EventKit/Exchange write는 실행하지 않았다.
+  - reset sheet를 다시 열어 visual capture한 뒤에도 Cancel로 닫고 exact Release PID를 직접 종료했다. 최종 `pgrep -x KaosCal` 결과는 process 0이다.
+- 시각 증거:
+  - `/private/tmp/KaosCalPhase9Settings-Live-20260712-1616.png`
+  - `/private/tmp/KaosCalPhase9Settings-Live-Bottom-20260712-1616.png`
+  - `/private/tmp/KaosCalPhase9ResetSheet-Live-20260712-1616.png`
+- 운영 데이터 재검증:
+  - direct DB `1783704658|126976`, SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 sandbox DB `1783832834|139264`, SHA-256 `7cd91d35ceaa7f04a43c00e88cf1c99d7d8f778ebeffa8c55af0f9f269251d23`가 기준값과 동일했다.
+  - 두 DB 모두 integrity `ok`, FK violation 0, WAL/SHM/journal sidecar 0개다.
+- 결과: Phase 9의 live Settings layout·scroll·privacy copy·Export/Import panel·typed `RESET` activation gate는 **pass**. 실제 export/import/reset mutation, real rollback failure와 failed-bootstrap recovery는 실행하지 않았으므로 별도 gate로 유지한다.
+
 ## 다음 항목 템플릿
 
 ```markdown
