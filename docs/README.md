@@ -4,19 +4,25 @@ KaosCal 문서는 제품 판단, 기술 결정, 구현 단계, QA 기준과 실�
 
 ## 먼저 읽을 문서
 
-1. [v1-scope.md](v1-scope.md)
+1. [current-status.md](current-status.md)
+   - 현재 phase, 최신 검증 결과와 열린 manual/live gate의 단일 상태 기준이다.
+
+2. [user-guide.md](user-guide.md)
+   - 설치, 권한, 주요 기능, backup/reset과 사용자 데이터 경계를 설명한다.
+
+3. [v1-scope.md](v1-scope.md)
    - 현재 v1의 필수·제외 범위와 Exchange 지원 경계를 정의한다.
 
-2. [adr/README.md](adr/README.md)
+4. [adr/README.md](adr/README.md)
    - Accepted 결정의 근거와 대체 이력을 관리한다.
 
-3. [implementation-log.md](implementation-log.md)
+5. [implementation-log.md](implementation-log.md)
    - 실제 변경, 검증 결과, 미해결 위험을 시간순으로 남긴다.
 
-4. [developer-setup.md](developer-setup.md)
+6. [developer-setup.md](developer-setup.md)
    - Xcode와 Exchange 테스트 환경 준비물을 정리한다.
 
-5. [exchange-compatibility.md](exchange-compatibility.md)
+7. [exchange-compatibility.md](exchange-compatibility.md)
    - 추측이 아닌 실계정 검증 결과로 Exchange 지원 범위를 선언한다.
 
 ## 제품·기술 기준 문서
@@ -30,7 +36,21 @@ KaosCal 문서는 제품 판단, 기술 결정, 구현 단계, QA 기준과 실�
 - [qa-checklist.md](qa-checklist.md): 회귀·수동·베타 검증 기준
 - [backup-restore.md](backup-restore.md): 로컬 DB export/import와 복구 안전성
 - [distribution.md](distribution.md): direct distribution, notarization, 라이선스 준비
+- [known-issues.md](known-issues.md): 현재 제한, 미검증 범위와 안전한 우회
+- [release-runbook.md](release-runbook.md): 버전·서명·notarization·패키징·철회 절차
+
+저장소 루트의 운영 문서:
+
+- [CONTRIBUTING.md](../CONTRIBUTING.md): 개발 환경, 검증 명령과 변경 규칙
+- [CHANGELOG.md](../CHANGELOG.md): 사용자 관점의 버전 변경 이력
+- [PRIVACY.md](../PRIVACY.md): 로컬 데이터와 backup의 개인정보 경계
+- [SECURITY.md](../SECURITY.md): 보안 가정과 취약점 보고 원칙
+- [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md): 외부 의존성 고지
 
 ## 문서 갱신 규칙
 
-사용자에게 보이는 동작, 데이터 모델, 지원 범위, 테스트 결과가 바뀌면 같은 변경에서 관련 ADR·범위·QA·구현 로그를 함께 갱신한다. 상세 규칙은 [ADR-005](adr/ADR-005-decision-and-change-recording.md)에 있다.
+사용자에게 보이는 동작, 데이터 모델, 지원 범위, 테스트 결과가 바뀌면 같은 변경에서 관련
+ADR·범위·QA·구현 로그를 함께 갱신한다. 현재 phase, 최신 test count와 열린 gate의 요약은
+[current-status.md](current-status.md)를 기준으로 한다. QA·phase plan·implementation log와
+Exchange compatibility에는 그 판정을 뒷받침하는 exact artifact, run과 역사적 증거를
+보존한다. 상세 규칙은 [ADR-005](adr/ADR-005-decision-and-change-recording.md)에 있다.

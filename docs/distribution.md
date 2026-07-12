@@ -1,5 +1,8 @@
 # Distribution
 
+> 현재 구현·배포 준비 판정은 [Current Status](current-status.md), 실제 배포 명령과
+> 중단 조건은 [Release Runbook](release-runbook.md)을 따른다.
+
 ## 배포 방향
 
 KaosCal v1은 direct download first로 간다.
@@ -30,6 +33,9 @@ Mac App Store는 sandbox, 심사, 라이선스 정책, 업데이트 전략이 �
 - crash-safe update 안내
 - privacy 문구
 - license key 또는 결제 provider 결정
+- 앱 배포 라이선스/EULA 결정
+- third-party notice 포함
+- 공개 support·security 연락 경로 확정
 
 ## Notarization 전 체크리스트
 
@@ -64,6 +70,10 @@ v1 기본 모델:
 
 ## 개인정보 문구 초안
 
+아래 문구는 landing page용 요약 초안이다. 실제 데이터 범위, plaintext backup과 보관
+책임은 저장소 루트의 [Privacy](../PRIVACY.md)를 우선하며, 외부 배포 전 publisher와
+문의 경로를 확정해야 한다.
+
 ```text
 KaosCal은 계정 가입 없이 작동합니다.
 일정 자체는 사용자의 기존 캘린더 계정에 저장됩니다.
@@ -83,6 +93,9 @@ KaosCal v1은 서버로 Event Brief 데이터를 전송하지 않습니다.
 - 새 Mac 사용자 계정에서 실행 성공
 - release notes 작성
 - feedback 이메일 또는 form 준비
+- 사용자 가이드와 known issues 공개
+- Privacy·Security·앱 라이선스/EULA·third-party notice 검토
+- release artifact checksum과 철회/rollback 절차 기록
 
 ## Landing page 최소 구성
 

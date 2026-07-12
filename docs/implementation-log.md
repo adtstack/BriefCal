@@ -778,6 +778,37 @@
   - 두 DB 모두 integrity `ok`, FK violation 0, WAL/SHM/journal sidecar 0개다.
 - 결과: Phase 9의 live Settings layout·scroll·privacy copy·Export/Import panel·typed `RESET` activation gate는 **pass**. 실제 export/import/reset mutation, real rollback failure와 failed-bootstrap recovery는 실행하지 않았으므로 별도 gate로 유지한다.
 
+## 2026-07-12 — Phase 10 문서·운영 기반 정리
+
+- 현재 phase, 최신 suite·Release와 열린 live/manual gate를 `docs/current-status.md`의 단일
+  상태 기준으로 분리했다. README, phase plan, developer setup과 ADR의 변동 상태 문구는
+  이 문서를 참조하도록 정리했다.
+- 사용자용 `docs/user-guide.md`와 `docs/known-issues.md`, root `PRIVACY.md`와
+  `SECURITY.md`에 설치·권한·EventKit/local data 소유권, plaintext backup, 제한·우회,
+  failed-bootstrap 보존과 미정인 support/legal 경계를 기록했다.
+- `docs/release-runbook.md`, `CONTRIBUTING.md`, `CHANGELOG.md`와
+  `THIRD_PARTY_NOTICES.md`에 Developer ID/notarization/stapling/package/checksum/clean-user
+  smoke/rollback, 개발·test·manual opt-in, version history와 pinned GRDB MIT notice를
+  기록했다. Team, certificate, notary profile, support contact와 KaosCal license/EULA는
+  결정된 것처럼 채우지 않고 외부 beta blocker로 유지했다.
+- `docs/backup-restore.md`에는 앱이 DB를 열지 못할 때 파일을 삭제·교체하지 않고 기존 DB와
+  `Backups`를 보존하는 임시 runbook을 추가했다. 이는 아직 없는 Phase 10 self-service
+  recovery를 지원 완료로 선언하지 않는다.
+- 검증: 모든 로컬 Markdown link 존재, README·CONTRIBUTING·release runbook의 shell fence
+  `zsh -n`, `git diff --check`, Xcode project/scheme/target listing을 통과했다. notarytool과
+  stapler 명령은 설치된 Xcode help와 대조했고, GRDB notice는 `Package.resolved`의 exact
+  revision upstream LICENSE와 일치함을 확인했다.
+- 독립 release review에서 DMG Developer ID 서명→notary `Accepted`→stapling 중단 조건,
+  기존 사용자 upgrade smoke와 EventKit opt-in의 exact test host
+  `build-for-testing`→권한 승인→`test-without-building` 순서를 보강했다. Xcode 26.6에서
+  두 test 명령을 직접 실행했고 test host CDHash가 전후
+  `f04c5f2e220ab237c9cf8a39e7c5ad772d7b93bc`로 동일함을 확인했다. DMG 실제 제출은
+  Developer ID/notary credential이 없어 실행하지 않았으며 배포 blocker로 유지한다.
+- 코드·project 설정은 변경하지 않았다. 문서의 전체 test 명령을 다시 실행한 결과
+  `/private/tmp/KaosCalReviewTests.xcresult`에서 **213 executed / 212 passed / 1 intentional
+  manual-only skip / 0 failures / 0 unexpected**, `TEST SUCCEEDED`를 확인했다. 이 문서
+  작업과 재실행이 새로운 기능·live·Developer ID 배포 pass를 만들지는 않는다.
+
 ## 다음 항목 템플릿
 
 ```markdown

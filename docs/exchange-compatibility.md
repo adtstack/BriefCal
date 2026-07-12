@@ -1,6 +1,6 @@
 # Exchange Compatibility
 
-> 상태: Phase 9 Backup / Settings 구현·213-test 자동·signed Release·운영 DB 무변경·live Settings visual gate 완료 / 비반복 linked delete live 통과 / shared read-only·recurring gate 대기
+> 현재 phase·최신 suite·열린 gate 요약: [Current Status](current-status.md) 참조
 > 제품 대상: macOS Calendar에 구성된 Exchange Online
 > 현재 테스트 환경: backend 종류 미확인. Outlook connector run `20260711-1512-7C4E`에서 `KAOS-TEST`(source)·`일정`(destination)이 각각 exact-name 1개, editable, distinct, same owner로 관찰됐고, signed FinalRelease/EventKit run `20260711-1626-B7D2`에서 두 calendar의 비반복 CRUD를 확인했다. Phase 7C run `20260712-025027-KST`에서는 exact signed Release의 full access와 두 calendar의 `Exchange`·writable 표시, linked 비반복 원본의 KaosCal→Calendar.app→Outlook 삭제 및 local Brief 보존을 확인했다. backend의 Exchange Online 판정 증거는 아니다.
 > 마지막 갱신: 2026-07-12

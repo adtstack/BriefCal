@@ -7,19 +7,10 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 
 ## 현재 진행 상태
 
-- Phase 0: **완료** — 2026-07-10, build/test/ad-hoc signing/window 생성 검증
-- Phase 1: **실계정 부분 통과** — 코드·15개 자동 테스트·ad-hoc 서명 검증에 더해 2026-07-11 live FinalRelease에서 full access와 `KAOS-TEST`·`일정`의 writable Exchange 표시를 확인. Calendar.app 시각 round-trip과 read-only fixture는 대기
-- Phase 2: **구현·자동 검증 완료 / 실계정 UI 검증 중** — Day/Week/Agenda 공통 범위, 실제 시간·종일 배치, 33개 전체 테스트, Release·서명 build, offscreen 렌더 검증 완료
-- Phase 3: **완료** — GRDB v1 migration, 앱 bootstrap, Event Brief/task repository, identity resolver, 파일 재열기·동시 저장, 54-test 전체 회귀, Release·서명 Debug 검증 완료
-- Phase 4: **구현·자동·빌드·서명·fixture 시각 검증 완료 / 수동 gate 대기** — notes autosave, event/personal task CRUD·완료·due, typed Task Center, strong-only 원본 탐색 구현; 전체 75 tests와 Release·서명 Debug·strict codesign 통과
-- Phase 5: **구현·자동·Release checkpoint / 비반복 EventKit live CRUD 부분 통과** — attendee가 없는 비반복 writable 일정 create/update/delete를 `KAOS-TEST`에서 수행하고 앱 재실행·server fetch·exact cleanup까지 확인. Calendar.app 시각 round-trip, all-day·floating/zoned live gate는 대기
-- Phase 6: **구현·자동·Release checkpoint / 반복·이동 live gate 대기** — 명시적 반복 범위, 확인 뒤 write, linked safe move, additive change log, 좁은 session Undo와 안전 차단 경계를 구현했다. 비반복 recurrence 오판 버그를 live gate에서 발견·수정하고 legacy Brief의 좁은 자동 정상화도 추가했으며, live 반복 scope·future split·calendar move는 대기
-- Phase 7: **7A~7C 구현 / 비반복 linked delete live 통과 / recurring gate 대기** — lifecycle·After Review, occurrence-aware missing/orphan recovery와 linked original delete를 구현했다. run `20260712-025027-KST`에서 비반복 원본의 Calendar.app·Outlook 제거와 local Brief/task 보존을 확인했으며, recurring `thisEvent`와 crash-window recovery는 대기다.
-- Mini month: **구현·집중 자동·210pt offscreen 시각 검증 완료** — locale/firstWeekday/time-zone을 따르는 고정 6×7 civil grid, 독립 월 탐색, 날짜 선택의 기존 range-fetch 연결, today/focused/adjacent 상태와 keyboard·VoiceOver 경계를 구현. 전체 Month 화면과 불완전 fetch 기반 event dot은 범위 밖
-- App icon: **구현·호환성·전체 자동·Release 검증 완료** — calendar grid·schedule blocks·Todo check의 원본 표식과 16~1024px alpha slot을 구현. 최초 opaque build를 macOS 14/15 legacy `.icns` 위험으로 제외하고 transparent full-bleed squircle, `.icns` alpha, strict signed Release와 exact bootstrap을 검증했다. Icon Composer layered/dark/tinted variant는 배포 polish로 이월
-- Phase 8: **구현·199-test 자동·signed Release·v3 migration 완료 / live UI·shared read-only gate 대기** — local calendar role, role별 virtual Set, source/permission badge, typed read-only reason과 비파괴 duplicate review를 구현했다. 화면 잠금으로 실화면과 shared Viewer는 미검증이다.
-- Phase 9: **구현·213-test 자동·signed Release·운영 DB 무변경 완료 / live Settings visual·file-panel·typed `RESET` gate 통과** — healthy current-schema DB의 수동 export, strict two-entry ZIP import, import/reset 전 자동 recovery backup, six-table local reset, rollback 실패 session quarantine과 privacy/storage 설명을 구현했다. 실제 export/import/reset 실행과 손상 live DB의 bootstrap recovery는 별도 gate다.
-- Phase 10: 대기
+현재 phase, 최신 자동·Release 증거, live 결과와 열린 gate는
+[Current Status](current-status.md)를 단일 기준으로 사용한다. 이 문서는 phase의 목표,
+Definition of Done과 각 checkpoint 당시의 구현 근거를 보존하며, 상단에 변동하는 test
+count나 artifact를 복제하지 않는다.
 
 ## Phase 표
 

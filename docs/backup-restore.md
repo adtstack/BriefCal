@@ -164,5 +164,23 @@ Phase 9의 retention은 수동이다. KaosCal은 자동 backup을 기간이나 �
 - 앱 시작부터 DB open/migration이 실패했다면 기존 파일을 보존한다. 손상 live DB를
   대체할 bootstrap recovery UI는 Phase 10에서 다룬다.
 
+## 시작 시 DB를 열지 못하는 경우
+
+Phase 10의 bootstrap recovery UI가 구현되기 전에는 Settings의 Import를 열 수 없으므로
+사용자가 앱 안에서 직접 복구할 수 없다. 이 상태에서는 다음 안전 경계를 따른다.
+
+1. `Reset Local Data`를 시도하거나 Application Support의 SQLite, `-wal`, `-shm`,
+   `-journal` 파일을 개별 삭제·교체하지 않는다.
+2. KaosCal을 종료한 상태로 오류 문구와 앱 version/build만 기록한다. Event Brief 본문,
+   calendar/event identifier, account/email 또는 backup ZIP은 공개 issue에 첨부하지 않는다.
+3. 기존 DB와 `Backups` 폴더를 보존한다. 새 설치나 앱 삭제가 local data 복구를 보장한다고
+   가정하지 않는다.
+4. 공개 support 경로가 확정되기 전에는 프로젝트 소유자에게 비공개로 복구 가능 여부를
+   확인한다. 검증되지 않은 SQLite 편집이나 schema downgrade는 수행하지 않는다.
+
+이 절차는 데이터 보존을 위한 임시 runbook이며 복구 성공을 보장하지 않는다. self-service
+bootstrap import, 손상 DB 격리와 known-good backup 선택은 Phase 10 기능·QA가 통과한 뒤에만
+지원 완료로 선언한다.
+
 설계 결정은 [ADR-015](adr/ADR-015-backup-import-reset-safety.md), 검증 절차는
 [QA checklist](qa-checklist.md)를 따른다.

@@ -2,7 +2,7 @@
 
 > 상태: Accepted
 > 날짜: 2026-07-11
-> 구현 상태: Phase 7A/7B/7C 구현 및 fake-provider 자동 checkpoint 완료, Phase 7C live Exchange 삭제 대기
+> 구현 추적: 최신 자동·Release·live 판정은 [Current Status](../current-status.md)와 [Exchange Compatibility](../exchange-compatibility.md)를 따름
 
 ## 배경
 

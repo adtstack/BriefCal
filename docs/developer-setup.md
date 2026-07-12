@@ -1,6 +1,6 @@
 # Developer And Test Setup
 
-> 상태: Phase 9 Backup / Settings까지 구현·signed Release 완료 / 현재 213-test suite(212 pass, 수동 Exchange 1 opt-in skip) / 비반복 EventKit live CRUD·linked delete 부분 통과, 반복/이동·shared read-only·live Settings panel gate 대기
+> 현재 개발·검증 상태: [Current Status](current-status.md)를 단일 기준으로 사용
 > 마지막 갱신: 2026-07-12
 
 KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에서 결정하고 기록한다. 사용자가 우선 준비할 것은 개발·실계정 검증에 필요한 아래 항목뿐이다.
@@ -45,7 +45,7 @@ KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에
 5. **남은 기능 gate:** `KC-E2` 종일 범위와 `KC-E3` floating/zoned 변경을 확인한다.
 6. **남은 Phase 6 gate:** `KC-E4`의 `이번 일정`/`이번 이후`와 future split을 확인한다.
 7. **남은 이동 gate:** `KAOS-TEST`→`일정` linked calendar move를 별도 fixture로 확인한다.
-8. **남은 Phase 7C gate:** 고유 비반복 fixture에 local notes와 Before/During/After task를 만든 뒤 앱의 final review로 linked original을 삭제한다. Calendar.app/Outlook 제거와 `Original deleted · Local Brief kept`, notes/tasks 보존을 확인한다. 별도 반복 fixture의 `이번 일정` 삭제는 series 잔존과 exact cleanup을 전제로 실행하며 `이번 이후`는 누르지 않는다.
+8. **남은 Phase 7C gate:** 비반복 linked original delete는 run `20260712-025027-KST`에서 통과했다. 별도 반복 fixture의 `이번 일정` 삭제와 retained single local Brief의 UI-only cleanup은 series 잔존·원본 비재생성·exact cleanup을 전제로 확인한다. `이번 이후`는 누르지 않는다.
 
 실제 회사 일정은 수정하지 않고 모든 write는 `KAOS-TEST`와 `일정`에서 고유 run marker로 만든 전용 fixture에만 수행한다.
 
@@ -73,7 +73,13 @@ Exchange Online인지 온프레미스인지 알 수 있는 관리자 정보가 �
 
 fixture는 민감하지 않은 제목과 내용, 고유 run marker로 `KAOS-TEST`에 만들고 calendar 이동 대상은 `일정`을 사용한다. KC-E4에는 attendee나 실제 연락처를 넣지 않고 KaosCal이 표현 가능한 기본 recurrence만 사용한다. Phase 6 구현·자동 gate와 서버 측 제한된 round-trip에 이어 비반복 EventKit write도 recurrence-fix signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서 부분 통과했다. 반복·all-day·move는 각각 별도 marker와 exact cleanup을 전제로 실행한다. 앱이나 환경변수에 account password를 넣는 fixture 자동화는 만들지 않는다.
 
-2026-07-11에 준비한 Phase 5와 Phase 6 수동 gate build의 역사적 source 상태·임시 path·CDHash·서명 검증은 [Exchange Compatibility](exchange-compatibility.md)의 서로 다른 build-evidence section에 유지한다. live run `20260711-1626-B7D2`의 ad-hoc signed Release(CDHash `63ded03a9d704976c4ba45340f2748eda9892382`)에서 화면·EventKit·서버 결과를 확인했다. legacy Brief 호환성, Phase 7A lifecycle, mini month와 AppIcon의 완료 증거도 별도 checkpoint에 있다. build-only Phase 7B Release CDHash `f3b30718434641dbbd2dbec90f82581342d47506`은 transparent AppIcon을 포함해 전체 175-test·strict 서명·bootstrap·운영 DB 격리 gate를 통과했다. Phase 7C 최종 build-only Release CDHash `6b1da198f969cb033946fdb72b2b2e46392310f2`도 189-test·strict 서명·hardened runtime·운영 DB 차단 스모크를 통과했지만, linked original delete를 실제 EventKit/Exchange에서 실행하지 않았다. 어느 artifact도 아직 Calendar.app 시각 round-trip, all-day, 반복, move 또는 Phase 7C linked delete live pass를 뜻하지 않는다.
+역사적 source 상태·임시 path·CDHash·서명 검증은 [Exchange Compatibility](exchange-compatibility.md)의
+build-evidence section과 [Implementation Log](implementation-log.md)에 유지한다. live run
+`20260711-1626-B7D2`는 비반복 CRUD를, run `20260712-025027-KST`는 비반복 linked
+original delete와 local Brief 보존을 확인했다. 어느 결과도 아직 Calendar.app 전체 시각
+round-trip, all-day, 반복 `thisEvent`/future split, calendar move 또는 shared read-only
+permission gate를 대신하지 않는다. 최신 suite와 Release artifact는
+[Current Status](current-status.md)만 갱신한다.
 
 ## 제공하지 않아도 되는 것
 
