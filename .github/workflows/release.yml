@@ -178,3 +178,4 @@ jobs:
               --generate-notes \
               --title "KaosCal ${VERSION} local test build" \
               --notes "This automated build is ad-hoc signed and is not Developer ID notarized. It is for local testing, not a public beta distribution candidate."
+          fi
