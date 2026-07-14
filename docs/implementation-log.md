@@ -8,6 +8,24 @@
 - 각 항목에는 날짜, 관련 ADR, 변경 파일, 검증, 남은 위험을 적는다.
 - 검증하지 못한 내용은 `미검증`으로 명시한다. 추측을 통과로 기록하지 않는다.
 
+## 2026-07-13 — v1 기능 동결 및 v2 단계 문서화
+
+- 관련 결정: [v1 동결 결정](v1-freeze.md), [v2 실행계획](v2-execution-plan.md)
+- 변경:
+  - v1 기능 개발 종료선과 유지보수 예외를 `docs/v1-freeze.md`에 기록했다.
+  - 통합 캘린더·Task 로드맵을 T0~T5 실행계획과 연결했다.
+  - Provider abstraction, Apple Reminders, Google Tasks/Todoist, Microsoft To Do,
+    직접 Calendar API 조사, Notes/reference의 단계별 세부문서를 추가했다.
+  - `current-status.md`, `phase-plan.md`, 루트 README와 문서 인덱스에 v1 동결과 v2 기준을
+    반영했다.
+- 검증:
+  - 새 문서 간 상대 링크와 Markdown 형식은 별도 문서 점검에서 확인한다.
+  - 코드는 변경하지 않았으며, v1 테스트·Release 증거를 재실행하거나 승격하지 않았다.
+- 남은 결정:
+  - 실제 v1 기준선 commit/tag 보존은 동결 운영 절차에서 수행한다.
+  - T0 schema·destination 변경 정책·stable account key·capability 공통 타입은 T0 착수
+    전에 확정한다.
+
 ## 2026-07-10 — 문서 기준선 복원 및 v1 결정 정리
 
 - 관련 ADR: ADR-001, ADR-002, ADR-003, ADR-004, ADR-005
@@ -808,6 +826,78 @@
   `/private/tmp/KaosCalReviewTests.xcresult`에서 **213 executed / 212 passed / 1 intentional
   manual-only skip / 0 failures / 0 unexpected**, `TEST SUCCEEDED`를 확인했다. 이 문서
   작업과 재실행이 새로운 기능·live·Developer ID 배포 pass를 만들지는 않는다.
+
+## 2026-07-12 — Phase 10 앱 polish·bootstrap recovery checkpoint
+
+- 관련 ADR: [ADR-015](adr/ADR-015-backup-import-reset-safety.md)
+- 변경 파일:
+  - `KaosCal/App/KaosCalApp.swift`: bootstrap coordinator, first-run onboarding, `⌘R`
+  - `KaosCal/ContextStore/AppDatabase.swift`, `LocalDataBackupService.swift`: default DB URL
+    분리, strict bootstrap staging/quarantine/rollback
+  - `CalendarShellView.swift`: recovery UI와 Day/Week empty-period copy
+  - `LocalDataBackupServiceTests.swift`, `AppStateTests.swift`: 3 recovery logic + 2 bitmap 회귀
+  - 사용자/설계/QA/배포 문서와 `BETA-LICENSE.md`, `phase10-blockers.md`
+- 구현 안전 경계:
+  - 정상 store open 실패에서만 bootstrap recovery를 표시한다. current-schema ZIP의 exact
+    archive/manifest/hash/schema/migration/integrity/FK 검사를 staging에서 끝내기 전 live
+    SQLite를 건드리지 않는다.
+  - 검사 뒤 live DB와 존재하는 WAL/SHM/journal을 같은 고유 `Recovery/Failed-Bootstrap-*`
+    폴더로 이동한다. replacement 재오픈/재검증 또는 recovery note 작성 실패 시 새 파일군을
+    제거하고 이동한 원본을 역순 rollback한다. EventKit provider는 호출하지 않는다.
+  - 다른 schema migration/downgrade, 임의 SQLite, record merge와 backup 없는 destructive
+    reset은 제공하지 않는다. 격리 파일은 민감 data로 남기며 자동 삭제하지 않는다.
+  - `localContextStoreState.failed`가 실행 중에도 발생할 수 있으므로 bootstrap restore는
+    `contextStore == nil`일 때만 main/Settings UI와 coordinator에서 허용한다. 살아 있는
+    writer가 있는 session failure는 파일 교체 없이 lock/quit 안내로 분리했고 자동 test로
+    healthy writer에서는 recovery가 비활성인지 확인했다.
+- 집중 검증:
+  - Local Data 12 tests는 valid backup restore와 DB+3 sidecar byte 보존, invalid archive가
+    live byte/Recovery를 건드리지 않음, installed validation failure 뒤 네 원본 file byte
+    전체 rollback, symlink `Recovery`의 pre-touch 거부를 포함해 통과했다.
+  - onboarding 680×560과 recovery 620×520 `NSHostingView` offscreen bitmap/fitting을
+    통과했다.
+- 실제 창 review:
+  - `computer-use`로 중간 ad-hoc Release 첫 창을 읽어 onboarding privacy/local/backup copy와
+    accessibility tree를 확인했다. 이때 하단 shortcut이 Continue button을 sheet 밖으로
+    밀어낸 것을 발견해 button을 별도 행으로 분리했다.
+  - 중간 build 종료 뒤 명시적 Continue 없이 onboarding 완료 key가 저장된 것을 확인했다.
+    sheet presentation setter는 scene teardown에도 호출될 수 있으므로 setter write를 제거하고
+    explicit Continue action만 완료를 저장하게 수정했다.
+  - 수정 뒤 동일 bundle ID의 기존 Xcode dev process가 accessibility window를 소유해 최종
+    CDHash app의 재실창을 분리하지 못했다. 사용자 상태일 수 있는 dev process를 강제 종료하지
+    않았으며 final live pass로 기록하지 않는다.
+- 최종 자동 결과: `/private/tmp/KaosCalPhase10Tests.xcresult`, **220 executed / 219 passed /
+  1 intentional `ManualEventKitQATests` skip / 0 failures / 0 unexpected**, `TEST SUCCEEDED`.
+- 최종 Release: `/private/tmp/KaosCalPhase10Release/Build/Products/Release/KaosCal.app`, CDHash
+  `4d7c1b5ad6dde65666f101cae00bdcb9d5b878ed`. ad-hoc + hardened runtime, strict codesign,
+  sandbox·Calendar·user-selected read/write entitlement, version `0.1.0` build `1`, XCTest와
+  `get-task-allow` 부재를 확인했다.
+- 운영 데이터: direct DB `1783704658|126976`, SHA-256
+  `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 sandbox DB
+  `1783832834|139264`, SHA-256
+  `7cd91d35ceaa7f04a43c00e88cf1c99d7d8f778ebeffa8c55af0f9f269251d23`가 전후 동일하고
+  integrity `ok`, FK 출력 없음, WAL/SHM/journal 부재다.
+- 결과: Phase 10의 저장소 내 앱 구현·자동·offscreen·ad-hoc Release checkpoint는
+  **pass**. 외부 beta 완료는 **blocked/pending**이며 Developer ID/notary/package, 승인된
+  EULA와 연락처, clean user, final UI/VoiceOver, 실제 손상 DB recovery와 남은 live
+  Exchange/Local Data gate가 필요하다. 상세 목록은
+  [phase10-blockers.md](phase10-blockers.md)를 따른다.
+
+## 2026-07-13 — v2 Phase 1(T0·T1) provider checkpoint
+
+- 관련 문서: [T0 Provider abstraction](v2/phase-t0-provider-abstraction.md),
+  [T1 Apple Reminders](v2/phase-t1-apple-reminders.md)
+- 변경 파일: `DatabaseMigrations.swift`, `TaskProviderModels.swift`,
+  `TaskProviderRepository.swift`, `TaskProvider.swift`, `AppState.swift`,
+  Settings/App bootstrap, reminders entitlement/usage description, schema expectations
+- 구현: additive `v4_task_provider` migration, typed event/personal binding constraint,
+  provider account/item cache, calendar destination 저장, Apple Reminders permission/list 및
+  create/update/complete/delete adapter, local task mutation 연결, 외부 변경 projection refresh
+- 검증: Debug build 성공. 전체 suite **220 executed / 219 passed / 1 intentional
+  `ManualEventKitQATests` skip / 0 failures / 0 unexpected**, `TEST SUCCEEDED`.
+  result bundle: `/tmp/KaosCalPhase1DerivedData/Logs/Test/Test-KaosCal-2026.07.14_00-19-50-+0900.xcresult`
+- 결과: **implemented / live pending**. 실제 iCloud·On My Mac fixture, 권한 철회, cleanup,
+  fake provider contract와 Task Center source badge는 후속 gate로 남겼다. T2 이후는 시작하지 않았다.
 
 ## 다음 항목 템플릿
 

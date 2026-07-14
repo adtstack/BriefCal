@@ -55,6 +55,11 @@ struct LocalDataImportResult: Equatable, Sendable {
     let automaticBackupURL: URL
 }
 
+struct BootstrapLocalDataRecoveryResult: Equatable, Sendable {
+    let manifest: DatabaseBackupManifest
+    let quarantinedDatabaseDirectory: URL
+}
+
 struct LocalDataDeletedRowCounts: Equatable, Sendable {
     let eventContexts: Int
     let eventLinks: Int
@@ -62,6 +67,13 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
     let personalTasks: Int
     let eventChangeLog: Int
     let calendarPreferences: Int
+    let providerAccounts: Int
+    let providerItems: Int
+    let providerBindings: Int
+    let providerDestinations: Int
+    let providerSyncCursors: Int
+    let providerPendingOperations: Int
+    let contextReferences: Int
 
     var total: Int {
         eventContexts
@@ -70,6 +82,13 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
             + personalTasks
             + eventChangeLog
             + calendarPreferences
+            + providerAccounts
+            + providerItems
+            + providerBindings
+            + providerDestinations
+            + providerSyncCursors
+            + providerPendingOperations
+            + contextReferences
     }
 }
 
@@ -162,6 +181,31 @@ struct LocalDataBackupService: Sendable {
                 archiveURL: archiveURL.standardizedFileURL,
                 manifest: manifest
             )
+        }
+    }
+
+    /// Copies the validated current-schema SQLite snapshot from an archive to
+    /// an app-private staging URL. Bootstrap recovery uses this while no live
+    /// DatabaseWriter exists; the active database is never the destination.
+    func copyValidatedDatabase(
+        from archiveURL: URL,
+        to destinationURL: URL
+    ) throws -> DatabaseBackupManifest {
+        try withPreparedBackup(at: archiveURL) { manifest, importedDatabaseURL in
+            let fileManager = FileManager.default
+            try fileManager.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            guard !fileManager.fileExists(atPath: destinationURL.path) else {
+                throw LocalDataBackupError.unsafeDestination(
+                    "the bootstrap staging destination already exists"
+                )
+            }
+            try fileManager.copyItem(at: importedDatabaseURL, to: destinationURL)
+            _ = try DatabaseSchemaValidator.validateDatabase(at: destinationURL)
+            return manifest
         }
     }
 
@@ -279,12 +323,47 @@ struct LocalDataBackupService: Sendable {
                 calendarPreferences: Int.fetchOne(
                     db,
                     sql: "SELECT COUNT(*) FROM calendar_preferences"
+                ) ?? 0,
+                providerAccounts: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM provider_accounts"
+                ) ?? 0,
+                providerItems: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM provider_items"
+                ) ?? 0,
+                providerBindings: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM task_bindings"
+                ) ?? 0,
+                providerDestinations: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM calendar_task_destinations"
+                ) ?? 0,
+                providerSyncCursors: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM provider_sync_cursors"
+                ) ?? 0,
+                providerPendingOperations: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM provider_pending_operations"
+                ) ?? 0,
+                contextReferences: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM context_references"
                 ) ?? 0
             )
 
             // Keep GRDB's migration ledger, and remove only KaosCal-owned user
-            // data. Explicit child-first deletes make all six reset targets
+            // data. Explicit child-first deletes make every reset target
             // auditable without relying solely on cascade behavior.
+            try db.execute(sql: "DELETE FROM provider_pending_operations")
+            try db.execute(sql: "DELETE FROM provider_sync_cursors")
+            try db.execute(sql: "DELETE FROM task_bindings")
+            try db.execute(sql: "DELETE FROM calendar_task_destinations")
+            try db.execute(sql: "DELETE FROM provider_items")
+            try db.execute(sql: "DELETE FROM provider_accounts")
+            try db.execute(sql: "DELETE FROM context_references")
             try db.execute(sql: "DELETE FROM event_change_log")
             try db.execute(sql: "DELETE FROM event_tasks")
             try db.execute(sql: "DELETE FROM event_links")
@@ -711,6 +790,193 @@ struct LocalDataBackupService: Sendable {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         return formatter.date(from: string)
+    }
+
+    private static func filenameTimestamp(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter.string(from: date)
+    }
+}
+
+enum BootstrapLocalDataRecoveryError: Error, Equatable, LocalizedError, Sendable {
+    case recoveryFailed(reason: String, rollbackSucceeded: Bool)
+
+    var errorDescription: String? {
+        switch self {
+        case let .recoveryFailed(reason, rollbackSucceeded):
+            rollbackSucceeded
+                ? "Recovery did not finish, and the original database files were restored: \(reason)"
+                : "Recovery did not finish, and KaosCal could not put every original database file back: \(reason)"
+        }
+    }
+}
+
+/// Restores a strictly validated KaosCal backup when the normal application
+/// database cannot be opened. The failed SQLite file family is moved together
+/// into an app-private quarantine directory before the replacement is opened.
+/// It never calls EventKit.
+struct BootstrapLocalDataRecoveryService: Sendable {
+    private static let databaseSidecarSuffixes = ["", "-wal", "-shm", "-journal"]
+
+    let liveDatabaseURL: URL
+    private let validateInstalledDatabase: @Sendable (URL) throws -> Void
+
+    init(
+        liveDatabaseURL: URL,
+        validateInstalledDatabase: @escaping @Sendable (URL) throws -> Void = { url in
+            let database = try AppDatabase.open(at: url)
+            _ = try DatabaseSchemaValidator.validateDatabase(database)
+        }
+    ) {
+        self.liveDatabaseURL = liveDatabaseURL.standardizedFileURL
+        self.validateInstalledDatabase = validateInstalledDatabase
+    }
+
+    func recover(
+        from archiveURL: URL,
+        now: Date = Date()
+    ) throws -> BootstrapLocalDataRecoveryResult {
+        let fileManager = FileManager.default
+        let parentDirectory = liveDatabaseURL.deletingLastPathComponent()
+        try fileManager.createDirectory(
+            at: parentDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+
+        let stagingDirectory = parentDirectory.appendingPathComponent(
+            ".Bootstrap-Recovery-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: stagingDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        defer { try? fileManager.removeItem(at: stagingDirectory) }
+
+        let stagedDatabaseURL = stagingDirectory.appendingPathComponent(
+            DatabaseBackupManifest.databaseFilename
+        )
+        let validatorDatabase = try AppDatabase.inMemory()
+        let manifest = try LocalDataBackupService(database: validatorDatabase)
+            .copyValidatedDatabase(from: archiveURL, to: stagedDatabaseURL)
+
+        let quarantineRoot = parentDirectory.appendingPathComponent(
+            "Recovery",
+            isDirectory: true
+        )
+        var quarantineRootIsDirectory: ObjCBool = false
+        if fileManager.fileExists(
+            atPath: quarantineRoot.path,
+            isDirectory: &quarantineRootIsDirectory
+        ) {
+            guard quarantineRootIsDirectory.boolValue,
+                  (try? quarantineRoot.resourceValues(
+                      forKeys: [.isSymbolicLinkKey]
+                  ).isSymbolicLink) != true else {
+                throw LocalDataBackupError.unsafeDestination(
+                    "the bootstrap Recovery location must be a private directory, not a file or symbolic link"
+                )
+            }
+        }
+        try fileManager.createDirectory(
+            at: quarantineRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        guard (try? quarantineRoot.resourceValues(
+            forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        )).map({ $0.isDirectory == true && $0.isSymbolicLink != true }) == true else {
+            throw LocalDataBackupError.unsafeDestination(
+                "the bootstrap Recovery location changed before quarantine"
+            )
+        }
+        let quarantineDirectory = quarantineRoot.appendingPathComponent(
+            "Failed-Bootstrap-\(Self.filenameTimestamp(now))-\(UUID().uuidString.lowercased())",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(
+            at: quarantineDirectory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+
+        var movedSuffixes: [String] = []
+        var installedReplacement = false
+        do {
+            for suffix in Self.databaseSidecarSuffixes {
+                let source = Self.databaseFamilyURL(base: liveDatabaseURL, suffix: suffix)
+                guard fileManager.fileExists(atPath: source.path) else { continue }
+                let destination = quarantineDirectory.appendingPathComponent(
+                    source.lastPathComponent
+                )
+                try fileManager.moveItem(at: source, to: destination)
+                movedSuffixes.append(suffix)
+            }
+
+            try fileManager.moveItem(at: stagedDatabaseURL, to: liveDatabaseURL)
+            installedReplacement = true
+            try validateInstalledDatabase(liveDatabaseURL)
+
+            let note = """
+                KaosCal preserved this SQLite file family after a failed application bootstrap.
+                The files may contain private Event Brief text and linked calendar metadata.
+                Keep them private; do not attach them to a public issue.
+                Recovery source: \(archiveURL.lastPathComponent)
+                """
+            try Data(note.utf8).write(
+                to: quarantineDirectory.appendingPathComponent("RECOVERY.txt"),
+                options: .atomic
+            )
+            return BootstrapLocalDataRecoveryResult(
+                manifest: manifest,
+                quarantinedDatabaseDirectory: quarantineDirectory
+            )
+        } catch {
+            var rollbackErrors: [String] = []
+            if installedReplacement {
+                for suffix in Self.databaseSidecarSuffixes {
+                    let installedURL = Self.databaseFamilyURL(
+                        base: liveDatabaseURL,
+                        suffix: suffix
+                    )
+                    guard fileManager.fileExists(atPath: installedURL.path) else { continue }
+                    do {
+                        try fileManager.removeItem(at: installedURL)
+                    } catch {
+                        rollbackErrors.append("remove replacement \(suffix): \(error)")
+                    }
+                }
+            }
+            for suffix in movedSuffixes.reversed() {
+                let quarantinedURL = quarantineDirectory.appendingPathComponent(
+                    Self.databaseFamilyURL(base: liveDatabaseURL, suffix: suffix).lastPathComponent
+                )
+                let originalURL = Self.databaseFamilyURL(base: liveDatabaseURL, suffix: suffix)
+                guard fileManager.fileExists(atPath: quarantinedURL.path) else { continue }
+                do {
+                    try fileManager.moveItem(at: quarantinedURL, to: originalURL)
+                } catch {
+                    rollbackErrors.append("restore original \(suffix): \(error)")
+                }
+            }
+            if rollbackErrors.isEmpty {
+                try? fileManager.removeItem(at: quarantineDirectory)
+            }
+            throw BootstrapLocalDataRecoveryError.recoveryFailed(
+                reason: ([String(describing: error)] + rollbackErrors).joined(separator: "; "),
+                rollbackSucceeded: rollbackErrors.isEmpty
+            )
+        }
+    }
+
+    private static func databaseFamilyURL(base: URL, suffix: String) -> URL {
+        URL(fileURLWithPath: base.path + suffix).standardizedFileURL
     }
 
     private static func filenameTimestamp(_ date: Date) -> String {

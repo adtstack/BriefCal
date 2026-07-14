@@ -161,13 +161,28 @@ Phase 9의 retention은 수동이다. KaosCal은 자동 backup을 기간이나 �
   실패하면 다른 ZIP을 선택한다. 검사를 우회하지 않는다.
 - import/reset 전 notes 저장 실패가 있으면 먼저 Retry로 저장 문제를 해결한다.
 - 자동 backup 경로를 만들 수 없으면 import/reset을 실행하지 않는다.
-- 앱 시작부터 DB open/migration이 실패했다면 기존 파일을 보존한다. 손상 live DB를
-  대체할 bootstrap recovery UI는 Phase 10에서 다룬다.
+- 앱 시작부터 DB open/migration이 실패했다면 일반 Settings 대신 Phase 10 bootstrap
+  recovery를 사용한다. archive preflight가 끝나기 전 기존 파일을 건드리지 않는다.
 
 ## 시작 시 DB를 열지 못하는 경우
 
-Phase 10의 bootstrap recovery UI가 구현되기 전에는 Settings의 Import를 열 수 없으므로
-사용자가 앱 안에서 직접 복구할 수 없다. 이 상태에서는 다음 안전 경계를 따른다.
+Phase 10에서는 정상 store가 없을 때 main window와 Settings에 전용 recovery 화면을
+표시한다. `Restore From Backup…`에서 직접 만든 current-schema ZIP을 고르면 다음 순서로
+진행한다.
+
+1. Phase 9 import와 같은 strict archive/manifest/hash/schema/integrity/FK 검사를 app-private
+   staging copy에서 끝낸다. 실패하면 live DB는 byte 단위로 건드리지 않는다.
+2. 기존 `kaoscal.sqlite`, `-wal`, `-shm`, `-journal` 중 존재하는 파일을 함께
+   `KaosCal/Recovery/Failed-Bootstrap-<UTC>-<UUID>/`로 이동한다. `Recovery`가 directory가
+   아니거나 symbolic link면 live 파일을 건드리기 전에 중단한다.
+3. 검증된 DB를 live 위치에 설치하고 새 writer로 재오픈·재검증한다.
+4. 성공하면 새 `AppState`로 일반 shell을 열고 격리 위치를 표시한다. 격리본은 자동
+   삭제하지 않는다.
+5. 설치나 재오픈이 실패하면 replacement 파일군을 제거하고 이동한 원본 파일을 전부
+   되돌린다. rollback 자체가 불완전하다는 오류면 앱을 종료하고 `Recovery`와 live 폴더를
+   모두 보존한다.
+
+이 상태에서는 다음 안전 경계를 따른다.
 
 1. `Reset Local Data`를 시도하거나 Application Support의 SQLite, `-wal`, `-shm`,
    `-journal` 파일을 개별 삭제·교체하지 않는다.
@@ -175,12 +190,14 @@ Phase 10의 bootstrap recovery UI가 구현되기 전에는 Settings의 Import�
    calendar/event identifier, account/email 또는 backup ZIP은 공개 issue에 첨부하지 않는다.
 3. 기존 DB와 `Backups` 폴더를 보존한다. 새 설치나 앱 삭제가 local data 복구를 보장한다고
    가정하지 않는다.
-4. 공개 support 경로가 확정되기 전에는 프로젝트 소유자에게 비공개로 복구 가능 여부를
-   확인한다. 검증되지 않은 SQLite 편집이나 schema downgrade는 수행하지 않는다.
+4. 호환 backup이 없으면 앱이 제공하지 않는 destructive reset이나 임의 SQLite 편집,
+   schema downgrade를 수행하지 않는다. 공개 support 경로가 확정되기 전에는 프로젝트
+   소유자에게 비공개로 복구 가능 여부를 확인한다.
 
-이 절차는 데이터 보존을 위한 임시 runbook이며 복구 성공을 보장하지 않는다. self-service
-bootstrap import, 손상 DB 격리와 known-good backup 선택은 Phase 10 기능·QA가 통과한 뒤에만
-지원 완료로 선언한다.
+자동 테스트는 strict preflight-before-touch, DB+sidecar 격리, successful restore와 설치
+검증 실패 뒤 전체 rollback을 다룬다. 실제 signed Release에서 손상 production DB와 file
+panel을 사용한 복구, power-loss/crash window와 rollback 자체 실패는 아직 통과하지 않았으므로
+그 범위를 자동 결과로 대체하지 않는다.
 
 설계 결정은 [ADR-015](adr/ADR-015-backup-import-reset-safety.md), 검증 절차는
 [QA checklist](qa-checklist.md)를 따른다.

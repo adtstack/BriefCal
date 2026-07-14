@@ -1,0 +1,95 @@
+name: Build and test
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Test and build macOS app
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Record toolchain
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Run tests
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project KaosCal.xcodeproj \
+            -scheme KaosCal \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/KaosCalTestsDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/KaosCalTests.xcresult" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipPackageUpdates \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Build unsigned Release app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project KaosCal.xcodeproj \
+            -scheme KaosCal \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/KaosCalReleaseDerivedData" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipPackageUpdates \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Verify Release app
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/KaosCalReleaseDerivedData/Build/Products/Release/KaosCal.app"
+          test -d "$APP"
+          INFO="$APP/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.kaoscal"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")" = "14.0"
+          test -z "$(find "$APP" \( -name '*.xctest' -o -name '*XCTest*' \) -print -quit)"
+
+      - name: Package CI artifact
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/KaosCalReleaseDerivedData/Build/Products/Release/KaosCal.app"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/KaosCal-${GITHUB_SHA}.zip"
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: KaosCal-${{ github.sha }}-macOS
+          path: ${{ runner.temp }}/KaosCal-${{ github.sha }}.zip
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload test result bundle
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: KaosCal-${{ github.run_id }}-test-results
+          path: ${{ runner.temp }}/KaosCalTests.xcresult
+          if-no-files-found: ignore
+          retention-days: 14

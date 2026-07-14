@@ -1,6 +1,6 @@
 # KaosCal 사용자 가이드
 
-> 기준 구현: 2026-07-12, Phase 9
+> 기준 구현: 2026-07-12, Phase 10
 >
 > 이 문서는 현재 저장소의 코드와 승인된 설계 문서를 기준으로 한다. KaosCal은 아직
 > 외부 베타 배포 준비 단계이며, 공개 다운로드 위치·최종 설치 패키지·자동 업데이트·
@@ -48,11 +48,16 @@ Calendar.app에서 계정과 동기화 상태를 확인한다.
 - 권한을 다시 주어도 일정이 없으면 Calendar.app에서 해당 계정이 활성화되어 있는지
   확인한다.
 
-KaosCal 로컬 데이터베이스를 열지 못한 경우 앱은 기존 파일을 자동으로 지우거나
-in-memory 저장소로 대체하지 않고 중단한다. 이때는 앱을 종료하고 아래의
-[데이터 위치](#8-데이터-위치와-앱-제거)를 참고해 `KaosCal` Application Support 폴더를
-먼저 보존한다. 손상된 DB 때문에 앱이 시작하지 못하는 상태에서의 복구 UI는 아직
-제공하지 않는다.
+첫 실행에는 KaosCal이 Calendar password/MFA를 받지 않는다는 점, Event Brief의 local
+저장과 plaintext backup 경계를 설명하는 안내가 먼저 표시된다. `Continue to Calendar
+Access` 뒤 위 권한 절차를 진행한다.
+
+KaosCal 로컬 데이터베이스를 열지 못한 경우 앱은 in-memory 저장소로 대체하지 않고
+전용 `Local data needs recovery` 화면을 표시한다. 직접 만든 current-schema KaosCal
+backup이 있으면 `Restore From Backup…`을 선택한다. archive가 완전히 검증되기 전에는
+기존 DB를 건드리지 않고, 성공 경로에서도 기존 SQLite와 sidecar를 `Recovery` 폴더에
+보존한다. 호환 backup이 없다면 임의 파일 교체나 schema downgrade 대신 아래의
+[데이터 위치](#8-데이터-위치와-앱-제거)를 참고해 전체 폴더를 보존한다.
 
 ## 3. 화면과 이동
 
@@ -63,6 +68,7 @@ Day, Week, Agenda 또는 Task Center이고, 오른쪽 inspector에는 선택한 
 - `⌘1` Day, `⌘2` Week, `⌘3` Agenda, `⌘4` Tasks
 - `⌘T` 오늘로 이동
 - `⌘N` 새 일정
+- `⌘R` 현재 일정 또는 Tasks 다시 읽기
 - mini month의 날짜를 선택하거나 도구 막대의 이전·다음·Today 버튼으로 기간 이동
 - `Reload events`는 일정, Tasks 화면의 `Reload tasks`는 로컬 할 일 목록을 다시 읽음
 
@@ -252,7 +258,7 @@ restore/reset과 rollback까지 실패하면 그 session의 로컬 변경과 캘
   앱 재실행 뒤 Undo
 - custom saved Calendar Set, role별 색/이름 override, duplicate 자동 정리
 - backup record merge, 예약 backup, 자동 retention/pruning
-- 손상된 live DB 때문에 앱이 시작하지 못할 때의 bootstrap recovery UI
+- schema가 다른 backup migration/downgrade, 임의 SQLite 복구와 backup 없는 bootstrap reset
 - exact Release에서 실제 export 파일 작성·backup import·reset mutation의 live gate
 
 Exchange 관련 지원 문구는 macOS Calendar에 구성된 Exchange Online 캘린더로

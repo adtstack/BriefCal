@@ -294,6 +294,353 @@ enum DatabaseMigrations {
                     ON calendar_preferences(role);
                 """)
         }
+
+        migrator.registerMigration("v4_task_provider") { db in
+            try db.execute(sql: """
+                CREATE TABLE provider_accounts (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    provider TEXT NOT NULL
+                        CHECK (provider IN ('apple_reminders')),
+                    account_key TEXT NOT NULL UNIQUE,
+                    display_name TEXT NOT NULL,
+                    authorization_state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE provider_items (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    account_id TEXT NOT NULL
+                        REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    entity_type TEXT NOT NULL
+                        CHECK (entity_type IN ('task')),
+                    remote_id TEXT NOT NULL,
+                    remote_parent_id TEXT NOT NULL,
+                    remote_version TEXT,
+                    cached_title TEXT NOT NULL,
+                    cached_notes TEXT NOT NULL DEFAULT '',
+                    cached_due_at TEXT,
+                    cached_completed BOOLEAN NOT NULL DEFAULT 0
+                        CHECK (cached_completed IN (0, 1)),
+                    last_seen_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(account_id, entity_type, remote_id)
+                );
+
+                CREATE TABLE task_bindings (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    provider_item_id TEXT NOT NULL UNIQUE
+                        REFERENCES provider_items(id) ON DELETE CASCADE,
+                    event_task_id TEXT
+                        REFERENCES event_tasks(id) ON DELETE CASCADE,
+                    personal_task_id TEXT
+                        REFERENCES personal_tasks(id) ON DELETE CASCADE,
+                    occurrence_key TEXT,
+                    sync_state TEXT NOT NULL
+                        CHECK (sync_state IN (
+                            'pending_create', 'linked', 'missing',
+                            'conflict', 'disconnected'
+                        )),
+                    last_synced_hash TEXT,
+                    remote_version TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CHECK (
+                        (event_task_id IS NOT NULL AND personal_task_id IS NULL)
+                        OR (event_task_id IS NULL AND personal_task_id IS NOT NULL)
+                    )
+                );
+
+                CREATE TABLE calendar_task_destinations (
+                    calendar_identifier TEXT PRIMARY KEY NOT NULL,
+                    provider_account_id TEXT NOT NULL
+                        REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    remote_parent_id TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT 1
+                        CHECK (enabled IN (0, 1)),
+                    fallback_to_local BOOLEAN NOT NULL DEFAULT 1
+                        CHECK (fallback_to_local IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE UNIQUE INDEX task_bindings_event_task
+                    ON task_bindings(event_task_id)
+                    WHERE event_task_id IS NOT NULL;
+                CREATE UNIQUE INDEX task_bindings_personal_task
+                    ON task_bindings(personal_task_id)
+                    WHERE personal_task_id IS NOT NULL;
+                CREATE INDEX provider_items_account_parent
+                    ON provider_items(account_id, remote_parent_id);
+                CREATE INDEX task_bindings_state
+                    ON task_bindings(sync_state);
+            """)
+        }
+
+        // v4 deliberately shipped with Apple Reminders as its sole provider.
+        // Rebuild the provider tables as one FK-connected unit so existing
+        // local bindings remain valid while OAuth providers can be persisted.
+        migrator.registerMigration("v5_oauth_task_providers") { db in
+            try db.execute(sql: """
+                ALTER TABLE task_bindings RENAME TO task_bindings_v4;
+                ALTER TABLE calendar_task_destinations
+                    RENAME TO calendar_task_destinations_v4;
+                ALTER TABLE provider_items RENAME TO provider_items_v4;
+                ALTER TABLE provider_accounts RENAME TO provider_accounts_v4;
+                DROP INDEX task_bindings_event_task;
+                DROP INDEX task_bindings_personal_task;
+                DROP INDEX provider_items_account_parent;
+                DROP INDEX task_bindings_state;
+
+                CREATE TABLE provider_accounts (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    provider TEXT NOT NULL
+                        CHECK (provider IN (
+                            'apple_reminders', 'google_tasks', 'todoist'
+                        )),
+                    account_key TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    authorization_state TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(provider, account_key)
+                );
+
+                CREATE TABLE provider_items (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    account_id TEXT NOT NULL
+                        REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    entity_type TEXT NOT NULL
+                        CHECK (entity_type IN ('task')),
+                    remote_id TEXT NOT NULL,
+                    remote_parent_id TEXT NOT NULL,
+                    remote_version TEXT,
+                    cached_title TEXT NOT NULL,
+                    cached_notes TEXT NOT NULL DEFAULT '',
+                    cached_due_at TEXT,
+                    cached_completed BOOLEAN NOT NULL DEFAULT 0
+                        CHECK (cached_completed IN (0, 1)),
+                    last_seen_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(account_id, entity_type, remote_id)
+                );
+
+                CREATE TABLE task_bindings (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    provider_item_id TEXT NOT NULL UNIQUE
+                        REFERENCES provider_items(id) ON DELETE CASCADE,
+                    event_task_id TEXT
+                        REFERENCES event_tasks(id) ON DELETE CASCADE,
+                    personal_task_id TEXT
+                        REFERENCES personal_tasks(id) ON DELETE CASCADE,
+                    occurrence_key TEXT,
+                    sync_state TEXT NOT NULL
+                        CHECK (sync_state IN (
+                            'pending_create', 'linked', 'missing',
+                            'conflict', 'disconnected'
+                        )),
+                    last_synced_hash TEXT,
+                    remote_version TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CHECK (
+                        (event_task_id IS NOT NULL AND personal_task_id IS NULL)
+                        OR (event_task_id IS NULL AND personal_task_id IS NOT NULL)
+                    )
+                );
+
+                CREATE TABLE calendar_task_destinations (
+                    calendar_identifier TEXT PRIMARY KEY NOT NULL,
+                    provider_account_id TEXT NOT NULL
+                        REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    remote_parent_id TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT 1
+                        CHECK (enabled IN (0, 1)),
+                    fallback_to_local BOOLEAN NOT NULL DEFAULT 1
+                        CHECK (fallback_to_local IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE provider_sync_cursors (
+                    account_id TEXT NOT NULL
+                        REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    cursor_key TEXT NOT NULL,
+                    cursor_value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (account_id, cursor_key)
+                );
+
+                CREATE TABLE provider_pending_operations (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    account_id TEXT NOT NULL
+                        REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    operation TEXT NOT NULL
+                        CHECK (operation IN ('delete')),
+                    remote_id TEXT NOT NULL,
+                    remote_parent_id TEXT NOT NULL,
+                    expected_version TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                INSERT INTO provider_accounts (
+                    id, provider, account_key, display_name,
+                    authorization_state, created_at, updated_at
+                )
+                SELECT id, provider, account_key, display_name,
+                    authorization_state, created_at, updated_at
+                FROM provider_accounts_v4;
+
+                INSERT INTO provider_items (
+                    id, account_id, entity_type, remote_id, remote_parent_id,
+                    remote_version, cached_title, cached_notes, cached_due_at,
+                    cached_completed, last_seen_at, created_at, updated_at
+                )
+                SELECT id, account_id, entity_type, remote_id, remote_parent_id,
+                    remote_version, cached_title, '', cached_due_at,
+                    cached_completed, last_seen_at, created_at, updated_at
+                FROM provider_items_v4;
+
+                INSERT INTO task_bindings (
+                    id, provider_item_id, event_task_id, personal_task_id,
+                    occurrence_key, sync_state, last_synced_hash,
+                    remote_version, created_at, updated_at
+                )
+                SELECT id, provider_item_id, event_task_id, personal_task_id,
+                    occurrence_key, sync_state, last_synced_hash,
+                    remote_version, created_at, updated_at
+                FROM task_bindings_v4;
+
+                INSERT INTO calendar_task_destinations (
+                    calendar_identifier, provider_account_id, remote_parent_id,
+                    enabled, fallback_to_local, created_at, updated_at
+                )
+                SELECT calendar_identifier, provider_account_id, remote_parent_id,
+                    enabled, fallback_to_local, created_at, updated_at
+                FROM calendar_task_destinations_v4;
+
+                DROP TABLE task_bindings_v4;
+                DROP TABLE calendar_task_destinations_v4;
+                DROP TABLE provider_items_v4;
+                DROP TABLE provider_accounts_v4;
+
+                CREATE UNIQUE INDEX task_bindings_event_task
+                    ON task_bindings(event_task_id)
+                    WHERE event_task_id IS NOT NULL;
+                CREATE UNIQUE INDEX task_bindings_personal_task
+                    ON task_bindings(personal_task_id)
+                    WHERE personal_task_id IS NOT NULL;
+                CREATE INDEX provider_items_account_parent
+                    ON provider_items(account_id, remote_parent_id);
+                CREATE INDEX task_bindings_state
+                    ON task_bindings(sync_state);
+                CREATE INDEX provider_pending_operations_account
+                    ON provider_pending_operations(account_id, updated_at);
+            """)
+        }
+        migrator.registerMigration("v6_context_references") { db in
+            try db.execute(sql: """
+                CREATE TABLE context_references (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    context_id TEXT NOT NULL
+                        REFERENCES event_contexts(id) ON DELETE CASCADE,
+                    provider TEXT NOT NULL CHECK (provider IN ('web', 'notion')),
+                    url TEXT NOT NULL,
+                    title_cache TEXT NOT NULL DEFAULT '',
+                    state TEXT NOT NULL CHECK (state IN (
+                        'active', 'missing', 'permission_required', 'disconnected'
+                    )),
+                    last_checked_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(context_id, url)
+                );
+                CREATE INDEX context_references_context ON context_references(context_id, created_at);
+            """)
+        }
+        migrator.registerMigration("v7_microsoft_to_do_provider") { db in
+            try db.execute(sql: """
+                ALTER TABLE task_bindings RENAME TO task_bindings_v6;
+                ALTER TABLE calendar_task_destinations RENAME TO calendar_task_destinations_v6;
+                ALTER TABLE provider_pending_operations RENAME TO provider_pending_operations_v6;
+                ALTER TABLE provider_sync_cursors RENAME TO provider_sync_cursors_v6;
+                ALTER TABLE provider_items RENAME TO provider_items_v6;
+                ALTER TABLE provider_accounts RENAME TO provider_accounts_v6;
+                DROP INDEX task_bindings_event_task;
+                DROP INDEX task_bindings_personal_task;
+                DROP INDEX provider_items_account_parent;
+                DROP INDEX task_bindings_state;
+                DROP INDEX provider_pending_operations_account;
+
+                CREATE TABLE provider_accounts (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    provider TEXT NOT NULL CHECK (provider IN ('apple_reminders', 'google_tasks', 'todoist', 'microsoft_to_do')),
+                    account_key TEXT NOT NULL, display_name TEXT NOT NULL,
+                    authorization_state TEXT NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, UNIQUE(provider, account_key)
+                );
+                CREATE TABLE provider_items (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    account_id TEXT NOT NULL REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    entity_type TEXT NOT NULL CHECK (entity_type IN ('task')),
+                    remote_id TEXT NOT NULL, remote_parent_id TEXT NOT NULL,
+                    remote_version TEXT, cached_title TEXT NOT NULL,
+                    cached_notes TEXT NOT NULL DEFAULT '', cached_due_at TEXT,
+                    cached_completed BOOLEAN NOT NULL DEFAULT 0 CHECK (cached_completed IN (0, 1)),
+                    last_seen_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    UNIQUE(account_id, entity_type, remote_id)
+                );
+                CREATE TABLE task_bindings (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    provider_item_id TEXT NOT NULL UNIQUE REFERENCES provider_items(id) ON DELETE CASCADE,
+                    event_task_id TEXT REFERENCES event_tasks(id) ON DELETE CASCADE,
+                    personal_task_id TEXT REFERENCES personal_tasks(id) ON DELETE CASCADE,
+                    occurrence_key TEXT, sync_state TEXT NOT NULL CHECK (sync_state IN ('pending_create','linked','missing','conflict','disconnected')),
+                    last_synced_hash TEXT, remote_version TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    CHECK ((event_task_id IS NOT NULL AND personal_task_id IS NULL) OR (event_task_id IS NULL AND personal_task_id IS NOT NULL))
+                );
+                CREATE TABLE calendar_task_destinations (
+                    calendar_identifier TEXT PRIMARY KEY NOT NULL,
+                    provider_account_id TEXT NOT NULL REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    remote_parent_id TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+                    fallback_to_local BOOLEAN NOT NULL DEFAULT 1 CHECK (fallback_to_local IN (0,1)),
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+                CREATE TABLE provider_sync_cursors (
+                    account_id TEXT NOT NULL REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    cursor_key TEXT NOT NULL, cursor_value TEXT NOT NULL, updated_at TEXT NOT NULL,
+                    PRIMARY KEY (account_id, cursor_key)
+                );
+                CREATE TABLE provider_pending_operations (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    account_id TEXT NOT NULL REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    operation TEXT NOT NULL CHECK (operation IN ('delete')),
+                    remote_id TEXT NOT NULL, remote_parent_id TEXT NOT NULL, expected_version TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0, last_error TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                );
+
+                INSERT INTO provider_accounts SELECT * FROM provider_accounts_v6;
+                INSERT INTO provider_items SELECT * FROM provider_items_v6;
+                INSERT INTO task_bindings SELECT * FROM task_bindings_v6;
+                INSERT INTO calendar_task_destinations SELECT * FROM calendar_task_destinations_v6;
+                INSERT INTO provider_sync_cursors SELECT * FROM provider_sync_cursors_v6;
+                INSERT INTO provider_pending_operations SELECT * FROM provider_pending_operations_v6;
+                DROP TABLE task_bindings_v6; DROP TABLE calendar_task_destinations_v6;
+                DROP TABLE provider_pending_operations_v6; DROP TABLE provider_sync_cursors_v6;
+                DROP TABLE provider_items_v6; DROP TABLE provider_accounts_v6;
+                CREATE UNIQUE INDEX task_bindings_event_task ON task_bindings(event_task_id) WHERE event_task_id IS NOT NULL;
+                CREATE UNIQUE INDEX task_bindings_personal_task ON task_bindings(personal_task_id) WHERE personal_task_id IS NOT NULL;
+                CREATE INDEX provider_items_account_parent ON provider_items(account_id, remote_parent_id);
+                CREATE INDEX task_bindings_state ON task_bindings(sync_state);
+                CREATE INDEX provider_pending_operations_account ON provider_pending_operations(account_id, updated_at);
+            """)
+        }
         return migrator
     }
 }

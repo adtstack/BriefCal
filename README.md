@@ -7,6 +7,10 @@ KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 
 [Implementation Log](docs/implementation-log.md), Exchange 지원 판정은
 [Exchange Compatibility](docs/exchange-compatibility.md)에 분리해 보존한다.
 
+v1 기능 개발은 [v1 동결 결정](docs/v1-freeze.md)에 따라 종료했다. 이후 외부 task
+provider와 통합 캘린더 작업은 [v2 실행계획](docs/v2-execution-plan.md)과
+[단계별 세부문서](docs/v2/README.md)를 기준으로 한다.
+
 ## 제품 범위
 
 - macOS 14 이상
@@ -22,6 +26,8 @@ KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 
 설치·첫 실행·권한·주요 기능과 로컬 데이터 관리는 [User Guide](docs/user-guide.md),
 현재 제한과 우회 방법은 [Known Issues](docs/known-issues.md)를 따른다. 데이터 처리와
 보안 보고 경계는 [Privacy](PRIVACY.md)와 [Security](SECURITY.md)에 정리한다.
+외부 beta 라이선스는 아직 승인되지 않았으며 [Beta License Placeholder](BETA-LICENSE.md)가
+필수 결정과 배포 중단선을 기록한다.
 
 ## 개발 시작 전 준비
 
@@ -33,6 +39,27 @@ KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 
 xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates CODE_SIGNING_ALLOWED=NO build
 xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates CODE_SIGNING_ALLOWED=NO test
 ```
+
+## GitHub Actions 자동 빌드·DMG 배포
+
+`main`/`master` push와 pull request에서는 [`ci.yml`](.github/workflows/ci.yml)이 macOS
+테스트와 unsigned Release build를 실행하고, 성공한 `.app` zip과 `.xcresult`를 Actions
+artifact로 7일/14일 동안 보관한다. GitHub 저장소의 **Actions** 탭에서 해당 실행과
+artifact를 확인할 수 있다.
+
+`v0.1.0`처럼 세 자리 버전 태그를 push하면
+[`release.yml`](.github/workflows/release.yml)이 전체 test, Apple Silicon/Intel 공용 Release
+build, ad-hoc signing, DMG·checksum 검증을 수행하고 GitHub prerelease에 두 파일을 올린다.
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+자동 artifact는 `KaosCal-0.1.0-local.dmg`와 `SHA256SUMS.txt`다. 이 경로는 현재
+Developer ID 인증서를 사용하지 않는 로컬 테스트 전달용이며, 외부 beta 배포 판정을
+대체하지 않는다. 정식 배포는 [Release Runbook](docs/release-runbook.md)의 Developer ID
+서명·notarization·stapling gate를 별도로 통과해야 한다.
 
 EventKit 수동 QA에는 Calendar entitlement가 포함된 서명 앱이 필요하므로 `CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES`로 로컬 서명 빌드를 만든다. 실제 검증 명령과 결과는 [implementation-log.md](docs/implementation-log.md)에 남긴다.
 

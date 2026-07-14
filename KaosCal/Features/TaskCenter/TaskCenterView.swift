@@ -523,8 +523,10 @@ private struct TaskCenterRow: View {
         .alert("Delete this local task?", isPresented: $confirmsDeletion) {
             Button("Delete", role: .destructive) {
                 isDeleting = true
-                if !appState.deleteTaskCenterItem(item.id) {
-                    isDeleting = false
+                Task {
+                    if !(await appState.deleteTaskCenterItemAfterRemoteDelete(item.id)) {
+                        isDeleting = false
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}

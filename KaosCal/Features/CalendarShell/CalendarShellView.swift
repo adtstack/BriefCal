@@ -1,15 +1,40 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CalendarShellView: View {
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var appState: AppState
+    let bootstrapRecoveryState: BootstrapRecoveryOperationState
+    let bootstrapDatabaseURL: URL?
+    let recoverBootstrap: ((URL) -> Void)?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+
+    init(
+        appState: AppState,
+        bootstrapRecoveryState: BootstrapRecoveryOperationState = .idle,
+        bootstrapDatabaseURL: URL? = nil,
+        recoverBootstrap: ((URL) -> Void)? = nil
+    ) {
+        self.appState = appState
+        self.bootstrapRecoveryState = bootstrapRecoveryState
+        self.bootstrapDatabaseURL = bootstrapDatabaseURL
+        self.recoverBootstrap = recoverBootstrap
+    }
 
     var body: some View {
         Group {
             if case let .failed(message) = appState.localContextStoreState {
-                LocalContextStoreFailureView(message: message)
+                if appState.contextStore == nil {
+                    BootstrapLocalDataRecoveryView(
+                        message: message,
+                        operationState: bootstrapRecoveryState,
+                        databaseURL: bootstrapDatabaseURL,
+                        recover: recoverBootstrap
+                    )
+                } else {
+                    RuntimeLocalDataFailureView(message: message)
+                }
             } else {
                 calendarShell
             }
@@ -520,25 +545,128 @@ private struct LinkedEventRecoveryView: View {
     }
 }
 
-private struct LocalContextStoreFailureView: View {
+struct BootstrapLocalDataRecoveryView: View {
+    let message: String
+    let operationState: BootstrapRecoveryOperationState
+    let databaseURL: URL?
+    let recover: ((URL) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Label(
+                "Local data needs recovery",
+                systemImage: "externaldrive.badge.exclamationmark"
+            )
+            .font(.title2.weight(.semibold))
+
+            Text(
+                "KaosCal stopped before loading or changing local data. The existing SQLite database and sidecars have not been deleted. Choose a backup created by this KaosCal schema to restore local Event Briefs and tasks. Calendar and Exchange events are never changed by this recovery."
+            )
+            .fixedSize(horizontal: false, vertical: true)
+
+            GroupBox("Startup error") {
+                Text(message)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+            }
+
+            if case let .failed(recoveryMessage) = operationState {
+                Label(recoveryMessage, systemImage: "xmark.octagon.fill")
+                    .foregroundStyle(.red)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("bootstrapRecovery.error")
+            }
+
+            if let databaseURL {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Preserved database location")
+                        .font(.caption.weight(.semibold))
+                    Text(databaseURL.path(percentEncoded: false))
+                        .font(.system(.caption2, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+
+            HStack {
+                if let databaseURL {
+                    Button("Show Folder in Finder") {
+                        NSWorkspace.shared.selectFile(
+                            nil,
+                            inFileViewerRootedAtPath: databaseURL
+                                .deletingLastPathComponent().path
+                        )
+                    }
+                }
+                Spacer()
+                Button {
+                    selectBackup()
+                } label: {
+                    if operationState == .recovering {
+                        Label {
+                            Text("Restoring…")
+                        } icon: {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    } else {
+                        Label(
+                            "Restore From Backup…",
+                            systemImage: "arrow.counterclockwise.circle"
+                        )
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(operationState == .recovering || recover == nil)
+                .accessibilityIdentifier("bootstrapRecovery.restore")
+            }
+
+            Text(
+                "Before replacement, KaosCal moves the failed database file family into a private Recovery folder. If installation of the validated backup fails, it attempts to put every original file back."
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(36)
+        .accessibilityIdentifier("bootstrapRecovery.view")
+    }
+
+    private func selectBackup() {
+        let panel = NSOpenPanel()
+        panel.title = "Restore KaosCal After Startup Failure"
+        panel.prompt = "Validate and Restore"
+        panel.allowedContentTypes = [.zip]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        guard panel.runModal() == .OK, let archiveURL = panel.url else { return }
+        recover?(archiveURL)
+    }
+}
+
+private struct RuntimeLocalDataFailureView: View {
     let message: String
 
     var body: some View {
         ContentUnavailableView {
             Label(
-                "Local data needs recovery",
+                "Local data is locked for this session",
                 systemImage: "externaldrive.badge.exclamationmark"
             )
         } description: {
             Text(
-                "KaosCal stopped before loading or changing local data. "
-                    + "The existing database was preserved. Quit the app, "
-                    + "back up the KaosCal folder in Application Support, "
-                    + "then review the error before retrying.\n\n\(message)"
+                "KaosCal already opened its local database before this failure, so bootstrap file replacement is disabled while that database writer is alive. Calendar and local changes remain blocked. Preserve the displayed database and Backups folder, quit KaosCal, then follow the startup recovery screen if the next launch cannot open the database.\n\n\(message)"
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(32)
+        .accessibilityIdentifier("runtimeLocalDataFailure.view")
     }
 }
 
@@ -1145,6 +1273,22 @@ private struct WorkspaceView: View {
         switch appState.selectedSection ?? .week {
         case .day, .week:
             CalendarTimelineView(appState: appState)
+                .overlay(alignment: .top) {
+                    if appState.visibleEvents.isEmpty {
+                        Label(
+                            "No events in this period",
+                            systemImage: "calendar.badge.minus"
+                        )
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.top, 12)
+                        .allowsHitTesting(false)
+                        .accessibilityIdentifier("calendar.emptyPeriod")
+                    }
+                }
         case .agenda:
             AgendaView(appState: appState)
         case .tasks:

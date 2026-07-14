@@ -24,6 +24,42 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.localContextStoreState, .unavailable)
     }
 
+    func testBootstrapRecoveryIsOfferedOnlyWhenNoLiveDatabaseWriterExists() throws {
+        enum OpenFailure: Error { case injected }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("BootstrapCoordinatorTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("kaoscal.sqlite")
+        let database = try AppDatabase.open(at: databaseURL)
+
+        let healthy = AppBootstrapCoordinator(
+            environment: [:],
+            openDatabase: { database },
+            defaultDatabaseURL: databaseURL
+        )
+        XCTAssertEqual(
+            healthy.appState.localContextStoreState,
+            LocalContextStoreState.ready
+        )
+        XCTAssertFalse(healthy.canRecoverFromBootstrap)
+
+        let failedBootstrap = AppBootstrapCoordinator(
+            environment: [:],
+            openDatabase: { throw OpenFailure.injected },
+            defaultDatabaseURL: databaseURL
+        )
+        guard case .failed = failedBootstrap.appState.localContextStoreState else {
+            return XCTFail("Expected failed bootstrap state")
+        }
+        XCTAssertNil(failedBootstrap.appState.contextStore)
+        XCTAssertTrue(failedBootstrap.canRecoverFromBootstrap)
+    }
+
     func testDefaultsToWeekAtStartOfToday() {
         let baseline = Date(timeIntervalSince1970: 1_700_000_000)
         var calendar = Calendar(identifier: .gregorian)
@@ -251,6 +287,29 @@ final class AppStateTests: XCTestCase {
 
 @MainActor
 final class Phase6AppStateTests: XCTestCase {
+    func testTaskDeepLinkUsesLocalBindingThenStrongCalendarLookup() async throws {
+        let event = makeEvent(id: "deep-link")
+        let provider = makeProvider(events: [event])
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        _ = try store.saveNotes(for: event, notes: "Deep link fixture")
+        let task = try store.appendEventTask(
+            for: event,
+            section: .after,
+            title: "Open from To Do"
+        )
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        await state.openTaskDeepLink(
+            try XCTUnwrap(URL(string: "kaoscal://task/\(task.id)"))
+        )
+
+        XCTAssertEqual(provider.lookupCallCount, 1)
+        XCTAssertEqual(state.selectedEventID, event.id)
+        XCTAssertEqual(state.selectedSection, .day)
+        XCTAssertNil(state.localOperationError)
+    }
+
     func testLinkedCalendarMoveCancelPerformsNoWriteOrLocalMutation() async throws {
         let event = makeEvent()
         let provider = makeProvider(events: [event])
@@ -1644,6 +1703,60 @@ final class Phase9AppStateTests: XCTestCase {
             XCTAssertGreaterThan(pngData.count, 10_000)
             assertNoCalendarWrites(provider)
         }
+    }
+
+    func testPhase10OnboardingFitsAndProducesOffscreenBitmap() throws {
+        let hostingView = NSHostingView(rootView:
+            PaidBetaOnboardingView(complete: {})
+                .background(Color(nsColor: .windowBackgroundColor))
+        )
+        let fittingSize = hostingView.fittingSize
+        XCTAssertLessThanOrEqual(fittingSize.width, 680.5)
+        XCTAssertLessThanOrEqual(fittingSize.height, 560)
+
+        hostingView.frame = NSRect(x: 0, y: 0, width: 680, height: 560)
+        hostingView.wantsLayer = true
+        hostingView.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(
+            hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
+        )
+        hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+        let pngData = try XCTUnwrap(
+            representation.representation(using: .png, properties: [:])
+        )
+        XCTAssertGreaterThanOrEqual(representation.pixelsWide, 680)
+        XCTAssertGreaterThanOrEqual(representation.pixelsHigh, 560)
+        XCTAssertGreaterThan(pngData.count, 10_000)
+    }
+
+    func testBootstrapRecoveryStateFitsAndProducesOffscreenBitmap() throws {
+        let hostingView = NSHostingView(rootView:
+            BootstrapLocalDataRecoveryView(
+                message: "database disk image is malformed",
+                operationState: .idle,
+                databaseURL: URL(fileURLWithPath: "/private/example/KaosCal/kaoscal.sqlite"),
+                recover: { _ in }
+            )
+            .frame(width: 620, height: 520)
+            .background(Color(nsColor: .windowBackgroundColor))
+        )
+        let fittingSize = hostingView.fittingSize
+        XCTAssertLessThanOrEqual(fittingSize.width, 620.5)
+        XCTAssertLessThanOrEqual(fittingSize.height, 520.5)
+
+        hostingView.frame = NSRect(x: 0, y: 0, width: 620, height: 520)
+        hostingView.wantsLayer = true
+        hostingView.layoutSubtreeIfNeeded()
+        let representation = try XCTUnwrap(
+            hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
+        )
+        hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+        let pngData = try XCTUnwrap(
+            representation.representation(using: .png, properties: [:])
+        )
+        XCTAssertGreaterThanOrEqual(representation.pixelsWide, 620)
+        XCTAssertGreaterThanOrEqual(representation.pixelsHigh, 520)
+        XCTAssertGreaterThan(pngData.count, 10_000)
     }
 
     private var calendar: Calendar {

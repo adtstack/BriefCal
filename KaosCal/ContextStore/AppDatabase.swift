@@ -37,6 +37,12 @@ struct AppDatabase: Sendable {
     static func openDefault(
         fileManager: FileManager = .default
     ) throws -> AppDatabase {
+        try open(at: defaultDatabaseURL(fileManager: fileManager))
+    }
+
+    static func defaultDatabaseURL(
+        fileManager: FileManager = .default
+    ) throws -> URL {
         let applicationSupport = try fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
@@ -47,9 +53,7 @@ struct AppDatabase: Sendable {
             "KaosCal",
             isDirectory: true
         )
-        return try open(
-            at: directory.appendingPathComponent("kaoscal.sqlite")
-        )
+        return directory.appendingPathComponent("kaoscal.sqlite")
     }
 
     func read<T>(_ value: (Database) throws -> T) throws -> T {

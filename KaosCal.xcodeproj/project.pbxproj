@@ -22,6 +22,13 @@
 		A1000000000000000000000D /* CalendarEventLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* CalendarEventLayout.swift */; };
 		A1000000000000000000000E /* CalendarEventLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* CalendarEventLayoutTests.swift */; };
 		A1000000000000000000000F /* CalendarTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* CalendarTimelineView.swift */; };
+		A10000000000000000000014 /* TaskProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* TaskProvider.swift */; };
+		A10000000000000000000015 /* OAuthCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000015 /* OAuthCredentialStore.swift */; };
+		A10000000000000000000016 /* GoogleTasksAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000016 /* GoogleTasksAPI.swift */; };
+		A10000000000000000000017 /* TodoistAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* TodoistAPI.swift */; };
+		A10000000000000000000018 /* MicrosoftToDoAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000018 /* MicrosoftToDoAPI.swift */; };
+		A10000000000000000000019 /* OAuthTaskProviderSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000019 /* OAuthTaskProviderSession.swift */; };
+		A1000000000000000000001A /* AsyncTaskProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000001A /* AsyncTaskProvider.swift */; };
 		B10000000000000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = B20000000000000000000001 /* GRDB */; };
 		C10000000000000000000001 /* AppDatabase.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001 /* AppDatabase.swift */; };
 		C10000000000000000000002 /* DatabaseMigrations.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002 /* DatabaseMigrations.swift */; };
@@ -33,6 +40,9 @@
 		C10000000000000000000008 /* TaskCenterRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000008 /* TaskCenterRepository.swift */; };
 		C10000000000000000000009 /* ContextStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000009 /* ContextStore.swift */; };
 		C1000000000000000000000A /* ContextStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000A /* ContextStoreTests.swift */; };
+		C1000000000000000000000B /* TaskProviderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000B /* TaskProviderModels.swift */; };
+		C1000000000000000000000C /* TaskProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000C /* TaskProviderRepository.swift */; };
+		C1000000000000000000000D /* ContextReferenceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000D /* ContextReferenceRepository.swift */; };
 		D10000000000000000000001 /* EventBriefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* EventBriefView.swift */; };
 		D10000000000000000000002 /* TaskCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* TaskCenterView.swift */; };
 		D10000000000000000000003 /* LocalWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* LocalWorkspaceTests.swift */; };
@@ -78,6 +88,13 @@
 		A20000000000000000000011 /* CalendarEventLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventLayout.swift; sourceTree = "<group>"; };
 		A20000000000000000000012 /* CalendarEventLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventLayoutTests.swift; sourceTree = "<group>"; };
 		A20000000000000000000013 /* CalendarTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTimelineView.swift; sourceTree = "<group>"; };
+		A20000000000000000000014 /* TaskProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskProvider.swift; sourceTree = "<group>"; };
+		A20000000000000000000015 /* OAuthCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthCredentialStore.swift; sourceTree = "<group>"; };
+		A20000000000000000000016 /* GoogleTasksAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleTasksAPI.swift; sourceTree = "<group>"; };
+		A20000000000000000000017 /* TodoistAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodoistAPI.swift; sourceTree = "<group>"; };
+		A20000000000000000000018 /* MicrosoftToDoAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrosoftToDoAPI.swift; sourceTree = "<group>"; };
+		A20000000000000000000019 /* OAuthTaskProviderSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OAuthTaskProviderSession.swift; sourceTree = "<group>"; };
+		A2000000000000000000001A /* AsyncTaskProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AsyncTaskProvider.swift; sourceTree = "<group>"; };
 		C20000000000000000000001 /* AppDatabase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDatabase.swift; sourceTree = "<group>"; };
 		C20000000000000000000002 /* DatabaseMigrations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseMigrations.swift; sourceTree = "<group>"; };
 		C20000000000000000000003 /* ContextModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextModels.swift; sourceTree = "<group>"; };
@@ -88,6 +105,9 @@
 		C20000000000000000000008 /* TaskCenterRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskCenterRepository.swift; sourceTree = "<group>"; };
 		C20000000000000000000009 /* ContextStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextStore.swift; sourceTree = "<group>"; };
 		C2000000000000000000000A /* ContextStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextStoreTests.swift; sourceTree = "<group>"; };
+		C2000000000000000000000B /* TaskProviderModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskProviderModels.swift; sourceTree = "<group>"; };
+		C2000000000000000000000C /* TaskProviderRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskProviderRepository.swift; sourceTree = "<group>"; };
+		C2000000000000000000000D /* ContextReferenceRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextReferenceRepository.swift; sourceTree = "<group>"; };
 		D20000000000000000000001 /* EventBriefView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventBriefView.swift; sourceTree = "<group>"; };
 		D20000000000000000000002 /* TaskCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskCenterView.swift; sourceTree = "<group>"; };
 		D20000000000000000000003 /* LocalWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWorkspaceTests.swift; sourceTree = "<group>"; };
@@ -228,6 +248,13 @@
 				A2000000000000000000000B /* CalendarModels.swift */,
 				A2000000000000000000000C /* CalendarProvider.swift */,
 				A2000000000000000000000D /* EventKitProvider.swift */,
+				A20000000000000000000014 /* TaskProvider.swift */,
+				A20000000000000000000015 /* OAuthCredentialStore.swift */,
+				A20000000000000000000016 /* GoogleTasksAPI.swift */,
+				A20000000000000000000017 /* TodoistAPI.swift */,
+				A20000000000000000000018 /* MicrosoftToDoAPI.swift */,
+				A20000000000000000000019 /* OAuthTaskProviderSession.swift */,
+				A2000000000000000000001A /* AsyncTaskProvider.swift */,
 			);
 			path = CalendarKit;
 			sourceTree = "<group>";
@@ -246,6 +273,9 @@
 				C20000000000000000000006 /* EventTaskRepository.swift */,
 				C20000000000000000000007 /* PersonalTaskRepository.swift */,
 				C20000000000000000000008 /* TaskCenterRepository.swift */,
+				C2000000000000000000000B /* TaskProviderModels.swift */,
+				C2000000000000000000000C /* TaskProviderRepository.swift */,
+				C2000000000000000000000D /* ContextReferenceRepository.swift */,
 			);
 			path = ContextStore;
 			sourceTree = "<group>";
@@ -399,6 +429,9 @@
 				C10000000000000000000006 /* EventTaskRepository.swift in Sources */,
 				C10000000000000000000007 /* PersonalTaskRepository.swift in Sources */,
 				C10000000000000000000008 /* TaskCenterRepository.swift in Sources */,
+				C1000000000000000000000B /* TaskProviderModels.swift in Sources */,
+				C1000000000000000000000C /* TaskProviderRepository.swift in Sources */,
+				C1000000000000000000000D /* ContextReferenceRepository.swift in Sources */,
 				A1000000000000000000000C /* CalendarEventDateFormatting.swift in Sources */,
 				G10000000000000000000001 /* CalendarClarity.swift in Sources */,
 				A1000000000000000000000D /* CalendarEventLayout.swift in Sources */,
@@ -406,6 +439,13 @@
 				A10000000000000000000008 /* CalendarProvider.swift in Sources */,
 				A10000000000000000000007 /* CalendarModels.swift in Sources */,
 				A10000000000000000000009 /* EventKitProvider.swift in Sources */,
+				A10000000000000000000014 /* TaskProvider.swift in Sources */,
+				A10000000000000000000015 /* OAuthCredentialStore.swift in Sources */,
+				A10000000000000000000016 /* GoogleTasksAPI.swift in Sources */,
+				A10000000000000000000017 /* TodoistAPI.swift in Sources */,
+				A10000000000000000000018 /* MicrosoftToDoAPI.swift in Sources */,
+				A10000000000000000000019 /* OAuthTaskProviderSession.swift in Sources */,
+				A1000000000000000000001A /* AsyncTaskProvider.swift in Sources */,
 				A10000000000000000000003 /* CalendarShellView.swift in Sources */,
 				A1000000000000000000000F /* CalendarTimelineView.swift in Sources */,
 				D10000000000000000000001 /* EventBriefView.swift in Sources */,

@@ -54,7 +54,9 @@ final class ContextStore {
     let eventTasks: EventTaskRepository
     let personalTasks: PersonalTaskRepository
     let taskCenter: TaskCenterRepository
+    let taskProviders: TaskProviderRepository
     let calendarRoles: CalendarRoleRepository
+    let references: ContextReferenceRepository
     let localDataBackups: LocalDataBackupService
 
     private let database: AppDatabase
@@ -85,9 +87,19 @@ final class ContextStore {
             makeID: makeID
         )
         taskCenter = TaskCenterRepository(database: database)
+        taskProviders = TaskProviderRepository(
+            database: database,
+            now: now,
+            makeID: makeID
+        )
         calendarRoles = CalendarRoleRepository(
             database: database,
             now: now
+        )
+        references = ContextReferenceRepository(
+            database: database,
+            now: now,
+            makeID: makeID
         )
         localDataBackups = LocalDataBackupService(
             database: database,

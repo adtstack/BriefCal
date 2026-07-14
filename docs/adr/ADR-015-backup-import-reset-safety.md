@@ -2,7 +2,7 @@
 
 > 상태: Accepted
 > 날짜: 2026-07-12
-> 관계: ADR-006의 entitlement 기준과 ADR-008의 Phase 9 migration/recovery 예상을 확장·수정함
+> 관계: ADR-006의 entitlement 기준과 ADR-008의 Phase 9 migration/recovery 예상을 확장·수정함. Phase 10 bootstrap recovery 결정을 포함함
 
 ## 배경
 
@@ -62,6 +62,19 @@ Phase 9는 정상 부팅한 current-schema DB에서 사용자가 명시적으로
   수행하지 않는다.
 - DB open/migration 실패로 정상 store가 없는 bootstrap recovery는 Phase 10으로
   이월한다. Phase 9의 정상-store Settings import를 그 복구 경로로 과장하지 않는다.
+- Phase 10 bootstrap recovery는 정상 `DatabaseWriter`를 만들지 못했을 때만 표시한다.
+  선택 archive는 Phase 9와 같은 exact ZIP/manifest/hash/current-schema/integrity/FK
+  preflight를 active 파일 변경 전에 통과해야 한다.
+- preflight 성공 뒤 기존 `kaoscal.sqlite`, `-wal`, `-shm`, `-journal` 파일군을 같은
+  Application Support의 고유 `Recovery/Failed-Bootstrap-*` 폴더로 함께 이동한다. 검증된
+  replacement를 live 위치에 설치하고 새 writer로 다시 연 뒤 schema/integrity/FK를
+  확인한다. 설치·재오픈이 실패하면 replacement 파일군을 제거하고 이동한 원본 전부를
+  되돌린다. `Recovery`가 file 또는 symbolic link면 live 파일을 건드리기 전에 거부한다.
+  일부 rollback까지 실패하면 성공으로 표시하지 않는다.
+- 성공 뒤에도 격리 파일은 자동 삭제하지 않으며 민감한 local data로 취급한다. 복구
+  source와 격리 위치만 사용자에게 알리고 EventKit write는 수행하지 않는다. 현재
+  schema와 다른 backup의 migration/downgrade, 임의 SQLite 선택, record merge와
+  backup 없는 `Start Fresh`는 이 경로에서 제공하지 않는다.
 
 ## 결과
 
@@ -73,4 +86,6 @@ ZIP으로 보관하고, active local DB를 안전한 사전 backup 뒤 교체하
 plaintext·비인증 archive와 수동 retention 때문에 사용자가 backup 출처, 위치와 수명에
 책임을 져야 한다. schema가 바뀐 뒤 과거 backup을 자동 migration하는 기능도 별도
 호환성 설계가 필요하다.
-앱이 live DB를 열지 못하는 재난 복구는 아직 별도 Phase 10 기능이 필요하다.
+Phase 10은 정상 store 없이도 same-schema backup을 선택하는 self-service 재난 복구를
+제공한다. 다만 실제 손상 production DB를 이용한 signed Release 복구, power-loss/crash
+window와 rollback 자체가 실패하는 filesystem 조건은 별도 manual/fault-injection gate다.

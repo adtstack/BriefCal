@@ -20,7 +20,7 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 | 반복 | 모든 occurrence 표시, 손실 없이 표현 가능한 기본 일·주·월·년 규칙 생성/편집, 이번 일정·이번 이후 범위 선택 | 반복 Brief가 다른 occurrence에 섞이지 않고, scope Confirm 전에는 write하지 않으며, 서버가 거부한 변경은 원본을 훼손하지 않는다. |
 | Event Brief | Before/During/After 작업, 로컬 메모, 원본 이동·시간·반복 변경 이력 | EventKit notes를 변경하지 않고 앱 재실행 뒤에도 유지된다. |
 | Task Center | 이벤트 작업을 모아 보고, 이벤트에 연결되지 않은 가벼운 개인 작업을 추가 | 오늘·예정·After Review·완료 목록에서 작업 출처와 연결 일정을 명확히 보여 준다. |
-| Local Data | 수동 ZIP export/import, import/reset 전 recovery backup, local-only reset | archive와 DB를 엄격히 검증하고 Calendar/Exchange 원본을 바꾸지 않은 채 KaosCal local data를 복원·초기화한다. |
+| Local Data | 수동 ZIP export/import, import/reset 전 recovery backup, local-only reset, failed-bootstrap same-schema restore | archive와 DB를 엄격히 검증하고 Calendar/Exchange 원본을 바꾸지 않은 채 KaosCal local data를 복원·초기화한다. |
 | 안전성 | read-only 구분, recurrence/move impact 확인, 좁은 session Undo, orphan 보존, 백업/복원 | 원본 일정과 KaosCal 데이터의 삭제·복원이 서로 영향을 주지 않고 unsafe future-series write를 사전에 차단한다. |
 
 현재 구현 단계는 범위 자체와 구분한다. Phase 5의 비반복 원본 편집 위에 Phase 6의 기본 반복 규칙, 명시적 scope, impact Confirm, linked safe move, additive change log, session-only Undo를 구현했고, Phase 7A에서 occurrence 종료 기반 scheduled/completed, After Review와 완료 일정 후속 작업 projection을 추가했다. Phase 7B는 전용 occurrence-aware lookup, 두 번의 명시적 `notFound`, local Brief 보관·재연결·삭제를 구현했다. Phase 7C는 active linked 원본의 saved-link/notes/tasks impact review와 별도 final Confirm, successful delete receipt 뒤 `cancelled + orphaned` local Brief 보존, unavailable cancellation provenance와 no-Undo partial-success 경계를 구현했다. deleted-original 표시는 현재 link 세대의 KaosCal deletion log를 요구하고 이후 `(created_at, rowid)`상 더 늦은 relink가 과거 provenance를 무효화한다. Phase 7C는 새 schema를 요구하지 않았다. 다만 살아 있는 반복 series의 **외부** 단일 occurrence 삭제는 범위 밖 detached move와 EventKit read로 구분할 수 없어 automatic orphan이 아니라 manual exact relink로 남기고, KaosCal이 직접 시작한 `thisEvent` 삭제만 successful receipt로 exact finalize한다.
@@ -43,8 +43,10 @@ snapshot을 포함할 수 있는 plaintext다. KaosCal은 계정 credential/toke
 사용자 notes/tasks는 검사·redact하지 않으므로 본문에 입력한 민감정보는 포함될 수 있다.
 모든 Local Data 작업은 EventKit write를 하지 않는다.
 
-손상 live DB가 bootstrap에 실패한 상태의 recovery, schedule backup과 자동
-retention/pruning은 Phase 10 또는 후속 범위다. custom saved calendar set, color/name
+Phase 10은 손상 live DB가 bootstrap에 실패하면 strict same-schema backup을 먼저 검사하고
+기존 SQLite 파일군을 `Recovery`에 보존한 뒤 복원 DB를 재오픈하는 경로를 추가했다.
+실제 production 손상/rollback fault live gate, schedule backup과 자동
+retention/pruning은 후속 범위다. custom saved calendar set, color/name
 override와 Icon Composer variant도 배포 polish로 남아 있다. 상세 계약은
 [backup-restore.md](backup-restore.md)와
 [ADR-015](adr/ADR-015-backup-import-reset-safety.md)를 따른다. 자동 회귀와 signed
@@ -89,7 +91,8 @@ Task Center는 프로젝트 관리 도구가 아니다.
 - 임의 이름 saved Calendar Set, calendar별 visibility·role color/name override
 - possible duplicate의 자동 merge·hide·delete 또는 EventKit 원본 변경
 - backup record-level merge, schedule backup, 자동 retention/pruning
-- 정상 DB bootstrap 이전의 손상 live DB recovery UI
+- schema가 다른 backup migration/downgrade, 임의 SQLite 복구와 backup 없는 destructive
+  bootstrap reset
 
 ## 범위 변경 규칙
 

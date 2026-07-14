@@ -6,6 +6,17 @@
 
 ## 설치·권한·동기화
 
+### v2 Apple Reminders 연동은 아직 live fixture 전이다
+
+v2 Phase 1에는 Reminders 권한 요청, writable list destination, event task의 생성·수정·완료·삭제
+및 외부 변경 projection이 구현되어 있다. 그러나 현재 자동 테스트는 실제 iCloud/On My Mac
+Reminders 계정과 권한 철회를 검증하지 않았으므로 beta-ready로 판정하지 않는다. Personal task는
+이번 단계에서 의도적으로 local-only이며, Task Center의 provider source badge와 명시적 relink UI도
+후속 단계다.
+
+**현재 권장:** Reminders destination을 설정하기 전 v1 local-only task 흐름을 사용하고, live
+검증 전에는 중요한 원격 task를 단독 정본으로 두지 않는다.
+
 ### 외부 배포용 build가 아직 없다
 
 현재 Release checkpoint는 로컬 ad-hoc 서명 검증용이다. Developer ID 서명,
@@ -142,13 +153,17 @@ Backup은 사용자가 요청하는 수동 export만 제공한다. Import/reset 
 **우회:** Settings의 active DB 위치에 인접한 `Backups` 폴더를 정기적으로 확인하고,
 필요한 파일을 별도 보관한 뒤 사용자가 직접 정리한다.
 
-### 손상 DB로 앱이 시작하지 못하면 Settings Import를 사용할 수 없다
+### 손상 DB bootstrap 복구는 same-schema KaosCal backup이 필요하다
 
-Phase 9의 import는 healthy current-schema DB를 정상적으로 연 뒤에만 동작한다.
-bootstrap 단계에서 DB open/migration이 실패한 상태의 recovery UI는 아직 없다.
+Phase 10은 DB open/migration 실패 화면에서 strict KaosCal ZIP을 선택하는 복구 UI를
+제공한다. 현재 앱과 exact migration/schema가 같은 backup만 허용하며, 과거 schema 자동
+migration, 미래 schema downgrade, 임의 SQLite 선택, record merge와 backup 없는 새 DB
+초기화는 제공하지 않는다.
 
-**안전 경계:** 기존 DB 파일을 삭제하거나 덮어쓰지 않는다. failed-bootstrap recovery가
-구현되기 전에는 원본 파일과 `Backups`를 보존해 지원 절차에 사용한다.
+**안전 경계:** 유효한 backup을 고르기 전 기존 DB 파일군은 건드리지 않는다. 복구 시
+기존 DB와 sidecar는 `Recovery`에 함께 보존되며 자동 삭제되지 않는다. 자동 회귀는
+격리·복원·rollback을 통과했지만 실제 signed Release 손상 DB/file-panel 복구와 crash/
+power-loss window는 manual pending이다.
 
 ### Reset Local Data는 Calendar 일정 삭제가 아니다
 
@@ -172,7 +187,9 @@ Exchange Tasks, 팀 프로젝트나 다른 기기의 KaosCal과 동기화되지 
 Phase 8의 긴 source/role/restriction 문구, 고밀도 card와 VoiceOver는 자동 또는
 offscreen checkpoint만 통과했다. Phase 9의 실제 Settings scroll, Open/Save panel과
 typed Reset activation은 run `20260712-1616-KST`에서 통과했지만, 파일 작성·backup을
-선택한 import·reset mutation과 rollback/failed-bootstrap recovery는 실행하지 않았다.
+선택한 import·reset mutation, signed Release의 failed-bootstrap file-panel 복구와 실제
+rollback fault는 실행하지 않았다. 온보딩과 recovery 화면은 offscreen bitmap까지만
+검증했으며 VoiceOver·keyboard 실제 창 검증은 남아 있다.
 
 이 제한의 최신 판정과 남은 gate는 [Current Status](current-status.md), 상세 복구 계약은
 [Backup, Restore, and Local Reset](backup-restore.md), 사용자별 검증 절차는

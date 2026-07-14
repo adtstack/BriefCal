@@ -342,6 +342,207 @@ struct LocalDataSettingsView: View {
     }
 }
 
+struct SettingsRootView: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        TabView {
+            if let coordinator = appState.taskProviderCoordinator {
+                TaskProviderSettingsView(
+                    appState: appState,
+                    coordinator: coordinator
+                )
+                .tabItem {
+                    Label("Task Providers", systemImage: "checklist")
+                }
+            }
+            LocalDataSettingsView(appState: appState)
+                .tabItem {
+                    Label("Local Data", systemImage: "externaldrive")
+                }
+        }
+    }
+}
+
+private struct TaskProviderSettingsView: View {
+    @ObservedObject var appState: AppState
+    @ObservedObject var coordinator: TaskProviderCoordinator
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Task Providers")
+                        .font(.title2.weight(.semibold))
+                    Text(
+                        "Choose where tasks created from each calendar should be mirrored. Personal tasks remain local to KaosCal in this release."
+                    )
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                providerAccessSection
+                destinationsSection
+
+                if let message = coordinator.lastErrorMessage {
+                    Text(message)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: 620, height: 620)
+        .tint(KaosCalTheme.accent)
+        .task {
+            coordinator.refresh()
+        }
+        .accessibilityIdentifier("settings.taskProviders")
+    }
+
+    private var providerAccessSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            settingsGroup(title: "Apple Reminders", systemImage: "checklist") {
+                HStack {
+                    providerStateLabel(for: .appleReminders)
+                    Spacer()
+                    if coordinator.authorizationState != .authorized {
+                        Button("Request Access") {
+                            Task { await coordinator.requestAccess() }
+                        }
+                    } else {
+                        Button("Refresh") {
+                            coordinator.refresh()
+                        }
+                    }
+                }
+                Text(
+                    "KaosCal uses the system Reminders permission and never uploads task data to a KaosCal service."
+                )
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
+
+            settingsGroup(title: "OAuth Task Providers", systemImage: "person.badge.key") {
+                ForEach([
+                    TaskProviderKind.googleTasks,
+                    .todoist,
+                    .microsoftToDo
+                ], id: \.self) { provider in
+                    HStack(alignment: .firstTextBaseline) {
+                        Label(provider.title, systemImage: provider.settingsIcon)
+                        Spacer()
+                        providerStateLabel(for: provider)
+                        if coordinator.isConfigured(provider) {
+                            if coordinator.authorizationState(for: provider) == .authorized {
+                                Button("Disconnect", role: .destructive) {
+                                    coordinator.disconnectOAuthProvider(provider)
+                                }
+                            } else if coordinator.supportsInAppOAuthConnection(provider) {
+                                Button("Connect") {
+                                    Task {
+                                        await coordinator.connectOAuthProvider(provider)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !coordinator.isConfigured(provider) {
+                        Text("This build has no public client ID and redirect configured for \(provider.title).")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if coordinator.authorizationState(for: provider) != .authorized,
+                              !coordinator.supportsInAppOAuthConnection(provider) {
+                        Text("This provider needs its registered HTTPS callback/return-to-app deployment before it can be connected here.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text("OAuth credentials are stored only in the macOS Keychain. Provider task descriptions are not copied to local backups.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var destinationsSection: some View {
+        settingsGroup(title: "Calendar Destinations", systemImage: "calendar.badge.checkmark") {
+            if appState.calendarSources.isEmpty {
+                Text("No calendars are currently available.")
+                .foregroundStyle(.secondary)
+            } else if coordinator.taskLists.isEmpty {
+                Text("Connect a task provider and refresh it to choose a destination list.")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(appState.calendarSources) { source in
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(source.title)
+                            .font(.headline)
+                        Text(source.sourceTitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Picker("Destination", selection: destinationBinding(for: source)) {
+                            Text("Local only")
+                                .tag("")
+                            ForEach(coordinator.taskLists.filter(\.isWritable)) { list in
+                                Text("\(list.provider.title) · \(list.sourceTitle) · \(list.title)")
+                                    .tag(list.destinationSelectionKey)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private func destinationBinding(for source: CalendarSource) -> Binding<String> {
+        Binding(
+            get: {
+                coordinator.destinationSelection(for: source.id)
+            },
+            set: { value in
+                let list = coordinator.taskLists.first {
+                    $0.destinationSelectionKey == value
+                }
+                coordinator.saveDestination(
+                    calendarIdentifier: source.id,
+                    list: list
+                )
+            }
+        )
+    }
+
+    private func providerStateLabel(for provider: TaskProviderKind) -> some View {
+        let state = coordinator.authorizationState(for: provider)
+        return Label(
+            state.title,
+            systemImage: state == .authorized
+                ? "checkmark.circle.fill"
+                : "lock.circle"
+        )
+        .foregroundStyle(state == .authorized ? .green : .secondary)
+    }
+
+    private func settingsGroup<Content: View>(
+        title: String,
+        systemImage: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label(title, systemImage: systemImage)
+                .font(.headline)
+            content()
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
 private struct ResetLocalDataConfirmationView: View {
     let isOperationInProgress: Bool
     let onCancel: () -> Void

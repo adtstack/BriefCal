@@ -10,7 +10,10 @@ KaosCal은 한 번에 한 phase씩 구현한다.
 현재 phase, 최신 자동·Release 증거, live 결과와 열린 gate는
 [Current Status](current-status.md)를 단일 기준으로 사용한다. 이 문서는 phase의 목표,
 Definition of Done과 각 checkpoint 당시의 구현 근거를 보존하며, 상단에 변동하는 test
-count나 artifact를 복제하지 않는다.
+count나 artifact를 복제하지 않는다. v1 phase 0~10은 2026-07-13에 기능 개발을 종료하고
+동결했으며, 이후 새 기능의 단계 기준은 [v2 실행계획](v2-execution-plan.md)과
+[v2 단계 문서](v2/README.md)를 따른다. 이 문서의 남은 gate는 v1의 알려진 제한과
+역사적 인수 기준으로 보존한다.
 
 ## Phase 표
 
@@ -304,6 +307,25 @@ Definition of Done:
 
 Definition of Done:
 - 외부 테스트 사용자가 설명 없이 설치, 실행, 권한 허용, 핵심 데모를 수행할 수 있음
+
+현재 구현 판정:
+- 첫 실행에서 Calendar credential 비수집, local Event Brief, plaintext backup과 핵심
+  shortcut을 설명하는 onboarding을 추가했다. Day/Week empty period와 `⌘R` 현재 화면
+  reload를 추가했다.
+- DB open/migration 실패 화면에서 strict current-schema ZIP을 선택하고, preflight 뒤
+  failed SQLite/sidecar를 private `Recovery`로 격리하며 replacement 재오픈 실패 시 원본
+  rollback을 시도하는 bootstrap recovery를 구현했다. EventKit write는 수행하지 않는다.
+- 자동 회귀는 invalid archive preflight-before-touch, DB+3 sidecar 성공 격리/restore,
+  설치 검증 실패 뒤 원본 전체 rollback과 onboarding/recovery offscreen render를 포함한다.
+- 최신 전체 **220 tests executed, 219 passed, 1 intentional manual-only skip, 0 failures,
+  0 unexpected**이며 result bundle은 `/private/tmp/KaosCalPhase10Tests.xcresult`다. 최종
+  ad-hoc Release CDHash는 `4d7c1b5ad6dde65666f101cae00bdcb9d5b878ed`이고 hardened
+  runtime·sandbox·Calendar·user-selected file entitlement와 XCTest 부재를 통과했다.
+- 문서·release runbook·beta-license placeholder는 준비됐다. placeholder는 배포 허가가
+  아니며 publisher/support/legal terms가 확정되기 전 공개·유료 beta를 차단한다.
+- 외부 beta 완료 선언은 아직 보류한다. Developer ID/notary credential, 승인된 EULA와
+  support/privacy 연락처, notarized package, clean-user 설치 및 남은 live Exchange/UI/
+  accessibility/실제 손상 DB gate는 저장소만으로 닫을 수 없는 명시적 blocker다.
 
 ## 작업 프로토콜
 

@@ -58,6 +58,9 @@ v1 기본 모델:
 
 초기에는 license placeholder로 시작할 수 있다.
 결제 provider는 Paddle, Lemon Squeezy, Gumroad 같은 선택지를 출시 전 비교한다.
+현재 저장소의 [Beta License Placeholder](../BETA-LICENSE.md)는 배포 허가가 아니라 미정
+publisher/contact/terms 목록과 중단선이다. 승인된 실제 EULA로 대체되기 전에는 공개 또는
+유료 beta artifact를 배포하지 않는다.
 
 ## 가격 초안
 

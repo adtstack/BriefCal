@@ -32,7 +32,8 @@
 - 최종 ZIP 또는 DMG 형식과 실제 배포 위치
 - quarantine이 유지되는 실제 다운로드 경로의 clean-user smoke
 - [PRIVACY.md](../PRIVACY.md)와 [SECURITY.md](../SECURITY.md)의 미정 법적 주체·연락처,
-  KaosCal license/EULA와 rollback 공지 경로 확정
+  [beta license placeholder](../BETA-LICENSE.md)를 대체할 KaosCal license/EULA와 rollback
+  공지 경로 확정
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)의 최종 dependency/license 재검증과
   배포물 포함
 
@@ -357,7 +358,9 @@ release blocker 또는 명시적 미검증으로 기록한다.
 7. 허용된 고유 marker fixture에 한해서 [qa-checklist.md](qa-checklist.md)의 pending live
    gate를 수행한다. 기존 일정은 수정·삭제하지 않는다.
 8. plaintext 경고를 읽은 뒤 임시 Event Brief로 export/import와 import/reset 전 recovery
-   backup을 확인한다. 손상 DB bootstrap recovery는 아직 제공되지 않는다.
+   backup을 확인한다. 복제한 test user에서 DB open을 실패시키고 same-schema backup을
+   골라 failed DB/sidecar가 `Recovery`에 보존되는지, 복원 뒤 Event Brief가 열리는지
+   확인한다. 사용자의 유일한 실제 DB로 이 fault test를 하지 않는다.
 9. app 종료 후 남은 process, crash report, Calendar.app 결과와 test fixture cleanup을
    확인한다.
 
@@ -411,8 +414,9 @@ container를 가진 표준 사용자에서 upgrade를 검증한다. 첫 beta에�
 4. 이전 binary를 다시 배포하는 것은 그 binary가 **현재 사용자의 schema와 migration
    ledger를 읽는다고 별도 검증한 경우에만** 허용한다. Phase 9 import는 exact current
    schema/migration만 받으므로 backup을 이용한 schema downgrade 수단이 아니다.
-5. 앱이 DB open/migration 전에 실패하면 파일을 보존하고 support로 이관한다. failed-
-   bootstrap recovery UI는 아직 구현되지 않았으므로 reinstall/reset을 복구책으로
+5. 앱이 DB open/migration 전에 실패하면 Phase 10 bootstrap recovery에서 직접 만든
+   same-schema backup만 선택한다. 호환 backup이 없거나 rollback 불완전 오류가 나면 live
+   폴더와 `Recovery`를 모두 보존하고 support로 이관하며 reinstall/reset을 복구책으로
    안내하지 않는다.
 6. binary rollback은 이미 Calendar.app/Exchange에 반영된 EventKit 변경을 되돌리지
    않는다. session Undo도 재실행 뒤 복구 수단이 아니므로 자동 원복을 약속하지 않는다.

@@ -20,12 +20,25 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.kaoscal.task-link</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>kaoscal</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>KaosCal은 Day, Week, Agenda에 일정을 표시하고 사용자가 승인한 변경을 저장하기 위해 캘린더 접근이 필요합니다.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>KaosCal은 선택한 캘린더의 Before, During, After 작업을 Apple Reminders와 연결하기 위해 미리 알림 접근이 필요합니다.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026 KaosCal. All rights reserved.</string>
 	<key>NSPrincipalClass</key>

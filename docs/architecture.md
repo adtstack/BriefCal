@@ -423,7 +423,10 @@ Settings / AppState local-data operation gate
 - reset은 여섯 user-data table row만 한 transaction에서 비우고 GRDB migration history와 schema를 유지한다.
 - ZIP은 plaintext이고 linked title/time/location/identifier, original-notes change snapshot을 포함할 수 있다. KaosCal은 계정 credential/token을 전용 필드로 수집하지 않고 EventKit 전체 event store도 export하지 않지만, 사용자 notes/tasks 본문은 검사·redact하지 않으므로 그 안에 입력한 민감정보는 그대로 포함될 수 있다.
 - 자동 backup은 retention/pruning 없이 `Backups`에 보존한다. 사용자가 직접 관리한다.
-- 정상 store가 열려야 Settings operation을 시작할 수 있다. failed-bootstrap corrupt live DB recovery는 Phase 10 경계다.
+- 정상 store가 열려야 Phase 9 Settings operation을 시작할 수 있다. Phase 10의 별도
+  bootstrap coordinator는 store open 실패 상태에서만 strict backup을 preflight하고,
+  live SQLite 파일군을 `Recovery`로 격리한 뒤 replacement를 재오픈한다. 성공하면 새
+  `AppState`로 shell을 교체하고, 실패하면 원본 파일군 rollback을 시도한다.
 
 archive와 privacy 계약은 [backup-restore.md](backup-restore.md), 결정 근거는 [ADR-015](adr/ADR-015-backup-import-reset-safety.md)를 따른다.
 
@@ -471,7 +474,7 @@ Phase 8은 원본 수정 불가 사유를 typed projection으로 통일한다. i
 ## 오류 처리 원칙
 
 - EventKit 실패는 사용자가 이해할 수 있는 캘린더/권한/네트워크/계정 상태 문구로 바꾼다.
-- 정상 store에서 export/import/reset 실패는 active DB를 유지하거나 사전 snapshot으로 rollback하고 EventKit을 건드리지 않는다. SQLite open/migration 실패는 데이터 손실 없이 앱 화면을 중단하고 기존 파일을 보존한다. 이 failed-bootstrap 상태에서 backup을 골라 live DB를 교체하는 recovery UI는 Phase 10 범위다.
+- 정상 store에서 export/import/reset 실패는 active DB를 유지하거나 사전 snapshot으로 rollback하고 EventKit을 건드리지 않는다. SQLite open/migration 실패는 일반 shell 대신 bootstrap recovery를 표시한다. backup 전체 사전검사 전에는 기존 파일을 건드리지 않고, 이후에는 SQLite 파일군을 함께 격리하며 replacement 재오픈 실패 시 원본 rollback을 시도한다.
 - EventKit 변경과 SQLite rebind/change log는 한 use case에서 조정하되 같은 transaction이라고 가정하지 않는다. rebind 또는 Phase 7C status finalize와 log append끼리는 하나의 SQLite transaction으로 묶고, EventKit만 성공하면 실제 성공 범위·local data 보존·log 미기록 상태를 명시한다. linked delete 부분 성공은 같은 Delete를 재시도하지 않는다.
 - 일정 삭제와 local context 삭제는 별도 명령으로 분리한다. Phase 7B local delete는 EventKit을 호출하지 않고, Phase 7C linked original delete는 local context를 cascade 삭제하지 않는다.
 

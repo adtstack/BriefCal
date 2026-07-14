@@ -31,10 +31,13 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
 - **Phase 9 — Backup and Settings:** healthy current-schema DB의 strict two-entry plaintext
   ZIP export/import, import/reset 전 recovery backup, 여섯 local-data table reset,
   rollback-failure quarantine과 Local Data Settings를 추가했다.
-- **Phase 10 documentation foundation:** current status, 사용자 가이드, known issues,
-  privacy/security 경계, release runbook, contributor guide, changelog와 third-party notice를
-  추가했다. 이 문서 준비는 실제 Developer ID 배포·지원 채널·앱 license/EULA 완료를
-  의미하지 않는다.
+- **Phase 10 paid-beta polish:** first-run privacy/workflow onboarding, `⌘R` reload,
+  Day/Week empty-state 안내와 DB open/migration 실패 시 strict same-schema backup을 고르는
+  bootstrap recovery를 추가했다. recovery는 검증 전 active 파일을 건드리지 않고 기존
+  SQLite/sidecar를 private `Recovery` 폴더에 격리하며 설치 실패 시 rollback한다. current
+  status, 사용자 가이드, known issues, privacy/security 경계, release runbook, contributor
+  guide, changelog, beta-license placeholder와 third-party notice도 추가했다. 이는 실제
+  Developer ID 배포·지원 채널·승인된 앱 license/EULA 완료를 의미하지 않는다.
 
 ### Security and safety
 
@@ -64,8 +67,10 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
 - Backup은 암호화·서명되지 않은 plaintext이고 record merge, scheduled backup,
   automatic retention/pruning이 없다. 실행 중 build와 exact current schema/migration이
   같은 신뢰 가능한 backup만 import한다.
-- 손상 live DB 때문에 app bootstrap이 실패한 상태의 recovery UI는 없다. 기존 파일을
-  보존해야 하며 자세한 경계는 [Backup and Restore](docs/backup-restore.md)에 있다.
+- 손상 live DB 때문에 app bootstrap이 실패하면 현재 schema와 정확히 맞는 KaosCal
+  backup만 선택할 수 있다. 임의 SQLite, schema migration/downgrade, record merge와
+  backup 없는 destructive reset은 지원하지 않는다. 실제 signed Release 손상 DB 복구는
+  아직 manual pending이며 자세한 경계는 [Backup and Restore](docs/backup-restore.md)에 있다.
 - Undo는 같은 session의 좁은 supported mutation에만 적용되며 app 재실행, recurrence,
   detached occurrence와 delete의 일반 복구 수단이 아니다.
 - custom saved calendar Set, calendar별 color/name override, automatic duplicate merge와

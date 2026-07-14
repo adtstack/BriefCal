@@ -28,10 +28,10 @@ final class LocalDataBackupServiceTests: XCTestCase {
             XCTAssertEqual(result.manifest.applicationVersion, "0.9-test")
             XCTAssertEqual(
                 result.manifest.appliedMigrations,
-                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity"]
+                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider"]
             )
-            XCTAssertEqual(result.manifest.schemaIdentifier, "v3_calendar_clarity")
-            XCTAssertEqual(result.manifest.schemaVersion, 3)
+            XCTAssertEqual(result.manifest.schemaIdentifier, "v7_microsoft_to_do_provider")
+            XCTAssertEqual(result.manifest.schemaVersion, 7)
             XCTAssertEqual(result.manifest.databaseFilename, "kaoscal.sqlite")
             XCTAssertGreaterThan(result.manifest.databaseByteCount, 0)
             XCTAssertEqual(result.manifest.databaseSHA256.count, 64)
@@ -103,7 +103,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
         }
     }
 
-    func testResetDeletesAllSixUserTablesAndAutomaticBackupCanRestoreThem() throws {
+    func testResetDeletesAllKaosCalUserTablesAndAutomaticBackupCanRestoreThem() throws {
         try withTemporaryDirectory { directory in
             let database = try AppDatabase.open(
                 at: directory.appendingPathComponent("reset.sqlite")
@@ -125,14 +125,24 @@ final class LocalDataBackupServiceTests: XCTestCase {
                     eventTasks: 1,
                     personalTasks: 1,
                     eventChangeLog: 1,
-                    calendarPreferences: 1
+                    calendarPreferences: 1,
+                    providerAccounts: 1,
+                    providerItems: 1,
+                    providerBindings: 1,
+                    providerDestinations: 1,
+                    providerSyncCursors: 1,
+                    providerPendingOperations: 1,
+                    contextReferences: 1
                 )
             )
-            XCTAssertEqual(result.deletedRowCounts.total, 6)
-            XCTAssertEqual(try allUserTableCounts(in: database), [0, 0, 0, 0, 0, 0])
+            XCTAssertEqual(result.deletedRowCounts.total, 13)
+            XCTAssertEqual(
+                try allUserTableCounts(in: database),
+                Array(repeating: 0, count: 13)
+            )
             XCTAssertEqual(
                 try database.appliedMigrations(),
-                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity"]
+                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider"]
             )
 
             _ = try service.importBackup(
@@ -141,7 +151,194 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 now: Date(timeIntervalSince1970: 40),
                 appVersion: "test"
             )
-            XCTAssertEqual(try allUserTableCounts(in: database), [1, 1, 1, 1, 1, 1])
+            XCTAssertEqual(
+                try allUserTableCounts(in: database),
+                Array(repeating: 1, count: 13)
+            )
+        }
+    }
+
+    func testBootstrapRecoveryQuarantinesFailedDatabaseFamilyAndInstallsBackup() throws {
+        try withTemporaryDirectory { directory in
+            let source = try AppDatabase.open(
+                at: directory.appendingPathComponent("source.sqlite")
+            )
+            try insertFixture(into: source, suffix: "bootstrap")
+            let archiveURL = directory.appendingPathComponent("bootstrap.zip")
+            _ = try LocalDataBackupService(database: source).exportBackup(
+                to: archiveURL,
+                now: Date(timeIntervalSince1970: 100),
+                appVersion: "test"
+            )
+
+            let liveDirectory = directory.appendingPathComponent("Live")
+            try FileManager.default.createDirectory(
+                at: liveDirectory,
+                withIntermediateDirectories: true
+            )
+            let liveURL = liveDirectory.appendingPathComponent("kaoscal.sqlite")
+            let failedDatabase = Data("not a sqlite database".utf8)
+            try failedDatabase.write(to: liveURL)
+            let sidecars: [String: Data] = [
+                "-wal": Data("failed wal".utf8),
+                "-shm": Data("failed shm".utf8),
+                "-journal": Data("failed journal".utf8),
+            ]
+            for (suffix, data) in sidecars {
+                try data.write(to: URL(fileURLWithPath: liveURL.path + suffix))
+            }
+
+            let result = try BootstrapLocalDataRecoveryService(
+                liveDatabaseURL: liveURL
+            ).recover(
+                from: archiveURL,
+                now: Date(timeIntervalSince1970: 200)
+            )
+
+            let restored = try AppDatabase.open(at: liveURL)
+            XCTAssertEqual(try contextIDs(in: restored), ["context-bootstrap"])
+            XCTAssertEqual(
+                try Data(
+                    contentsOf: result.quarantinedDatabaseDirectory
+                        .appendingPathComponent("kaoscal.sqlite")
+                ),
+                failedDatabase
+            )
+            for (suffix, data) in sidecars {
+                XCTAssertEqual(
+                    try Data(
+                        contentsOf: result.quarantinedDatabaseDirectory
+                            .appendingPathComponent("kaoscal.sqlite\(suffix)")
+                    ),
+                    data
+                )
+            }
+            XCTAssertTrue(
+                FileManager.default.fileExists(
+                    atPath: result.quarantinedDatabaseDirectory
+                        .appendingPathComponent("RECOVERY.txt").path
+                )
+            )
+            XCTAssertEqual(result.manifest.schemaIdentifier, "v7_microsoft_to_do_provider")
+        }
+    }
+
+    func testBootstrapRecoveryRejectsArchiveBeforeTouchingFailedDatabase() throws {
+        try withTemporaryDirectory { directory in
+            let liveURL = directory.appendingPathComponent("kaoscal.sqlite")
+            let failedDatabase = Data("preserve this failed database".utf8)
+            try failedDatabase.write(to: liveURL)
+            let invalidArchiveURL = directory.appendingPathComponent("invalid.zip")
+            try Data("not a backup".utf8).write(to: invalidArchiveURL)
+
+            XCTAssertThrowsError(
+                try BootstrapLocalDataRecoveryService(
+                    liveDatabaseURL: liveURL
+                ).recover(from: invalidArchiveURL)
+            )
+            XCTAssertEqual(try Data(contentsOf: liveURL), failedDatabase)
+            XCTAssertFalse(
+                FileManager.default.fileExists(
+                    atPath: directory.appendingPathComponent("Recovery").path
+                )
+            )
+        }
+    }
+
+    func testBootstrapRecoveryRollsBackEveryOriginalFileWhenInstalledOpenFails() throws {
+        enum InstalledValidationFailure: Error { case injected }
+
+        try withTemporaryDirectory { directory in
+            let source = try AppDatabase.open(
+                at: directory.appendingPathComponent("source.sqlite")
+            )
+            let archiveURL = directory.appendingPathComponent("bootstrap.zip")
+            _ = try LocalDataBackupService(database: source).exportBackup(
+                to: archiveURL,
+                now: Date(timeIntervalSince1970: 300),
+                appVersion: "test"
+            )
+
+            let liveURL = directory.appendingPathComponent("kaoscal.sqlite")
+            let originalFiles: [String: Data] = [
+                "": Data("failed database".utf8),
+                "-wal": Data("failed wal".utf8),
+                "-shm": Data("failed shm".utf8),
+                "-journal": Data("failed journal".utf8),
+            ]
+            for (suffix, data) in originalFiles {
+                try data.write(to: URL(fileURLWithPath: liveURL.path + suffix))
+            }
+
+            XCTAssertThrowsError(
+                try BootstrapLocalDataRecoveryService(
+                    liveDatabaseURL: liveURL,
+                    validateInstalledDatabase: { _ in
+                        throw InstalledValidationFailure.injected
+                    }
+                ).recover(from: archiveURL)
+            ) { error in
+                guard case let BootstrapLocalDataRecoveryError.recoveryFailed(
+                    _, rollbackSucceeded
+                ) = error else {
+                    return XCTFail("Unexpected error: \(error)")
+                }
+                XCTAssertTrue(rollbackSucceeded)
+            }
+
+            for (suffix, data) in originalFiles {
+                XCTAssertEqual(
+                    try Data(contentsOf: URL(fileURLWithPath: liveURL.path + suffix)),
+                    data
+                )
+            }
+        }
+    }
+
+    func testBootstrapRecoveryRejectsSymbolicLinkQuarantineBeforeTouchingLiveDatabase() throws {
+        try withTemporaryDirectory { directory in
+            let source = try AppDatabase.open(
+                at: directory.appendingPathComponent("source.sqlite")
+            )
+            let archiveURL = directory.appendingPathComponent("bootstrap.zip")
+            _ = try LocalDataBackupService(database: source).exportBackup(
+                to: archiveURL,
+                now: Date(timeIntervalSince1970: 400),
+                appVersion: "test"
+            )
+
+            let liveDirectory = directory.appendingPathComponent("Live")
+            let escapedDirectory = directory.appendingPathComponent("Escaped")
+            try FileManager.default.createDirectory(
+                at: liveDirectory,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: escapedDirectory,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createSymbolicLink(
+                at: liveDirectory.appendingPathComponent("Recovery"),
+                withDestinationURL: escapedDirectory
+            )
+            let liveURL = liveDirectory.appendingPathComponent("kaoscal.sqlite")
+            let originalData = Data("preserve failed database".utf8)
+            try originalData.write(to: liveURL)
+
+            XCTAssertThrowsError(
+                try BootstrapLocalDataRecoveryService(
+                    liveDatabaseURL: liveURL
+                ).recover(from: archiveURL)
+            ) { error in
+                guard case LocalDataBackupError.unsafeDestination = error else {
+                    return XCTFail("Unexpected error: \(error)")
+                }
+            }
+            XCTAssertEqual(try Data(contentsOf: liveURL), originalData)
+            XCTAssertEqual(
+                try FileManager.default.contentsOfDirectory(atPath: escapedDirectory.path),
+                []
+            )
         }
     }
 
@@ -479,9 +676,9 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 }
                 XCTAssertEqual(
                     expected,
-                    ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity"]
+                    ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider"]
                 )
-                XCTAssertEqual(found, ["4 migration ledger entries"])
+                XCTAssertEqual(found, ["8 migration ledger entries"])
             }
         }
     }
@@ -490,7 +687,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
         let database = try AppDatabase.open(at: databaseURL)
         XCTAssertEqual(
             try database.appliedMigrations(),
-            ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity"]
+            ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider"]
         )
     }
 
@@ -581,6 +778,81 @@ final class LocalDataBackupServiceTests: XCTestCase {
                     """,
                 arguments: ["calendar-\(suffix)", timestamp, timestamp]
             )
+            try db.execute(
+                sql: """
+                    INSERT INTO provider_accounts (
+                        id, provider, account_key, display_name,
+                        authorization_state, created_at, updated_at
+                    ) VALUES (?, 'google_tasks', ?, 'Fixture Google',
+                        'authorized', ?, ?)
+                    """,
+                arguments: ["account-\(suffix)", "google:\(suffix)", timestamp, timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO provider_items (
+                        id, account_id, entity_type, remote_id, remote_parent_id,
+                        cached_title, cached_notes, cached_completed,
+                        last_seen_at, created_at, updated_at
+                    ) VALUES (?, ?, 'task', ?, 'list', ?, '', 0, ?, ?, ?)
+                    """,
+                arguments: [
+                    "provider-item-\(suffix)", "account-\(suffix)",
+                    "remote-\(suffix)", "Task \(suffix)", timestamp,
+                    timestamp, timestamp
+                ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO task_bindings (
+                        id, provider_item_id, event_task_id, occurrence_key,
+                        sync_state, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'single:v1', 'linked', ?, ?)
+                    """,
+                arguments: [
+                    "binding-\(suffix)", "provider-item-\(suffix)",
+                    "task-\(suffix)", timestamp, timestamp
+                ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO calendar_task_destinations (
+                        calendar_identifier, provider_account_id, remote_parent_id,
+                        enabled, fallback_to_local, created_at, updated_at
+                    ) VALUES ('calendar', ?, 'list', 1, 1, ?, ?)
+                    """,
+                arguments: ["account-\(suffix)", timestamp, timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO provider_sync_cursors (
+                        account_id, cursor_key, cursor_value, updated_at
+                    ) VALUES (?, 'tasks', 'cursor', ?)
+                    """,
+                arguments: ["account-\(suffix)", timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO provider_pending_operations (
+                        id, account_id, operation, remote_id, remote_parent_id,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'delete', ?, 'list', ?, ?)
+                    """,
+                arguments: [
+                    "pending-\(suffix)", "account-\(suffix)",
+                    "delete-\(suffix)", timestamp, timestamp
+                ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO context_references (
+                        id, context_id, provider, url, title_cache, state,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'web', 'https://example.invalid/reference',
+                        'Fixture reference', 'active', ?, ?)
+                    """,
+                arguments: ["reference-\(suffix)", contextID, timestamp, timestamp]
+            )
         }
     }
 
@@ -599,6 +871,13 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 "personal_tasks",
                 "event_change_log",
                 "calendar_preferences",
+                "provider_accounts",
+                "provider_items",
+                "task_bindings",
+                "calendar_task_destinations",
+                "provider_sync_cursors",
+                "provider_pending_operations",
+                "context_references",
             ].map { table in
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table)") ?? 0
             }

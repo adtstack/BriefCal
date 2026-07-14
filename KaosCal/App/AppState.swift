@@ -276,8 +276,10 @@ final class AppState: ObservableObject {
     @Published private(set) var localDataOperationMessage: String?
     @Published private(set) var eventBriefState: EventBriefState = .noSelection
     @Published private(set) var selectedEventNotes = ""
+    @Published private(set) var selectedReferences: [ContextReference] = []
     @Published private(set) var notesSaveState: NotesSaveState = .idle
     @Published private(set) var taskCenterState: TaskCenterState = .unavailable
+    @Published private(set) var taskProviderCoordinator: TaskProviderCoordinator?
     @Published private(set) var recoveryBriefs: [EventBriefSnapshot] = []
     @Published private(set) var linkedEventRecoverySession: LinkedEventRecoverySession?
     @Published private(set) var pendingRelinkContextID: String?
@@ -316,6 +318,7 @@ final class AppState: ObservableObject {
         now: @escaping () -> Date = Date.init,
         calendarProvider: CalendarProviding? = nil,
         contextStore: ContextStore? = nil,
+        taskProviderCoordinator: TaskProviderCoordinator? = nil,
         localContextStoreState: LocalContextStoreState = .unavailable,
         localDataImportOperation: @escaping LocalDataImportOperation = {
             service, archiveURL, automaticBackupDirectory, now, appVersion in
@@ -340,6 +343,7 @@ final class AppState: ObservableObject {
         self.now = now
         self.calendarProvider = calendarProvider
         self.contextStore = contextStore
+        self.taskProviderCoordinator = taskProviderCoordinator
         self.localContextStoreState = localContextStoreState
         self.localDataImportOperation = localDataImportOperation
         self.localDataResetOperation = localDataResetOperation
@@ -350,6 +354,9 @@ final class AppState: ObservableObject {
             Task { @MainActor [weak self] in
                 self?.scheduleStoreRefresh()
             }
+        }
+        taskProviderCoordinator?.onLocalProjectionChange = { [weak self] in
+            self?.scheduleTaskProviderRefresh()
         }
         loadCalendarRolePreferences()
     }
@@ -460,6 +467,58 @@ final class AppState: ObservableObject {
             refreshTaskCenter()
         }
         visiblePeriodDidChange()
+    }
+
+    /// Opens the exact Event Brief context referenced by a Microsoft To Do
+    /// linkedResource. A task URL never guesses from title or email: it starts
+    /// from the locally bound event task, then performs the existing strong
+    /// Calendar lookup before changing selection.
+    func openTaskDeepLink(_ url: URL) async {
+        guard url.scheme?.lowercased() == "kaoscal",
+              url.host?.lowercased() == "task" else {
+            return
+        }
+        let taskID = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !taskID.isEmpty,
+              let contextStore,
+              let task = try? contextStore.eventTasks.fetch(id: taskID),
+              let brief = try? contextStore.eventContexts.fetchBrief(
+                contextID: task.contextID
+              ) else {
+            localOperationError = "The task link no longer points to a local Event Brief."
+            select(.tasks)
+            return
+        }
+        guard calendarAuthorizationState.canReadEvents else {
+            localOperationError = "Calendar access is required to open the event linked from this task."
+            select(.tasks)
+            return
+        }
+        do {
+            switch try calendarProvider.lookupEvent(
+                brief.link.calendarEventLookupQuery()
+            ) {
+            case let .found(match), let .cancelled(match):
+                await focusLinkedEvent(match.event, contextID: task.contextID)
+            case .notFound:
+                linkedEventRecoverySession = LinkedEventRecoverySession(
+                    brief: brief,
+                    stage: .firstMissing
+                )
+                select(.tasks)
+                localOperationError = "The linked calendar event could not be found. The local Event Brief was kept."
+            case .candidates, .ambiguous, .inconclusive:
+                linkedEventRecoverySession = LinkedEventRecoverySession(
+                    brief: brief,
+                    stage: .manualRelink
+                )
+                select(.tasks)
+                localOperationError = "KaosCal could not safely identify the calendar event for this task link. Choose a replacement event to relink it."
+            }
+        } catch {
+            localOperationError = Self.message(for: error)
+            select(.tasks)
+        }
     }
 
     func selectTaskFilter(_ filter: TaskFilter) {
@@ -855,16 +914,26 @@ final class AppState: ObservableObject {
         section: EventTaskSection,
         title: String
     ) {
-        performLocalMutation {
+        var createdTask: EventTask?
+        let didCreate = performLocalMutation {
             guard let event = activeBriefEvent,
                   let contextStore else {
                 throw ContextStoreError.missingContext("selected-event")
             }
             flushPendingEventNotes()
-            _ = try contextStore.appendEventTask(
+            createdTask = try contextStore.appendEventTask(
                 for: event,
                 section: section,
                 title: title
+            )
+        }
+        if didCreate, let createdTask,
+           let contextStore,
+           let taskProviderCoordinator {
+            taskProviderCoordinator.syncEventTask(
+                in: contextStore,
+                contextID: createdTask.contextID,
+                task: createdTask
             )
         }
     }
@@ -873,7 +942,7 @@ final class AppState: ObservableObject {
         id taskID: String,
         isCompleted: Bool
     ) {
-        performSelectedEventTaskMutation(taskID: taskID) {
+        let didUpdate = performSelectedEventTaskMutation(taskID: taskID) {
             contextStore, contextID, task in
             _ = try contextStore.setEventTaskCompleted(
                 contextID: contextID,
@@ -881,11 +950,14 @@ final class AppState: ObservableObject {
                 isCompleted: isCompleted
             )
         }
+        if didUpdate {
+            scheduleTaskProviderSync(eventTaskID: taskID)
+        }
     }
 
     @discardableResult
     func renameSelectedEventTask(id taskID: String, title: String) -> Bool {
-        performSelectedEventTaskMutation(taskID: taskID) {
+        let didUpdate = performSelectedEventTaskMutation(taskID: taskID) {
             contextStore, contextID, task in
             _ = try contextStore.updateEventTask(
                 contextID: contextID,
@@ -896,13 +968,17 @@ final class AppState: ObservableObject {
                 due: Self.duePolicy(for: task)
             )
         }
+        if didUpdate {
+            scheduleTaskProviderSync(eventTaskID: taskID)
+        }
+        return didUpdate
     }
 
     func moveSelectedEventTask(
         id taskID: String,
         to section: EventTaskSection
     ) {
-        performSelectedEventTaskMutation(taskID: taskID) {
+        let didUpdate = performSelectedEventTaskMutation(taskID: taskID) {
             contextStore, contextID, task in
             _ = try contextStore.updateEventTask(
                 contextID: contextID,
@@ -913,14 +989,76 @@ final class AppState: ObservableObject {
                 due: Self.duePolicy(for: task)
             )
         }
+        if didUpdate {
+            scheduleTaskProviderSync(eventTaskID: taskID)
+        }
+    }
+
+    @discardableResult
+    func addSelectedReference(urlString: String, title: String) -> Bool {
+        let didAdd = performLocalMutation {
+            guard let contextStore,
+                  case let .loaded(snapshot) = eventBriefState,
+                  let url = URL(string: urlString) else {
+                throw TaskProviderError.providerFailure("Add a valid HTTP or HTTPS URL.")
+            }
+            _ = try contextStore.references.add(
+                contextID: snapshot.context.id,
+                provider: url.host?.contains("notion.") == true ? .notion : .web,
+                url: url,
+                title: title.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        return didAdd
+    }
+
+    @discardableResult
+    func deleteSelectedReference(id: String) -> Bool {
+        performLocalMutation {
+            guard let contextStore,
+                  case let .loaded(snapshot) = eventBriefState else {
+                throw TaskProviderError.providerFailure("The Event Brief is not available.")
+            }
+            try contextStore.references.delete(id: id, contextID: snapshot.context.id)
+        }
     }
 
     @discardableResult
     func deleteSelectedEventTask(id taskID: String) -> Bool {
         performSelectedEventTaskMutation(taskID: taskID) {
             contextStore, contextID, task in
+            try taskProviderCoordinator?.deleteRemoteTaskIfBound(
+                eventTaskID: task.id
+            )
             try contextStore.deleteEventTask(
                 contextID: contextID,
+                taskID: task.id
+            )
+        }
+    }
+
+    /// Uses the async provider path before removing the local task. This is
+    /// used by the UI so OAuth-backed tasks never become local-only merely
+    /// because a remote delete was still in flight.
+    @discardableResult
+    func deleteSelectedEventTaskAfterRemoteDelete(id taskID: String) async -> Bool {
+        guard let contextStore,
+              case let .loaded(snapshot) = eventBriefState,
+              let task = snapshot.tasks.first(where: { $0.id == taskID }) else {
+            localOperationError = "The Event Brief task is no longer available."
+            return false
+        }
+        do {
+            try await taskProviderCoordinator?.deleteRemoteTaskIfBoundAsync(
+                eventTaskID: task.id
+            )
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+        return performLocalMutation {
+            try contextStore.deleteEventTask(
+                contextID: snapshot.context.id,
                 taskID: task.id
             )
         }
@@ -959,7 +1097,7 @@ final class AppState: ObservableObject {
         _ id: TaskCenterItemID,
         isCompleted: Bool
     ) {
-        performLocalMutation {
+        let didUpdate = performLocalMutation {
             guard let contextStore else {
                 throw ContextStoreError.missingPersonalTask("local-store")
             }
@@ -968,6 +1106,9 @@ final class AppState: ObservableObject {
                 isCompleted: isCompleted
             )
         }
+        if didUpdate, case let .eventTask(taskID, _) = id {
+            scheduleTaskProviderSync(eventTaskID: taskID)
+        }
     }
 
     @discardableResult
@@ -975,7 +1116,7 @@ final class AppState: ObservableObject {
         _ id: TaskCenterItemID,
         title: String
     ) -> Bool {
-        performLocalMutation {
+        let didUpdate = performLocalMutation {
             guard let contextStore else {
                 throw ContextStoreError.missingPersonalTask("local-store")
             }
@@ -1007,6 +1148,10 @@ final class AppState: ObservableObject {
                 }
             }
         }
+        if didUpdate, case let .eventTask(taskID, _) = id {
+            scheduleTaskProviderSync(eventTaskID: taskID)
+        }
+        return didUpdate
     }
 
     @discardableResult
@@ -1056,6 +1201,9 @@ final class AppState: ObservableObject {
             }
             switch id {
             case let .eventTask(taskID, contextID):
+                try taskProviderCoordinator?.deleteRemoteTaskIfBound(
+                    eventTaskID: taskID
+                )
                 try contextStore.deleteEventTask(
                     contextID: contextID,
                     taskID: taskID
@@ -1066,6 +1214,33 @@ final class AppState: ObservableObject {
                 }
                 try contextStore.personalTasks.delete(id: taskID)
             }
+        }
+    }
+
+    @discardableResult
+    func deleteTaskCenterItemAfterRemoteDelete(
+        _ id: TaskCenterItemID
+    ) async -> Bool {
+        guard case let .eventTask(taskID, contextID) = id else {
+            return deleteTaskCenterItem(id)
+        }
+        guard let contextStore else {
+            localOperationError = "KaosCal local data is unavailable."
+            return false
+        }
+        do {
+            try await taskProviderCoordinator?.deleteRemoteTaskIfBoundAsync(
+                eventTaskID: taskID
+            )
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+        return performLocalMutation {
+            try contextStore.deleteEventTask(
+                contextID: contextID,
+                taskID: taskID
+            )
         }
     }
 
@@ -2553,12 +2728,17 @@ final class AppState: ObservableObject {
         case .empty:
             eventBriefState = .empty
             persistedEventNotes = ""
+            selectedReferences = []
         case let .loaded(snapshot, _):
             eventBriefState = .loaded(snapshot)
             persistedEventNotes = snapshot.context.notes
+            selectedReferences = (try? contextStore?.references.fetch(
+                contextID: snapshot.context.id
+            )) ?? []
         case let .confirmationRequired(contextIDs, _):
             eventBriefState = .confirmationRequired(contextIDs)
             persistedEventNotes = ""
+            selectedReferences = []
         }
 
         if let failedDraft = failedNotesDrafts[eventID] {
@@ -2625,6 +2805,26 @@ final class AppState: ObservableObject {
             }
             try operation(contextStore, snapshot.context.id, task)
         }
+    }
+
+    private func scheduleTaskProviderSync(eventTaskID: String) {
+        guard let contextStore,
+              let taskProviderCoordinator,
+              let task = try? contextStore.eventTasks.fetch(id: eventTaskID) else {
+            return
+        }
+        taskProviderCoordinator.syncEventTask(
+            in: contextStore,
+            contextID: task.contextID,
+            task: task
+        )
+    }
+
+    private func scheduleTaskProviderRefresh() {
+        guard let contextStore, let taskProviderCoordinator else { return }
+        taskProviderCoordinator.refreshLinkedTasks(in: contextStore)
+        refreshTaskCenter()
+        loadSelectedEventBrief()
     }
 
     @discardableResult

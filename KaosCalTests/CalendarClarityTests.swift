@@ -368,7 +368,11 @@ final class CalendarClarityTests: XCTestCase {
             [
                 "v1_context_store",
                 "v2_event_change_log",
-                "v3_calendar_clarity"
+                "v3_calendar_clarity",
+                "v4_task_provider",
+                "v5_oauth_task_providers",
+                "v6_context_references",
+                "v7_microsoft_to_do_provider"
             ]
         )
         XCTAssertEqual(

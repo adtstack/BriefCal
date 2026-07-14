@@ -12,10 +12,469 @@ final class ContextStoreTests: XCTestCase {
             [
                 "v1_context_store",
                 "v2_event_change_log",
-                "v3_calendar_clarity"
+                "v3_calendar_clarity",
+                "v4_task_provider",
+                "v5_oauth_task_providers",
+                "v6_context_references",
+                "v7_microsoft_to_do_provider"
             ]
         )
         XCTAssertTrue(try database.foreignKeysEnabled())
+    }
+
+    func testOAuthProvidersCanUseTheSameExternalAccountKey() throws {
+        let database = try AppDatabase.inMemory()
+        let repository = TaskProviderRepository(
+            database: database,
+            now: { self.date(2026, 7, 14, 9) },
+            makeID: { UUID().uuidString }
+        )
+
+        let google = try repository.upsertAccount(
+            provider: .googleTasks,
+            accountKey: "shared-subject",
+            displayName: "Google account",
+            authorizationState: .authorized
+        )
+        let todoist = try repository.upsertAccount(
+            provider: .todoist,
+            accountKey: "shared-subject",
+            displayName: "Todoist account",
+            authorizationState: .authorized
+        )
+        let microsoft = try repository.upsertAccount(
+            provider: .microsoftToDo,
+            accountKey: "shared-subject",
+            displayName: "Microsoft account",
+            authorizationState: .authorized
+        )
+
+        XCTAssertNotEqual(google.id, todoist.id)
+        XCTAssertNotEqual(todoist.id, microsoft.id)
+        XCTAssertEqual(
+            try repository.fetchAccounts().map {
+                "\($0.provider.rawValue):\($0.accountKey)"
+            }.sorted(),
+            [
+                "google_tasks:shared-subject",
+                "microsoft_to_do:shared-subject",
+                "todoist:shared-subject"
+            ]
+        )
+    }
+
+    func testOAuthAuthorizationRequestUsesPKCEAndProviderSpecificRedirectRules() throws {
+        let configuration = OAuthProviderConfiguration(
+            provider: .googleTasks,
+            clientID: "desktop-client.apps.googleusercontent.com",
+            redirectURI: try XCTUnwrap(
+                URL(string: "http://127.0.0.1:43891/oauth/callback")
+            )
+        )
+        let request = try OAuthAuthorizationRequest.make(
+            configuration: configuration,
+            state: "state-for-test",
+            pkce: OAuthPKCEChallenge.make(
+                verifier: String(repeating: "a", count: 64)
+            )
+        )
+        let query = try XCTUnwrap(
+            URLComponents(
+                url: request.url,
+                resolvingAgainstBaseURL: false
+            )?.queryItems
+        )
+        let values = Dictionary(uniqueKeysWithValues: query.map { ($0.name, $0.value) })
+
+        XCTAssertEqual(values["state"], "state-for-test")
+        XCTAssertEqual(values["code_challenge_method"], "S256")
+        XCTAssertEqual(values["redirect_uri"], configuration.redirectURI.absoluteString)
+        XCTAssertTrue(
+            (query.first(where: { $0.name == "scope" })?.value ?? "")
+                .contains("https://www.googleapis.com/auth/tasks")
+        )
+        let tokenRequest = OAuthTokenExchange.authorizationCodeRequest(
+            configuration: configuration,
+            code: "code with reserved&characters",
+            pkce: request.pkce
+        )
+        XCTAssertEqual(tokenRequest.url?.host, "oauth2.googleapis.com")
+        let tokenBody = try XCTUnwrap(
+            tokenRequest.httpBody.flatMap { String(data: $0, encoding: .utf8) }
+        )
+        XCTAssertTrue(tokenBody.contains("code=code%20with%20reserved%26characters"))
+        XCTAssertTrue(tokenBody.contains("code_verifier="))
+        XCTAssertFalse(tokenBody.contains("client_secret"))
+        XCTAssertEqual(
+            try OAuthAuthorizationCallback.authorizationCode(
+                from: try XCTUnwrap(URL(string: "http://127.0.0.1/callback?state=state-for-test&code=returned-code")),
+                expectedState: "state-for-test"
+            ),
+            "returned-code"
+        )
+        XCTAssertThrowsError(
+            try OAuthAuthorizationCallback.authorizationCode(
+                from: try XCTUnwrap(URL(string: "http://127.0.0.1/callback?state=wrong&code=returned-code")),
+                expectedState: "state-for-test"
+            )
+        )
+        XCTAssertThrowsError(
+            try OAuthAuthorizationRequest.make(
+                configuration: OAuthProviderConfiguration(
+                    provider: .googleTasks,
+                    clientID: "client",
+                    redirectURI: try XCTUnwrap(URL(string: "kaoscal://oauth"))
+                ),
+                pkce: request.pkce
+            )
+        )
+    }
+
+    func testContextReferencesStoreOnlyURLMetadataAndCascadeWithContext() throws {
+        let harness = try makeHarness()
+        let event = makeEvent(id: "reference-context")
+        let task = try harness.store.appendEventTask(
+            for: event,
+            section: .before,
+            title: "Create context"
+        )
+        let reference = try harness.store.references.add(
+            contextID: task.contextID,
+            provider: .web,
+            url: try XCTUnwrap(URL(string: "https://example.invalid/brief")),
+            title: "Project brief"
+        )
+
+        XCTAssertEqual(
+            try harness.store.references.fetch(contextID: task.contextID),
+            [reference]
+        )
+        try harness.store.eventContexts.delete(contextID: task.contextID)
+        XCTAssertTrue(
+            try harness.store.references.fetch(contextID: task.contextID).isEmpty
+        )
+    }
+
+    func testGoogleTasksRequestsUseTasksV1ETagAndBearerBoundaries() throws {
+        let request = try GoogleTasksAPI.updateTaskRequest(
+            listID: "list/one",
+            taskID: "task one",
+            patch: RemoteTaskPatch(title: "Updated", notes: nil, dueAt: nil, isCompleted: true),
+            expectedETag: "etag-value",
+            accessToken: "test-token"
+        )
+        XCTAssertEqual(request.url?.host, "tasks.googleapis.com")
+        XCTAssertTrue(request.url?.path.contains("/tasks/v1/lists/") == true)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-token")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "If-Match"), "etag-value")
+        let nextPage = GoogleTasksAPI.taskListsRequest(
+            accessToken: "test-token",
+            pageToken: "cursor value"
+        )
+        XCTAssertEqual(
+            URLComponents(url: nextPage.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first?.value,
+            "cursor value"
+        )
+        let body = try XCTUnwrap(request.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        XCTAssertEqual(body["title"] as? String, "Updated")
+        XCTAssertEqual(body["status"] as? String, "completed")
+    }
+
+    func testTodoistV1RequestsKeepProjectSectionAndCompletionSeparate() throws {
+        let create = try TodoistAPI.createTaskRequest(
+            parentID: "section:section-id",
+            title: "Follow up",
+            description: "Local description",
+            dueAt: nil,
+            accessToken: "todoist-token"
+        )
+        XCTAssertEqual(create.url?.path, "/api/v1/tasks")
+        let createBody = try XCTUnwrap(create.httpBody.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] })
+        XCTAssertEqual(createBody["section_id"] as? String, "section-id")
+        XCTAssertNil(createBody["project_id"])
+        let completion = TodoistAPI.completionRequest(id: "task-id", completed: true, accessToken: "todoist-token")
+        XCTAssertEqual(completion.url?.path, "/api/v1/tasks/task-id/close")
+        XCTAssertEqual(completion.httpMethod, "POST")
+        XCTAssertEqual(completion.value(forHTTPHeaderField: "Authorization"), "Bearer todoist-token")
+        let sections = TodoistAPI.sectionsRequest(
+            accessToken: "todoist-token",
+            cursor: "section-cursor"
+        )
+        XCTAssertEqual(sections.url?.path, "/api/v1/sections")
+        XCTAssertEqual(
+            URLComponents(url: sections.url!, resolvingAgainstBaseURL: false)?
+                .queryItems?.first?.value,
+            "section-cursor"
+        )
+        let completed = TodoistAPI.completedTasksRequest(
+            parentID: "section:section-id",
+            since: Date(timeIntervalSince1970: 0),
+            until: Date(timeIntervalSince1970: 3_600),
+            accessToken: "todoist-token"
+        )
+        let completedItems = URLComponents(
+            url: completed.url!,
+            resolvingAgainstBaseURL: false
+        )?.queryItems
+        XCTAssertEqual(completed.url?.path, "/api/v1/tasks/completed/by_completion_date")
+        XCTAssertEqual(
+            completedItems?.first(where: { $0.name == "section_id" })?.value,
+            "section-id"
+        )
+    }
+
+    func testMicrosoftToDoDeltaKeepsOpaqueCursorAndUsesETagOnWrite() throws {
+        let initial = MicrosoftToDoAPI.deltaRequest(
+            listID: "list-id",
+            deltaLink: nil,
+            accessToken: "graph-token"
+        )
+        XCTAssertEqual(initial.url?.path, "/v1.0/me/todo/lists/list-id/tasks/delta")
+        let opaque = try XCTUnwrap(URL(string: "https://graph.microsoft.com/v1.0/me/todo/lists/list-id/tasks/delta?$deltatoken=opaque%2Fcursor"))
+        let next = MicrosoftToDoAPI.deltaRequest(listID: "ignored", deltaLink: opaque, accessToken: "graph-token")
+        XCTAssertEqual(next.url, opaque)
+        let update = try MicrosoftToDoAPI.updateTaskRequest(
+            listID: "list-id", taskID: "task-id",
+            patch: RemoteTaskPatch(title: "Graph task", notes: nil, dueAt: nil, isCompleted: true),
+            expectedVersion: "W/\"etag\"", accessToken: "graph-token"
+        )
+        XCTAssertEqual(update.value(forHTTPHeaderField: "If-Match"), "W/\"etag\"")
+        XCTAssertEqual(update.httpMethod, "PATCH")
+        let listNext = try XCTUnwrap(URL(string: "https://graph.microsoft.com/v1.0/me/todo/lists?$skiptoken=opaque"))
+        XCTAssertEqual(
+            MicrosoftToDoAPI.listsRequest(
+                accessToken: "graph-token",
+                nextLink: listNext
+            ).url,
+            listNext
+        )
+    }
+
+    @MainActor
+    func testProvidersFollowAllListPagesAndExposeTodoistSections() async throws {
+        let googleCredential = OAuthCredential(
+            provider: .googleTasks, accessToken: "google", refreshToken: nil,
+            expiresAt: nil, accountKey: "google-sub", displayName: "Google", scopes: []
+        )
+        let googleTransport = URLStubOAuthTransport(responses: [
+            "https://tasks.googleapis.com/tasks/v1/users/@me/lists": Self.httpResponse(
+                host: "tasks.googleapis.com",
+                json: #"{"items":[{"id":"g1","title":"First"}],"nextPageToken":"second"}"#
+            ),
+            "https://tasks.googleapis.com/tasks/v1/users/@me/lists?pageToken=second": Self.httpResponse(
+                host: "tasks.googleapis.com",
+                json: #"{"items":[{"id":"g2","title":"Second"}]}"#
+            )
+        ])
+        let google = GoogleTasksProvider(
+            session: OAuthTaskProviderSession(
+                configuration: try Self.oauthConfiguration(.googleTasks),
+                credentials: InMemoryOAuthCredentialStore([.googleTasks: googleCredential]),
+                transport: googleTransport
+            ), accountKey: googleCredential.accountKey, displayName: googleCredential.displayName
+        )
+        let googleLists = try await google.listTaskLists()
+        XCTAssertEqual(googleLists.map { $0.id }, ["g1", "g2"])
+
+        let todoistCredential = OAuthCredential(
+            provider: .todoist, accessToken: "todoist", refreshToken: nil,
+            expiresAt: nil, accountKey: "todoist-id", displayName: "Todoist", scopes: []
+        )
+        let todoistTransport = URLStubOAuthTransport(responses: [
+            "https://api.todoist.com/api/v1/projects": Self.httpResponse(
+                host: "api.todoist.com",
+                json: #"{"results":[{"id":"p1","name":"Inbox"}],"next_cursor":"project-next"}"#
+            ),
+            "https://api.todoist.com/api/v1/projects?cursor=project-next": Self.httpResponse(
+                host: "api.todoist.com",
+                json: #"{"results":[{"id":"p2","name":"Work"}],"next_cursor":null}"#
+            ),
+            "https://api.todoist.com/api/v1/sections": Self.httpResponse(
+                host: "api.todoist.com",
+                json: #"{"results":[{"id":"s1","project_id":"p2","name":"Today"}],"next_cursor":null}"#
+            )
+        ])
+        let todoist = TodoistTasksProvider(
+            session: OAuthTaskProviderSession(
+                configuration: try Self.oauthConfiguration(.todoist),
+                credentials: InMemoryOAuthCredentialStore([.todoist: todoistCredential]),
+                transport: todoistTransport
+            ), accountKey: todoistCredential.accountKey, displayName: todoistCredential.displayName
+        )
+        let todoistLists = try await todoist.listTaskLists()
+        XCTAssertEqual(todoistLists.map { $0.id }, ["project:p1", "project:p2", "section:s1"])
+    }
+
+    @MainActor
+    func testTodoistLookupTreatsRecentRemoteCompletionAsCompletedNotMissing() async throws {
+        let now = Date(timeIntervalSince1970: 1_752_000_000)
+        let credential = OAuthCredential(
+            provider: .todoist, accessToken: "todoist", refreshToken: nil,
+            expiresAt: nil, accountKey: "todoist-id", displayName: "Todoist", scopes: []
+        )
+        let activeURL = TodoistAPI.taskRequest(id: "done", accessToken: "todoist")
+            .url!.absoluteString
+        let completedURL = TodoistAPI.completedTasksRequest(
+            parentID: "project:p1",
+            since: Calendar(identifier: .gregorian).date(
+                byAdding: .day, value: -90, to: now
+            )!,
+            until: now,
+            accessToken: "todoist"
+        ).url!.absoluteString
+        let transport = URLStubOAuthTransport(responses: [
+            activeURL: Self.httpResponse(
+                host: "api.todoist.com", json: "{}", statusCode: 404
+            ),
+            completedURL: Self.httpResponse(
+                host: "api.todoist.com",
+                json: #"{"items":[{"id":"done","content":"Done remotely","description":"","project_id":"p1","completed_at":"2026-07-14T00:00:00Z","updated_at":"2026-07-14T00:00:00Z"}],"next_cursor":null}"#
+            )
+        ])
+        let provider = TodoistTasksProvider(
+            session: OAuthTaskProviderSession(
+                configuration: try Self.oauthConfiguration(.todoist),
+                credentials: InMemoryOAuthCredentialStore([.todoist: credential]),
+                transport: transport
+            ),
+            accountKey: credential.accountKey,
+            displayName: credential.displayName,
+            now: { now }
+        )
+
+        let task = try await provider.lookupTask(id: "done", parentID: "project:p1")
+
+        XCTAssertEqual(task?.title, "Done remotely")
+        XCTAssertTrue(task?.isCompleted == true)
+    }
+
+    func testOAuthConnectionDerivesGoogleSubjectBeforeSavingCredential() async throws {
+        let configuration = OAuthProviderConfiguration(
+            provider: .googleTasks,
+            clientID: "client-id",
+            redirectURI: try XCTUnwrap(URL(string: "http://127.0.0.1:43891/oauth/callback"))
+        )
+        let credentialStore = InMemoryOAuthCredentialStore()
+        let transport = StubOAuthTransport(responses: [
+            "oauth2.googleapis.com": Self.httpResponse(
+                host: "oauth2.googleapis.com",
+                json: """
+                {"access_token":"access","refresh_token":"refresh","expires_in":3600,"scope":"openid email profile https://www.googleapis.com/auth/tasks"}
+                """
+            ),
+            "openidconnect.googleapis.com": Self.httpResponse(
+                host: "openidconnect.googleapis.com",
+                json: """
+                {"sub":"google-subject","name":"Google User","email":"person@example.invalid"}
+                """
+            )
+        ])
+
+        let credential = try await OAuthProviderConnection.connect(
+            configuration: configuration,
+            code: "code",
+            pkce: OAuthPKCEChallenge.make(verifier: String(repeating: "a", count: 64)),
+            credentials: credentialStore,
+            transport: transport,
+            now: { self.date(2026, 7, 14, 9) }
+        )
+
+        XCTAssertEqual(credential.accountKey, "google-subject")
+        XCTAssertEqual(credential.displayName, "Google User")
+        XCTAssertEqual(
+            try credentialStore.loadCredential(for: .googleTasks),
+            credential
+        )
+    }
+
+    func testOAuthSessionRefreshesOnceAfterUnexpected401ThenReplaysRequest() async throws {
+        let credential = OAuthCredential(
+            provider: .googleTasks,
+            accessToken: "old-access",
+            refreshToken: "refresh-token",
+            expiresAt: Date.distantFuture,
+            accountKey: "subject",
+            displayName: "Google",
+            scopes: []
+        )
+        let credentialStore = InMemoryOAuthCredentialStore([.googleTasks: credential])
+        let transport = QueuedOAuthTransport(responses: [
+            Self.httpResponse(host: "service.invalid", json: "{}", statusCode: 401),
+            Self.httpResponse(
+                host: "oauth2.googleapis.com",
+                json: #"{"access_token":"new-access","refresh_token":"rotated","expires_in":3600}"#
+            ),
+            Self.httpResponse(host: "service.invalid", json: #"{"ok":true}"#)
+        ])
+        let session = OAuthTaskProviderSession(
+            configuration: try Self.oauthConfiguration(.googleTasks),
+            credentials: credentialStore,
+            transport: transport,
+            now: { Date(timeIntervalSince1970: 1_752_000_000) }
+        )
+
+        let (_, response) = try await session.send { token in
+            var request = URLRequest(url: URL(string: "https://service.invalid/task")!)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            return request
+        }
+
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertEqual(
+            try credentialStore.loadCredential(for: .googleTasks)?.accessToken,
+            "new-access"
+        )
+        XCTAssertEqual(transport.requestCount, 3)
+    }
+
+    @MainActor
+    func testMicrosoftProviderAppliesDeltaTombstonesAndOpaqueCursor() async throws {
+        let credential = OAuthCredential(
+            provider: .microsoftToDo,
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAt: nil,
+            accountKey: "tenant:object",
+            displayName: "Microsoft User",
+            scopes: ["Tasks.ReadWrite"]
+        )
+        let credentialStore = InMemoryOAuthCredentialStore([.microsoftToDo: credential])
+        let cursor = "https://graph.microsoft.com/v1.0/me/todo/lists/list/tasks/delta?$deltatoken=opaque%2Fvalue"
+        let transport = StubOAuthTransport(responses: [
+            "graph.microsoft.com": Self.httpResponse(
+                host: "graph.microsoft.com",
+                json: """
+                {
+                  "@odata.deltaLink":"\(cursor)",
+                  "value":[
+                    {"id":"changed","title":"Updated","status":"completed","@odata.etag":"W/\\\"etag\\\"","body":{"content":""}},
+                    {"id":"deleted","@removed":{"reason":"deleted"}}
+                  ]
+                }
+                """
+            )
+        ])
+        let provider = MicrosoftToDoProvider(
+            session: OAuthTaskProviderSession(
+                configuration: OAuthProviderConfiguration(
+                    provider: .microsoftToDo,
+                    clientID: "client-id",
+                    redirectURI: try XCTUnwrap(URL(string: "http://127.0.0.1:43891/oauth/callback"))
+                ),
+                credentials: credentialStore,
+                transport: transport
+            ),
+            accountKey: credential.accountKey,
+            displayName: credential.displayName
+        )
+
+        let delta = try await provider.fetchDelta(listID: "list", cursor: nil)
+
+        XCTAssertEqual(delta.deletedTaskIDs, ["deleted"])
+        XCTAssertEqual(delta.tasks.map(\.id), ["changed"])
+        XCTAssertTrue(delta.tasks[0].isCompleted)
+        XCTAssertEqual(delta.cursor?.absoluteString, cursor)
     }
 
     func testChangeLogMigrationEnforcesChecksForeignKeysAndUndoUniqueness() throws {
@@ -2903,7 +3362,11 @@ final class ContextStoreTests: XCTestCase {
                 [
                     "v1_context_store",
                     "v2_event_change_log",
-                    "v3_calendar_clarity"
+                    "v3_calendar_clarity",
+                "v4_task_provider",
+                "v5_oauth_task_providers",
+                "v6_context_references",
+                "v7_microsoft_to_do_provider"
                 ]
             )
             XCTAssertEqual(brief.context.notes, "Persistent notes")
@@ -3483,5 +3946,103 @@ private final class IDSequence {
         }
         fallback += 1
         return "fallback-\(fallback)"
+    }
+}
+
+private final class InMemoryOAuthCredentialStore: OAuthCredentialStoring {
+    private var credentials: [TaskProviderKind: OAuthCredential]
+
+    init(_ credentials: [TaskProviderKind: OAuthCredential] = [:]) {
+        self.credentials = credentials
+    }
+
+    func loadCredential(for provider: TaskProviderKind) throws -> OAuthCredential? {
+        credentials[provider]
+    }
+
+    func saveCredential(_ credential: OAuthCredential) throws {
+        credentials[credential.provider] = credential
+    }
+
+    func deleteCredential(for provider: TaskProviderKind) throws {
+        credentials[provider] = nil
+    }
+}
+
+private final class StubOAuthTransport: OAuthHTTPTransport {
+    private var responses: [String: (Data, HTTPURLResponse)]
+
+    init(responses: [String: (Data, HTTPURLResponse)]) {
+        self.responses = responses
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        guard let host = request.url?.host, let response = responses[host] else {
+            throw TaskProviderError.providerFailure("Unexpected OAuth test request.")
+        }
+        return response
+    }
+}
+
+private final class URLStubOAuthTransport: OAuthHTTPTransport {
+    private let responses: [String: (Data, HTTPURLResponse)]
+
+    init(responses: [String: (Data, HTTPURLResponse)]) {
+        self.responses = responses
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        guard let key = request.url?.absoluteString,
+              let response = responses[key] else {
+            throw TaskProviderError.providerFailure("Unexpected paged OAuth test request.")
+        }
+        return response
+    }
+}
+
+private final class QueuedOAuthTransport: OAuthHTTPTransport {
+    private var responses: [(Data, HTTPURLResponse)]
+    private(set) var requestCount = 0
+
+    init(responses: [(Data, HTTPURLResponse)]) {
+        self.responses = responses
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requestCount += 1
+        guard !responses.isEmpty else {
+            throw TaskProviderError.providerFailure("Unexpected OAuth retry request.")
+        }
+        return responses.removeFirst()
+    }
+}
+
+private extension ContextStoreTests {
+    static func oauthConfiguration(
+        _ provider: TaskProviderKind
+    ) throws -> OAuthProviderConfiguration {
+        OAuthProviderConfiguration(
+            provider: provider,
+            clientID: "test-client",
+            redirectURI: try XCTUnwrap(
+                URL(string: "http://127.0.0.1:43891/oauth/callback")
+            )
+        )
+    }
+
+    static func httpResponse(
+        host: String,
+        json: String,
+        statusCode: Int = 200
+    ) -> (Data, HTTPURLResponse) {
+        (
+            Data(json.utf8),
+            HTTPURLResponse(
+                url: URL(string: "https://\(host)/")!,
+                statusCode: statusCode,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+        )
     }
 }

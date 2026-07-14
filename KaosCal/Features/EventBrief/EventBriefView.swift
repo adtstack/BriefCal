@@ -119,6 +119,8 @@ struct EventBriefView: View {
             Divider()
 
             notesEditor
+
+            ContextReferenceSection(appState: appState)
         }
     }
 
@@ -239,6 +241,50 @@ struct EventBriefView: View {
                 .foregroundStyle(.red)
                 .lineLimit(2)
         }
+    }
+}
+
+private struct ContextReferenceSection: View {
+    @ObservedObject var appState: AppState
+    @State private var urlString = ""
+    @State private var title = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("References", systemImage: "link")
+                .font(.headline)
+            Text("Links stay local to this Event Brief. KaosCal does not copy remote page content.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(appState.selectedReferences) { reference in
+                HStack(spacing: 8) {
+                    Link(reference.titleCache.isEmpty ? reference.url.absoluteString : reference.titleCache, destination: reference.url)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(reference.state.rawValue)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Button(role: .destructive) {
+                        _ = appState.deleteSelectedReference(id: reference.id)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            HStack {
+                TextField("https://…", text: $urlString)
+                TextField("Title (optional)", text: $title)
+                Button("Add") {
+                    if appState.addSelectedReference(urlString: urlString, title: title) {
+                        urlString = ""
+                        title = ""
+                    }
+                }
+                .disabled(urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .accessibilityIdentifier("eventBrief.references")
     }
 }
 
@@ -375,8 +421,10 @@ private struct EventTaskRow: View {
         .alert("Delete this local task?", isPresented: $confirmsDeletion) {
             Button("Delete", role: .destructive) {
                 isDeleting = true
-                if !appState.deleteSelectedEventTask(id: task.id) {
-                    isDeleting = false
+                Task {
+                    if !(await appState.deleteSelectedEventTaskAfterRemoteDelete(id: task.id)) {
+                        isDeleting = false
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}

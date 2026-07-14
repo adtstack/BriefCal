@@ -78,6 +78,45 @@ enum EventTaskDueKind: String, Codable, CaseIterable, DatabaseValueConvertible {
     case fixed
 }
 
+enum ContextReferenceProvider: String, Codable, CaseIterable, DatabaseValueConvertible {
+    case web
+    case notion
+}
+
+enum ContextReferenceState: String, Codable, CaseIterable, DatabaseValueConvertible {
+    case active
+    case missing
+    case permissionRequired = "permission_required"
+    case disconnected
+}
+
+struct ContextReference: Equatable, Identifiable {
+    let id: String
+    let contextID: String
+    var provider: ContextReferenceProvider
+    var url: URL
+    var titleCache: String
+    var state: ContextReferenceState
+    var lastCheckedAt: Date?
+    let createdAt: Date
+    var updatedAt: Date
+}
+
+extension ContextReference: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "context_references"
+    enum CodingKeys: String, CodingKey {
+        case id
+        case contextID = "context_id"
+        case provider
+        case url
+        case titleCache = "title_cache"
+        case state
+        case lastCheckedAt = "last_checked_at"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
 enum RelativeTaskAnchor: String, Codable, CaseIterable, DatabaseValueConvertible {
     case beforeStart = "before_start"
     case atStart = "at_start"

@@ -594,6 +594,31 @@ Phase 9 Local Data 자동·Release gate:
 - 후속 live run `20260712-1616-KST`에서 exact Release의 620×652 Settings 전체 scroll, 880×448 Export/Import panel, 470×256 reset sheet와 `RESET` 입력 뒤 Delete 활성화를 **pass**했다. 모든 panel과 sheet는 취소했으며 실제 export/import/reset과 EventKit/Exchange write는 실행하지 않았다.
 - production DB open/migration 실패 상태의 bootstrap recovery는 이 gate에 포함하지 않고 Phase 10으로 유지한다.
 
+Phase 10 Paid Beta Polish 자동·수동 gate:
+
+- 첫 실행 onboarding이 Calendar password/MFA 비수집, local Event Brief, plaintext backup과
+  핵심 shortcut을 읽을 수 있게 표시하고 680×560 안에서 잘리지 않는지 확인
+- Day/Week에 event가 없을 때 grid를 유지하면서 명시적 empty-period 안내가 보이고,
+  `⌘R`이 현재 Tasks 또는 Calendar reload로 라우팅되는지 확인
+- invalid/corrupt/incompatible archive는 live DB byte와 `Recovery` 폴더를 만들기 전에
+  거부되는지 확인
+- valid current-schema archive는 기존 DB와 존재하는 WAL/SHM/journal을 같은 고유
+  quarantine folder로 이동하고 restored DB의 schema/integrity/FK와 fixture rows를 확인
+- replacement 설치/재오픈 검증 실패를 주입하면 새 파일군을 제거하고 원본 DB와 모든
+  sidecar byte를 되돌리는지 확인. rollback 자체 실패는 success로 표시하지 않음
+- bootstrap recovery가 EventKit provider write를 만들지 않고 성공 뒤 새 `AppState`가
+  일반 shell을 여는지 확인
+- signed Release의 실제 file panel, 손상 test-user DB, successful recovery와 quarantine,
+  invalid backup no-touch, power-loss/crash window는 별도 live/fault gate로 기록
+- onboarding/recovery의 keyboard focus order, Return/Escape, 긴 오류·경로, light/dark,
+  Reduce Motion/Increase Contrast와 VoiceOver label/action을 실제 창에서 확인
+- Developer ID/notary/staple/package/clean-user 설치, approved EULA와 support/privacy/security
+  contact가 없으면 자동·offscreen 통과와 무관하게 외부 beta를 차단
+- 현재 자동 checkpoint: **220 executed / 219 passed / 1 intentional manual-only skip /
+  0 failures / 0 unexpected**, `/private/tmp/KaosCalPhase10Tests.xcresult`
+- 현재 ad-hoc Release: `/private/tmp/KaosCalPhase10Release/Build/Products/Release/KaosCal.app`,
+  CDHash `4d7c1b5ad6dde65666f101cae00bdcb9d5b878ed`; Developer ID/notarized artifact가 아님
+
 Mini month 자동/Release gate:
 
 - Sunday/Monday-first, 윤년·연도 경계, New York DST 시작/종료, LA/Tokyo absolute-date 차이와 42개 고유 civil identifier 검증
