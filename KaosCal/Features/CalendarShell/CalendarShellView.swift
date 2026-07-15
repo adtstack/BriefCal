@@ -715,6 +715,7 @@ private struct SidebarView: View {
                     } else {
                         ForEach(appState.calendarSources) { source in
                             let role = appState.calendarRole(for: source)
+                            let usage = appState.calendarUsagePolicy(for: source)
                             let restriction = calendarRestriction(for: source)
 
                             HStack(spacing: 8) {
@@ -743,6 +744,55 @@ private struct SidebarView: View {
                                 }
 
                                 Spacer(minLength: 4)
+
+                                Button {
+                                    _ = appState.setCalendarVisibility(
+                                        !usage.isVisible,
+                                        for: source
+                                    )
+                                } label: {
+                                    Image(
+                                        systemName: usage.isVisible
+                                            ? "eye.fill"
+                                            : "eye.slash"
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(
+                                    usage.isVisible
+                                        ? KaosCalTheme.accent
+                                        : .secondary
+                                )
+                                .help(
+                                    usage.isVisible
+                                        ? "Hide this calendar from Day, Week, and Agenda"
+                                        : "Show this calendar in Day, Week, and Agenda"
+                                )
+                                .accessibilityLabel(
+                                    usage.isVisible
+                                        ? "Hide \(source.title) calendar"
+                                        : "Show \(source.title) calendar"
+                                )
+                                .accessibilityIdentifier(
+                                    "sidebar.calendar.\(source.id).visibility"
+                                )
+
+                                Image(
+                                    systemName: usage.blocksAvailability
+                                        ? "clock.fill"
+                                        : "clock"
+                                )
+                                .foregroundStyle(.secondary)
+                                .help(
+                                    usage.blocksAvailability
+                                        ? "Events in this calendar can block available time"
+                                        : "Events in this calendar do not block available time"
+                                )
+                                .accessibilityLabel(
+                                    usage.blocksAvailability
+                                        ? "Blocks available time"
+                                        : "Does not block available time"
+                                )
 
                                 if let restriction {
                                     Image(systemName: "lock")

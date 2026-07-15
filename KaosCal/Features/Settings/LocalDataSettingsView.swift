@@ -2,6 +2,240 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct CalendarUsageSettingsView: View {
+    @ObservedObject var appState: AppState
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Calendars")
+                        .font(.title2.weight(.semibold))
+                    Text(
+                        "Choose which calendars appear in KaosCal and which ones reserve time when availability is calculated. These choices are independent."
+                    )
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if appState.calendarAccounts.isEmpty {
+                    GroupBox {
+                        Text(
+                            "No calendars are loaded. Grant full Calendar access or refresh KaosCal, then return to this pane."
+                        )
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } label: {
+                        Label(
+                            "Calendar Access",
+                            systemImage: "calendar.badge.exclamationmark"
+                        )
+                    }
+                } else {
+                    ForEach(appState.calendarAccounts) { account in
+                        accountGroup(account)
+                    }
+                }
+
+                if let message = appState.localOperationError {
+                    Label(message, systemImage: "exclamationmark.triangle")
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(width: 620, height: 620)
+        .tint(KaosCalTheme.accent)
+        .accessibilityIdentifier("settings.calendars")
+    }
+
+    private func accountGroup(
+        _ account: CalendarAccountDescriptor
+    ) -> some View {
+        let shownCount = account.calendars.filter {
+            appState.calendarUsagePolicy(for: $0).isVisible
+        }.count
+        let blockingCount = account.calendars.filter {
+            appState.calendarUsagePolicy(for: $0).blocksAvailability
+        }.count
+
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(
+                        "\(shownCount) shown · \(blockingCount) block time"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                    Spacer()
+
+                    Menu("Account Actions") {
+                        Button("Show All") {
+                            _ = appState.setCalendarVisibility(
+                                true,
+                                for: account.calendars
+                            )
+                        }
+                        Button("Hide All") {
+                            _ = appState.setCalendarVisibility(
+                                false,
+                                for: account.calendars
+                            )
+                        }
+                        Divider()
+                        Button("Block Time From All") {
+                            _ = appState.setCalendarBlocksAvailability(
+                                true,
+                                for: account.calendars
+                            )
+                        }
+                        Button("Do Not Block Time From Any") {
+                            _ = appState.setCalendarBlocksAvailability(
+                                false,
+                                for: account.calendars
+                            )
+                        }
+                    }
+                    .disabled(!canEdit)
+                }
+
+                Divider()
+
+                ForEach(account.calendars) { source in
+                    calendarRow(source)
+                    if source.id != account.calendars.last?.id {
+                        Divider()
+                    }
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Label(
+                title: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(account.title)
+                            .font(.headline)
+                        Text(account.accountType.title)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                },
+                icon: {
+                    Image(
+                        systemName: account.accountType == .exchange
+                            ? "building.2"
+                            : "person.crop.circle"
+                    )
+                }
+            )
+        }
+    }
+
+    private func calendarRow(_ source: CalendarSource) -> some View {
+        let usage = appState.calendarUsagePolicy(for: source)
+
+        return HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(KaosCalTheme.calendarColor(
+                    source.color,
+                    accountType: source.accountType
+                ))
+                .frame(width: 4, height: 32)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(source.title)
+                    .lineLimit(1)
+                Text(
+                    usage.isVisibilityExplicit || usage.isBlockingExplicit
+                        ? "Custom usage"
+                        : "Using defaults"
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Toggle("Show", isOn: visibilityBinding(for: source))
+                .toggleStyle(.checkbox)
+                .frame(width: 78, alignment: .leading)
+                .help("Show events from this calendar in Day, Week, and Agenda")
+
+            Toggle("Block", isOn: blockingBinding(for: source))
+                .toggleStyle(.checkbox)
+                .frame(width: 82, alignment: .leading)
+                .help("Let busy events in this calendar reserve available time")
+
+            Picker("Role", selection: roleBinding(for: source)) {
+                ForEach(CalendarRole.allCases) { role in
+                    Text(role.title).tag(role)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 122)
+            .help("KaosCal role used by Calendar Set filters")
+
+            Menu {
+                Button("Use Visibility and Blocking Defaults") {
+                    _ = appState.resetCalendarUsage(for: source)
+                }
+                .disabled(
+                    !usage.isVisibilityExplicit
+                        && !usage.isBlockingExplicit
+                )
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .accessibilityLabel("More settings for \(source.title)")
+        }
+        .disabled(!canEdit)
+        .accessibilityIdentifier("settings.calendar.\(source.id)")
+    }
+
+    private func visibilityBinding(
+        for source: CalendarSource
+    ) -> Binding<Bool> {
+        Binding(
+            get: { appState.calendarUsagePolicy(for: source).isVisible },
+            set: { _ = appState.setCalendarVisibility($0, for: source) }
+        )
+    }
+
+    private func blockingBinding(
+        for source: CalendarSource
+    ) -> Binding<Bool> {
+        Binding(
+            get: {
+                appState.calendarUsagePolicy(for: source).blocksAvailability
+            },
+            set: {
+                _ = appState.setCalendarBlocksAvailability($0, for: source)
+            }
+        )
+    }
+
+    private func roleBinding(for source: CalendarSource) -> Binding<CalendarRole> {
+        Binding(
+            get: { appState.calendarRole(for: source) },
+            set: { _ = appState.setCalendarRole($0, for: source) }
+        )
+    }
+
+    private var canEdit: Bool {
+        guard appState.localDataOperationState == .idle else { return false }
+        if case .ready = appState.localContextStoreState {
+            return true
+        }
+        return false
+    }
+}
+
 struct LocalDataSettingsView: View {
     @ObservedObject var appState: AppState
 
@@ -156,7 +390,7 @@ struct LocalDataSettingsView: View {
             systemImage: "hand.raised"
         ) {
             Label(
-                "Included: Event Brief checklists and notes, personal tasks, calendar role preferences, and local change history.",
+                "Included: Event Brief checklists and notes, personal tasks, calendar role and usage preferences, and local change history.",
                 systemImage: "checkmark.circle"
             )
             Label(
@@ -194,7 +428,7 @@ struct LocalDataSettingsView: View {
             systemImage: "trash"
         ) {
             Text(
-                "Remove KaosCal checklists, personal tasks, notes, role preferences, and change history from the active database. An automatic recovery backup remains on this Mac, and its location appears in the result. Original calendar events remain in their calendar accounts."
+                "Remove KaosCal checklists, personal tasks, notes, calendar preferences, and change history from the active database. An automatic recovery backup remains on this Mac, and its location appears in the result. Original calendar events remain in their calendar accounts."
             )
             .foregroundStyle(.secondary)
 
@@ -347,6 +581,10 @@ struct SettingsRootView: View {
 
     var body: some View {
         TabView {
+            CalendarUsageSettingsView(appState: appState)
+                .tabItem {
+                    Label("Calendars", systemImage: "calendar")
+                }
             if let coordinator = appState.taskProviderCoordinator {
                 TaskProviderSettingsView(
                     appState: appState,

@@ -72,6 +72,7 @@ final class EventKitProvider: CalendarProviding {
                     id: calendar.calendarIdentifier,
                     title: calendar.title,
                     sourceTitle: calendar.source.title,
+                    sourceIdentifier: calendar.source.sourceIdentifier,
                     accountType: accountType(for: calendar.source.sourceType),
                     isWritable: calendar.allowsContentModifications,
                     color: colorSnapshot(for: calendar)
@@ -429,7 +430,12 @@ final class EventKitProvider: CalendarProviding {
             isInvitation: event.organizer.map { !$0.isCurrentUser } ?? false,
             hasAttendees: event.hasAttendees,
             originalNotes: event.notes,
-            recurrence: recurrence
+            recurrence: recurrence,
+            availability: availability(for: event),
+            isCancelled: event.status == .canceled,
+            isDeclinedByCurrentUser: event.attendees?.contains(where: {
+                $0.isCurrentUser && $0.participantStatus == .declined
+            }) ?? false
         )
     }
 
@@ -1409,6 +1415,25 @@ final class EventKitProvider: CalendarProviding {
             blue: color.blueComponent,
             alpha: color.alphaComponent
         )
+    }
+
+    private func availability(
+        for event: EKEvent
+    ) -> CalendarEventAvailability {
+        switch event.availability {
+        case .notSupported:
+            .notSupported
+        case .busy:
+            .busy
+        case .free:
+            .free
+        case .tentative:
+            .tentative
+        case .unavailable:
+            .unavailable
+        @unknown default:
+            .notSupported
+        }
     }
 
     private func accountType(for sourceType: EKSourceType) -> CalendarAccountType {

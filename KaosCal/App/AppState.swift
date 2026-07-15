@@ -269,6 +269,8 @@ final class AppState: ObservableObject {
     @Published private(set) var calendarAuthorizationState: CalendarAuthorizationState
     @Published private(set) var calendarSources: [CalendarSource] = []
     @Published private(set) var calendarRoleOverrides: [String: CalendarRole] = [:]
+    @Published private(set) var calendarUsageOverrides:
+        [String: CalendarUsagePreference] = [:]
     @Published private(set) var selectedCalendarSet: CalendarSetFilter = .all
     @Published private(set) var events: [DisplayEvent] = []
     @Published private(set) var localContextStoreState: LocalContextStoreState
@@ -359,6 +361,7 @@ final class AppState: ObservableObject {
             self?.scheduleTaskProviderRefresh()
         }
         loadCalendarRolePreferences()
+        loadCalendarUsagePreferences()
     }
 
     var selectedEvent: DisplayEvent? {
@@ -422,6 +425,7 @@ final class AppState: ObservableObject {
             )
             return range.start < interval.end
                 && range.end > interval.start
+                && calendarUsagePolicy(for: $0).isVisible
                 && selectedCalendarSet.includes(role: calendarRole(for: $0))
         }.sorted { lhs, rhs in
             let lhsRange = CalendarEventDateFormatting.effectiveDateRange(
@@ -439,6 +443,64 @@ final class AppState: ObservableObject {
                 return lhs.isAllDay
             }
             return lhs.id < rhs.id
+        }
+    }
+
+    var blockingEvents: [DisplayEvent] {
+        blockingEvents(in: visibleInterval)
+    }
+
+    func blockingEvents(in interval: DateInterval) -> [DisplayEvent] {
+        events.filter { event in
+            let range = CalendarEventDateFormatting.effectiveDateRange(
+                for: event,
+                calendar: calendar
+            )
+            return range.start < interval.end
+                && range.end > interval.start
+                && calendarUsagePolicy(for: event).blocksAvailability
+                && event.blocksAvailabilityByEventState
+        }.sorted { lhs, rhs in
+            let lhsRange = CalendarEventDateFormatting.effectiveDateRange(
+                for: lhs,
+                calendar: calendar
+            )
+            let rhsRange = CalendarEventDateFormatting.effectiveDateRange(
+                for: rhs,
+                calendar: calendar
+            )
+            if lhsRange.start != rhsRange.start {
+                return lhsRange.start < rhsRange.start
+            }
+            return lhs.id < rhs.id
+        }
+    }
+
+    func blockedIntervals(in interval: DateInterval) -> [DateInterval] {
+        let ranges = blockingEvents(in: interval).map { event in
+            let range = CalendarEventDateFormatting.effectiveDateRange(
+                for: event,
+                calendar: calendar
+            )
+            return DateInterval(
+                start: max(range.start, interval.start),
+                end: min(range.end, interval.end)
+            )
+        }.sorted { $0.start < $1.start }
+
+        return ranges.reduce(into: []) { merged, range in
+            guard let last = merged.last else {
+                merged.append(range)
+                return
+            }
+            if range.start <= last.end {
+                merged[merged.count - 1] = DateInterval(
+                    start: last.start,
+                    end: max(last.end, range.end)
+                )
+            } else {
+                merged.append(range)
+            }
         }
     }
 
@@ -541,6 +603,56 @@ final class AppState: ObservableObject {
         )
     }
 
+    var calendarAccounts: [CalendarAccountDescriptor] {
+        Dictionary(grouping: calendarSources, by: \.sourceIdentifier)
+            .compactMap { sourceIdentifier, sources in
+                guard let first = sources.first else { return nil }
+                return CalendarAccountDescriptor(
+                    id: sourceIdentifier,
+                    title: first.sourceTitle,
+                    accountType: first.accountType,
+                    calendars: sources.sorted {
+                        if $0.title != $1.title {
+                            return $0.title.localizedCaseInsensitiveCompare(
+                                $1.title
+                            ) == .orderedAscending
+                        }
+                        return $0.id < $1.id
+                    }
+                )
+            }
+            .sorted {
+                if $0.title != $1.title {
+                    return $0.title.localizedCaseInsensitiveCompare($1.title)
+                        == .orderedAscending
+                }
+                return $0.id < $1.id
+            }
+    }
+
+    func calendarUsagePolicy(
+        for source: CalendarSource
+    ) -> CalendarUsagePolicy {
+        CalendarUsagePolicy.resolved(
+            for: source,
+            preference: calendarUsageOverrides[source.id]
+        )
+    }
+
+    func calendarUsagePolicy(
+        for event: DisplayEvent
+    ) -> CalendarUsagePolicy {
+        if let source = calendarSources.first(where: {
+            $0.id == event.calendarIdentifier
+        }) {
+            return calendarUsagePolicy(for: source)
+        }
+        return CalendarUsagePolicy.resolved(
+            accountType: event.accountType,
+            preference: calendarUsageOverrides[event.calendarIdentifier]
+        )
+    }
+
     func calendarRole(for source: CalendarSource) -> CalendarRole {
         calendarDescriptor(for: source).role
     }
@@ -586,6 +698,80 @@ final class AppState: ObservableObject {
             )
             calendarRoleOverrides[source.id] = preference.role
             clearSelectionOutsideVisiblePeriod()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func setCalendarVisibility(
+        _ isVisible: Bool,
+        for source: CalendarSource
+    ) -> Bool {
+        setCalendarVisibility(isVisible, for: [source])
+    }
+
+    @discardableResult
+    func setCalendarVisibility(
+        _ isVisible: Bool,
+        for sources: [CalendarSource]
+    ) -> Bool {
+        performCalendarUsageMutation(affectsVisibility: true) { repository in
+            try repository.setVisibility(isVisible, for: sources)
+        }
+    }
+
+    @discardableResult
+    func setCalendarBlocksAvailability(
+        _ blocksAvailability: Bool,
+        for source: CalendarSource
+    ) -> Bool {
+        setCalendarBlocksAvailability(blocksAvailability, for: [source])
+    }
+
+    @discardableResult
+    func setCalendarBlocksAvailability(
+        _ blocksAvailability: Bool,
+        for sources: [CalendarSource]
+    ) -> Bool {
+        performCalendarUsageMutation(affectsVisibility: false) { repository in
+            try repository.setBlocksAvailability(
+                blocksAvailability,
+                for: sources
+            )
+        }
+    }
+
+    @discardableResult
+    func resetCalendarUsage(for source: CalendarSource) -> Bool {
+        performCalendarUsageMutation(affectsVisibility: true) { repository in
+            _ = try repository.delete(calendarIdentifier: source.id)
+        }
+    }
+
+    private func performCalendarUsageMutation(
+        affectsVisibility: Bool,
+        _ mutation: (CalendarUsagePreferenceRepository) throws -> Void
+    ) -> Bool {
+        localOperationError = nil
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
+        guard let repository = contextStore?.calendarUsage else {
+            localOperationError = "Local calendar usage storage is unavailable. No calendar data was changed."
+            return false
+        }
+        do {
+            try mutation(repository)
+            loadCalendarUsagePreferences()
+            if affectsVisibility {
+                clearSelectionOutsideVisiblePeriod()
+            }
             return true
         } catch {
             localOperationError = Self.message(for: error)
@@ -2538,6 +2724,7 @@ final class AppState: ObservableObject {
                     calendar: calendar
                 )
             loadCalendarRolePreferences()
+            loadCalendarUsagePreferences()
             loadedEventInterval = interval
 
             if let selectedEventID, !fetchedEvents.contains(where: { $0.id == selectedEventID }) {
@@ -2598,6 +2785,23 @@ final class AppState: ObservableObject {
             )
         } catch {
             calendarRoleOverrides = [:]
+            localOperationError = Self.message(for: error)
+        }
+    }
+
+    private func loadCalendarUsagePreferences() {
+        guard let contextStore else {
+            calendarUsageOverrides = [:]
+            return
+        }
+        do {
+            calendarUsageOverrides = Dictionary(
+                uniqueKeysWithValues: try contextStore.calendarUsage
+                    .fetchAll()
+                    .map { ($0.calendarIdentifier, $0) }
+            )
+        } catch {
+            calendarUsageOverrides = [:]
             localOperationError = Self.message(for: error)
         }
     }
@@ -2988,6 +3192,7 @@ final class AppState: ObservableObject {
         localContextStoreState = .ready
 
         loadCalendarRolePreferences()
+        loadCalendarUsagePreferences()
         observeLocalContexts(events)
         activeBriefEvent = selectedEvent
         if activeBriefEvent == nil {

@@ -67,6 +67,7 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
     let personalTasks: Int
     let eventChangeLog: Int
     let calendarPreferences: Int
+    let calendarUsagePreferences: Int
     let providerAccounts: Int
     let providerItems: Int
     let providerBindings: Int
@@ -82,6 +83,7 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
             + personalTasks
             + eventChangeLog
             + calendarPreferences
+            + calendarUsagePreferences
             + providerAccounts
             + providerItems
             + providerBindings
@@ -324,6 +326,10 @@ struct LocalDataBackupService: Sendable {
                     db,
                     sql: "SELECT COUNT(*) FROM calendar_preferences"
                 ) ?? 0,
+                calendarUsagePreferences: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM calendar_usage_preferences"
+                ) ?? 0,
                 providerAccounts: Int.fetchOne(
                     db,
                     sql: "SELECT COUNT(*) FROM provider_accounts"
@@ -369,6 +375,7 @@ struct LocalDataBackupService: Sendable {
             try db.execute(sql: "DELETE FROM event_links")
             try db.execute(sql: "DELETE FROM event_contexts")
             try db.execute(sql: "DELETE FROM personal_tasks")
+            try db.execute(sql: "DELETE FROM calendar_usage_preferences")
             try db.execute(sql: "DELETE FROM calendar_preferences")
             return counts
         }

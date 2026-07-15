@@ -55,6 +55,7 @@ struct CalendarSource: Equatable, Identifiable {
     let id: String
     let title: String
     let sourceTitle: String
+    let sourceIdentifier: String
     let accountType: CalendarAccountType
     let isWritable: Bool
     let color: CalendarColor?
@@ -435,6 +436,14 @@ enum DisplayEventIdentity {
     }
 }
 
+enum CalendarEventAvailability: String, Equatable {
+    case notSupported
+    case busy
+    case free
+    case tentative
+    case unavailable
+}
+
 struct DisplayEvent: Equatable, Identifiable {
     let id: String
     let eventIdentifier: String?
@@ -461,6 +470,9 @@ struct DisplayEvent: Equatable, Identifiable {
     let hasAttendees: Bool
     let originalNotes: String?
     let recurrence: CalendarEventRecurrence
+    let availability: CalendarEventAvailability
+    let isCancelled: Bool
+    let isDeclinedByCurrentUser: Bool
 
     init(
         id: String,
@@ -487,7 +499,10 @@ struct DisplayEvent: Equatable, Identifiable {
         isInvitation: Bool,
         hasAttendees: Bool,
         originalNotes: String?,
-        recurrence: CalendarEventRecurrence = .none
+        recurrence: CalendarEventRecurrence = .none,
+        availability: CalendarEventAvailability = .notSupported,
+        isCancelled: Bool = false,
+        isDeclinedByCurrentUser: Bool = false
     ) {
         self.id = id
         self.eventIdentifier = eventIdentifier
@@ -514,6 +529,9 @@ struct DisplayEvent: Equatable, Identifiable {
         self.hasAttendees = hasAttendees
         self.originalNotes = originalNotes
         self.recurrence = recurrence
+        self.availability = availability
+        self.isCancelled = isCancelled
+        self.isDeclinedByCurrentUser = isDeclinedByCurrentUser
     }
 }
 

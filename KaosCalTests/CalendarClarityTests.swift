@@ -50,6 +50,48 @@ final class CalendarClarityTests: XCTestCase {
         )
     }
 
+    func testCalendarUsageDefaultsAreConservativeAndIndependent() {
+        let exchange = makeSource(id: "exchange")
+        let subscribed = makeSource(
+            id: "subscribed",
+            accountType: .subscribed,
+            isWritable: false
+        )
+        let birthdays = makeSource(
+            id: "birthdays",
+            accountType: .birthdays,
+            isWritable: false
+        )
+
+        XCTAssertEqual(
+            CalendarUsagePolicy.resolved(for: exchange, preference: nil),
+            CalendarUsagePolicy(
+                isVisible: true,
+                blocksAvailability: true,
+                isVisibilityExplicit: false,
+                isBlockingExplicit: false
+            )
+        )
+        XCTAssertTrue(
+            CalendarUsagePolicy.resolved(
+                for: subscribed,
+                preference: nil
+            ).isVisible
+        )
+        XCTAssertFalse(
+            CalendarUsagePolicy.resolved(
+                for: subscribed,
+                preference: nil
+            ).blocksAvailability
+        )
+        XCTAssertFalse(
+            CalendarUsagePolicy.resolved(
+                for: birthdays,
+                preference: nil
+            ).blocksAvailability
+        )
+    }
+
     func testWriteRestrictionUsesSafePrecedenceAndDoesNotGuessACLReason() {
         let baseline = makeEvent(
             id: "restriction",
@@ -372,12 +414,19 @@ final class CalendarClarityTests: XCTestCase {
                 "v4_task_provider",
                 "v5_oauth_task_providers",
                 "v6_context_references",
-                "v7_microsoft_to_do_provider"
+                "v7_microsoft_to_do_provider",
+                "v8_calendar_usage"
             ]
         )
         XCTAssertEqual(
             try database.read { db in
                 try CalendarRolePreference.fetchCount(db)
+            },
+            0
+        )
+        XCTAssertEqual(
+            try database.read { db in
+                try CalendarUsagePreference.fetchCount(db)
             },
             0
         )
@@ -388,6 +437,22 @@ final class CalendarClarityTests: XCTestCase {
                         calendar_identifier, source_title_snapshot,
                         calendar_title_snapshot, role, created_at, updated_at
                     ) VALUES ('bad', 'Source', 'Calendar', 'invalid', ?, ?)
+                    """,
+                arguments: [timestamp, timestamp]
+            )
+        })
+        XCTAssertThrowsError(try database.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO calendar_usage_preferences (
+                        calendar_identifier, source_identifier_snapshot,
+                        source_title_snapshot, calendar_title_snapshot,
+                        visibility_override, blocking_override,
+                        created_at, updated_at
+                    ) VALUES (
+                        'empty', 'source', 'Source', 'Calendar',
+                        NULL, NULL, ?, ?
+                    )
                     """,
                 arguments: [timestamp, timestamp]
             )
@@ -463,6 +528,48 @@ final class CalendarClarityTests: XCTestCase {
         }
     }
 
+    func testUsageRepositoryKeepsIndependentSparseOverrides() throws {
+        let database = try AppDatabase.inMemory()
+        let store = ContextStore(
+            database: database,
+            now: { self.date(2026, 7, 12, 9) }
+        )
+        let source = makeSource(
+            id: "calendar",
+            title: "Focus",
+            sourceTitle: "Work",
+            sourceIdentifier: "work-source"
+        )
+
+        try store.calendarUsage.setVisibility(false, for: [source])
+        var preference = try XCTUnwrap(
+            store.calendarUsage.fetch(calendarIdentifier: source.id)
+        )
+        XCTAssertEqual(preference.visibilityOverride, false)
+        XCTAssertNil(preference.blockingOverride)
+        XCTAssertEqual(preference.sourceIdentifierSnapshot, "work-source")
+
+        try store.calendarUsage.setBlocksAvailability(false, for: [source])
+        preference = try XCTUnwrap(
+            store.calendarUsage.fetch(calendarIdentifier: source.id)
+        )
+        XCTAssertEqual(preference.visibilityOverride, false)
+        XCTAssertEqual(preference.blockingOverride, false)
+
+        try store.calendarUsage.setVisibility(nil, for: [source])
+        preference = try XCTUnwrap(
+            store.calendarUsage.fetch(calendarIdentifier: source.id)
+        )
+        XCTAssertNil(preference.visibilityOverride)
+        XCTAssertEqual(preference.blockingOverride, false)
+
+        try store.calendarUsage.setBlocksAvailability(nil, for: [source])
+        XCTAssertNil(try store.calendarUsage.fetch(
+            calendarIdentifier: source.id
+        ))
+        XCTAssertEqual(try store.calendarUsage.count(), 0)
+    }
+
     private func legacyRows(
         in queue: DatabaseQueue
     ) throws -> [String] {
@@ -519,6 +626,7 @@ final class CalendarClarityTests: XCTestCase {
         id: String,
         title: String = "Calendar",
         sourceTitle: String = "Source",
+        sourceIdentifier: String = "source",
         accountType: CalendarAccountType = .exchange,
         isWritable: Bool = true
     ) -> CalendarSource {
@@ -526,6 +634,7 @@ final class CalendarClarityTests: XCTestCase {
             id: id,
             title: title,
             sourceTitle: sourceTitle,
+            sourceIdentifier: sourceIdentifier,
             accountType: accountType,
             isWritable: isWritable,
             color: nil

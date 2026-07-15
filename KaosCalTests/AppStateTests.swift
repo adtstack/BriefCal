@@ -1075,6 +1075,116 @@ final class Phase6AppStateTests: XCTestCase {
         XCTAssertEqual(provider.deleteCallCount, 0)
     }
 
+    func testCalendarVisibilityAndBlockingAreIndependentAndPersist() async throws {
+        let hiddenBusy = makeEvent(
+            id: "hidden-busy",
+            title: "Private focus",
+            start: date(2026, 7, 10, 9),
+            calendarIdentifier: "calendar",
+            availability: .busy
+        )
+        let visibleBusy = makeEvent(
+            id: "visible-busy",
+            title: "Shared focus",
+            start: date(2026, 7, 10, 9, 30),
+            calendarIdentifier: "destination",
+            availability: .tentative
+        )
+        let free = makeEvent(
+            id: "free",
+            title: "FYI",
+            start: date(2026, 7, 10, 11),
+            calendarIdentifier: "destination",
+            availability: .free
+        )
+        let provider = makeProvider(events: [hiddenBusy, visibleBusy, free])
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        XCTAssertEqual(state.calendarAccounts.count, 1)
+        XCTAssertEqual(
+            Set(state.calendarAccounts.first?.calendars.map(\.id) ?? []),
+            Set(["calendar", "destination"])
+        )
+        XCTAssertEqual(
+            state.blockingEvents.map(\.id),
+            ["hidden-busy", "visible-busy"]
+        )
+        XCTAssertEqual(state.blockedIntervals(in: state.visibleInterval).count, 1)
+
+        let hiddenSource = try XCTUnwrap(
+            state.calendarSources.first(where: { $0.id == "calendar" })
+        )
+        XCTAssertTrue(state.setCalendarVisibility(false, for: hiddenSource))
+        XCTAssertFalse(state.calendarUsagePolicy(for: hiddenSource).isVisible)
+        XCTAssertEqual(
+            state.visibleEvents.map(\.id),
+            ["visible-busy", "free"]
+        )
+        XCTAssertEqual(
+            state.blockingEvents.map(\.id),
+            ["hidden-busy", "visible-busy"]
+        )
+
+        XCTAssertTrue(state.setCalendarBlocksAvailability(
+            false,
+            for: hiddenSource
+        ))
+        XCTAssertEqual(state.blockingEvents.map(\.id), ["visible-busy"])
+        XCTAssertEqual(try store.calendarUsage.count(), 1)
+
+        let reopened = makeState(provider: provider, store: store)
+        await reopened.loadCalendarStatus()
+        XCTAssertFalse(reopened.calendarUsagePolicy(for: hiddenSource).isVisible)
+        XCTAssertFalse(
+            reopened.calendarUsagePolicy(for: hiddenSource).blocksAvailability
+        )
+
+        XCTAssertTrue(reopened.resetCalendarUsage(for: hiddenSource))
+        XCTAssertTrue(reopened.calendarUsagePolicy(for: hiddenSource).isVisible)
+        XCTAssertTrue(
+            reopened.calendarUsagePolicy(for: hiddenSource).blocksAvailability
+        )
+        XCTAssertEqual(try store.calendarUsage.count(), 0)
+        XCTAssertEqual(provider.createCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
+    func testCancelledDeclinedAndFreeEventsNeverBlockAvailability() async throws {
+        let busy = makeEvent(
+            id: "busy",
+            start: date(2026, 7, 10, 9),
+            availability: .notSupported
+        )
+        let free = makeEvent(
+            id: "free",
+            start: date(2026, 7, 10, 10),
+            availability: .free
+        )
+        let cancelled = makeEvent(
+            id: "cancelled",
+            start: date(2026, 7, 10, 11),
+            availability: .busy,
+            isCancelled: true
+        )
+        let declined = makeEvent(
+            id: "declined",
+            start: date(2026, 7, 10, 13),
+            availability: .busy,
+            isDeclinedByCurrentUser: true
+        )
+        let provider = makeProvider(events: [busy, free, cancelled, declined])
+        let state = makeState(
+            provider: provider,
+            store: ContextStore(database: try AppDatabase.inMemory())
+        )
+        await state.loadCalendarStatus()
+
+        XCTAssertEqual(state.blockingEvents.map(\.id), ["busy"])
+    }
+
     func testPossibleDuplicateCanOpenCandidateOutsideCurrentRoleSet() async throws {
         let work = makeEvent(
             id: "duplicate-work",
@@ -1131,6 +1241,7 @@ final class Phase6AppStateTests: XCTestCase {
                 id: "calendar",
                 title: "KAOS-TEST",
                 sourceTitle: "Exchange QA",
+                sourceIdentifier: "exchange-qa",
                 accountType: .exchange,
                 isWritable: true,
                 color: nil
@@ -1139,6 +1250,7 @@ final class Phase6AppStateTests: XCTestCase {
                 id: "destination",
                 title: "일정",
                 sourceTitle: "Exchange QA",
+                sourceIdentifier: "exchange-qa",
                 accountType: .exchange,
                 isWritable: true,
                 color: nil
@@ -1177,7 +1289,10 @@ final class Phase6AppStateTests: XCTestCase {
         title: String = "Phase 6 fixture",
         start requestedStart: Date? = nil,
         identifierSeed requestedIdentifierSeed: String? = nil,
-        calendarIdentifier: String = "calendar"
+        calendarIdentifier: String = "calendar",
+        availability: CalendarEventAvailability = .notSupported,
+        isCancelled: Bool = false,
+        isDeclinedByCurrentUser: Bool = false
     ) -> DisplayEvent {
         let start = requestedStart ?? date(2026, 7, 10, 9)
         let identifierSeed = requestedIdentifierSeed ?? id
@@ -1210,7 +1325,10 @@ final class Phase6AppStateTests: XCTestCase {
             isInvitation: false,
             hasAttendees: false,
             originalNotes: nil,
-            recurrence: recurrence
+            recurrence: recurrence,
+            availability: availability,
+            isCancelled: isCancelled,
+            isDeclinedByCurrentUser: isDeclinedByCurrentUser
         )
     }
 
@@ -1277,13 +1395,15 @@ final class Phase6AppStateTests: XCTestCase {
         _ year: Int,
         _ month: Int,
         _ day: Int,
-        _ hour: Int = 0
+        _ hour: Int = 0,
+        _ minute: Int = 0
     ) -> Date {
         calendar.date(from: DateComponents(
             year: year,
             month: month,
             day: day,
-            hour: hour
+            hour: hour,
+            minute: minute
         ))!
     }
 }
@@ -1349,6 +1469,14 @@ final class Phase9AppStateTests: XCTestCase {
             source: calendarSource,
             role: .work
         )
+        try sourceStore.calendarUsage.setVisibility(
+            false,
+            for: [calendarSource]
+        )
+        try sourceStore.calendarUsage.setBlocksAvailability(
+            false,
+            for: [calendarSource]
+        )
         let sourceArchiveURL = directory.appendingPathComponent("source.zip")
         _ = try sourceStore.localDataBackups.exportBackup(
             to: sourceArchiveURL,
@@ -1377,6 +1505,14 @@ final class Phase9AppStateTests: XCTestCase {
         _ = try targetStore.calendarRoles.upsert(
             source: calendarSource,
             role: .personal
+        )
+        try targetStore.calendarUsage.setVisibility(
+            true,
+            for: [calendarSource]
+        )
+        try targetStore.calendarUsage.setBlocksAvailability(
+            true,
+            for: [calendarSource]
         )
 
         let provider = makeProvider(events: [event])
@@ -1427,8 +1563,25 @@ final class Phase9AppStateTests: XCTestCase {
             )?.role,
             .work
         )
-        XCTAssertEqual(state.selectedEventNotes, "Imported source notes")
+        XCTAssertEqual(
+            try targetStore.calendarUsage.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.visibilityOverride,
+            false
+        )
+        XCTAssertEqual(
+            try targetStore.calendarUsage.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.blockingOverride,
+            false
+        )
+        XCTAssertNil(state.selectedEventID)
+        XCTAssertEqual(state.selectedEventNotes, "")
         XCTAssertEqual(state.calendarRole(for: event), .work)
+        XCTAssertFalse(state.calendarUsagePolicy(for: calendarSource).isVisible)
+        XCTAssertFalse(
+            state.calendarUsagePolicy(for: calendarSource).blocksAvailability
+        )
         XCTAssertEqual(
             state.recoveryBriefs.map(\.context.id),
             [sourceContext.id]
@@ -1463,6 +1616,18 @@ final class Phase9AppStateTests: XCTestCase {
             )?.role,
             .personal
         )
+        XCTAssertEqual(
+            try recoveredStore.calendarUsage.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.visibilityOverride,
+            true
+        )
+        XCTAssertEqual(
+            try recoveredStore.calendarUsage.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.blockingOverride,
+            true
+        )
         assertNoCalendarWrites(provider)
     }
 
@@ -1490,6 +1655,14 @@ final class Phase9AppStateTests: XCTestCase {
             source: calendarSource,
             role: .family
         )
+        try store.calendarUsage.setVisibility(
+            false,
+            for: [calendarSource]
+        )
+        try store.calendarUsage.setBlocksAvailability(
+            false,
+            for: [calendarSource]
+        )
 
         let provider = makeProvider(events: [event])
         let state = makeState(provider: provider, store: store)
@@ -1513,11 +1686,16 @@ final class Phase9AppStateTests: XCTestCase {
         XCTAssertEqual(try store.eventTasks.count(), 0)
         XCTAssertEqual(try store.personalTasks.count(), 0)
         XCTAssertEqual(try store.calendarRoles.count(), 0)
+        XCTAssertEqual(try store.calendarUsage.count(), 0)
         XCTAssertEqual(state.events.map(\.id), [event.id])
         XCTAssertEqual(provider.events.map(\.id), [event.id])
         XCTAssertEqual(state.selectedEventID, event.id)
         XCTAssertEqual(state.eventBriefState, .empty)
         XCTAssertEqual(state.calendarRole(for: event), .other)
+        XCTAssertTrue(state.calendarUsagePolicy(for: calendarSource).isVisible)
+        XCTAssertTrue(
+            state.calendarUsagePolicy(for: calendarSource).blocksAvailability
+        )
         XCTAssertTrue(state.recoveryBriefs.isEmpty)
 
         let recoveredDatabase = try AppDatabase.open(
@@ -1547,6 +1725,18 @@ final class Phase9AppStateTests: XCTestCase {
                 calendarIdentifier: calendarSource.id
             )?.role,
             .family
+        )
+        XCTAssertEqual(
+            try recoveredStore.calendarUsage.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.visibilityOverride,
+            false
+        )
+        XCTAssertEqual(
+            try recoveredStore.calendarUsage.fetch(
+                calendarIdentifier: calendarSource.id
+            )?.blockingOverride,
+            false
         )
         assertNoCalendarWrites(provider)
     }
@@ -1705,6 +1895,63 @@ final class Phase9AppStateTests: XCTestCase {
         }
     }
 
+    func testCalendarUsageSettingsFitsAndProducesOffscreenBitmap() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        try await assertCalendarUsageSettingsBitmap(in: directory)
+    }
+
+    private func assertCalendarUsageSettingsBitmap(
+        in directory: URL
+    ) async throws {
+        var store: ContextStore? = ContextStore(
+            database: try AppDatabase.open(
+                at: directory.appendingPathComponent("calendar-settings.sqlite")
+            )
+        )
+        var provider: FakeCalendarProvider? = makeProvider(events: [makeEvent()])
+        var state: AppState? = makeState(
+            provider: try XCTUnwrap(provider),
+            store: try XCTUnwrap(store)
+        )
+        defer {
+            provider?.storeChangeHandler = nil
+            state = nil
+            store = nil
+            provider = nil
+        }
+        await state?.loadCalendarStatus()
+
+        try autoreleasepool {
+            let state = try XCTUnwrap(state)
+            let provider = try XCTUnwrap(provider)
+            let hostingView = NSHostingView(rootView:
+                SettingsRootView(appState: state)
+                    .background(Color(nsColor: .windowBackgroundColor))
+            )
+            let fittingSize = hostingView.fittingSize
+            XCTAssertLessThanOrEqual(fittingSize.width, 630)
+            XCTAssertLessThanOrEqual(fittingSize.height, 650)
+
+            hostingView.frame = NSRect(x: 0, y: 0, width: 630, height: 650)
+            hostingView.wantsLayer = true
+            hostingView.layoutSubtreeIfNeeded()
+            let representation = try XCTUnwrap(
+                hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
+            )
+            hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+            let pngData = try XCTUnwrap(
+                representation.representation(using: .png, properties: [:])
+            )
+
+            XCTAssertGreaterThanOrEqual(representation.pixelsWide, 630)
+            XCTAssertGreaterThanOrEqual(representation.pixelsHigh, 650)
+            XCTAssertGreaterThan(pngData.count, 10_000)
+            assertNoCalendarWrites(provider)
+        }
+    }
+
     func testPhase10OnboardingFitsAndProducesOffscreenBitmap() throws {
         let hostingView = NSHostingView(rootView:
             PaidBetaOnboardingView(complete: {})
@@ -1770,6 +2017,7 @@ final class Phase9AppStateTests: XCTestCase {
             id: "calendar",
             title: "KAOS-TEST",
             sourceTitle: "Exchange QA",
+            sourceIdentifier: "exchange-qa",
             accountType: .exchange,
             isWritable: true,
             color: nil

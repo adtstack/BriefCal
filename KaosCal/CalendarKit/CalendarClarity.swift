@@ -114,6 +114,61 @@ struct CalendarDescriptor: Equatable, Identifiable {
     }
 }
 
+struct CalendarAccountDescriptor: Equatable, Identifiable {
+    let id: String
+    let title: String
+    let accountType: CalendarAccountType
+    let calendars: [CalendarSource]
+}
+
+struct CalendarUsagePolicy: Equatable {
+    let isVisible: Bool
+    let blocksAvailability: Bool
+    let isVisibilityExplicit: Bool
+    let isBlockingExplicit: Bool
+
+    static func resolved(
+        for source: CalendarSource,
+        preference: CalendarUsagePreference?
+    ) -> CalendarUsagePolicy {
+        resolved(
+            accountType: source.accountType,
+            preference: preference
+        )
+    }
+
+    static func resolved(
+        accountType: CalendarAccountType,
+        preference: CalendarUsagePreference?
+    ) -> CalendarUsagePolicy {
+        CalendarUsagePolicy(
+            isVisible: preference?.visibilityOverride ?? true,
+            blocksAvailability: preference?.blockingOverride
+                ?? defaultBlocksAvailability(for: accountType),
+            isVisibilityExplicit: preference?.visibilityOverride != nil,
+            isBlockingExplicit: preference?.blockingOverride != nil
+        )
+    }
+
+    private static func defaultBlocksAvailability(
+        for accountType: CalendarAccountType
+    ) -> Bool {
+        switch accountType {
+        case .subscribed, .birthdays:
+            false
+        case .exchange, .calDAV, .iCloud, .local, .unknown:
+            true
+        }
+    }
+}
+
+extension DisplayEvent {
+    var blocksAvailabilityByEventState: Bool {
+        guard !isCancelled, !isDeclinedByCurrentUser else { return false }
+        return availability != .free
+    }
+}
+
 enum CalendarWriteRestriction: Error, Equatable {
     case invitation
     case attendee

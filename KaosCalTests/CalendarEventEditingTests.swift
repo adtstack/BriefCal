@@ -2035,6 +2035,7 @@ final class CalendarEventEditingTests: XCTestCase {
             id: "calendar",
             title: "KAOS-TEST",
             sourceTitle: "Work",
+            sourceIdentifier: "work-source",
             accountType: .exchange,
             isWritable: true,
             color: nil
@@ -2046,6 +2047,7 @@ final class CalendarEventEditingTests: XCTestCase {
             id: "local-calendar",
             title: "Local Test",
             sourceTitle: "On My Mac",
+            sourceIdentifier: "local-source",
             accountType: .local,
             isWritable: true,
             color: nil

@@ -39,6 +39,46 @@ extension CalendarRolePreference: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
+struct CalendarUsagePreference: Equatable, Identifiable {
+    let calendarIdentifier: String
+    var sourceIdentifierSnapshot: String
+    var sourceTitleSnapshot: String
+    var calendarTitleSnapshot: String
+    var visibilityOverride: Bool?
+    var blockingOverride: Bool?
+    let createdAt: Date
+    var updatedAt: Date
+
+    var id: String { calendarIdentifier }
+}
+
+extension CalendarUsagePreference: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "calendar_usage_preferences"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy {
+        .deferredToDate
+    }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy {
+        .deferredToDate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case calendarIdentifier = "calendar_identifier"
+        case sourceIdentifierSnapshot = "source_identifier_snapshot"
+        case sourceTitleSnapshot = "source_title_snapshot"
+        case calendarTitleSnapshot = "calendar_title_snapshot"
+        case visibilityOverride = "visibility_override"
+        case blockingOverride = "blocking_override"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
 enum EventLifecycleStatus: String, Codable, CaseIterable, DatabaseValueConvertible {
     case scheduled
     case completed

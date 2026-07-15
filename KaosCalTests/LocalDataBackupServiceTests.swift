@@ -28,10 +28,10 @@ final class LocalDataBackupServiceTests: XCTestCase {
             XCTAssertEqual(result.manifest.applicationVersion, "0.9-test")
             XCTAssertEqual(
                 result.manifest.appliedMigrations,
-                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider"]
+                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage"]
             )
-            XCTAssertEqual(result.manifest.schemaIdentifier, "v7_microsoft_to_do_provider")
-            XCTAssertEqual(result.manifest.schemaVersion, 7)
+            XCTAssertEqual(result.manifest.schemaIdentifier, "v8_calendar_usage")
+            XCTAssertEqual(result.manifest.schemaVersion, 8)
             XCTAssertEqual(result.manifest.databaseFilename, "kaoscal.sqlite")
             XCTAssertGreaterThan(result.manifest.databaseByteCount, 0)
             XCTAssertEqual(result.manifest.databaseSHA256.count, 64)
@@ -83,6 +83,10 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 try store.calendarRoles.fetchAll().map(\.calendarIdentifier),
                 ["calendar-source"]
             )
+            XCTAssertEqual(
+                try store.calendarUsage.fetchAll().map(\.calendarIdentifier),
+                ["calendar-source"]
+            )
 
             // Existing repositories retain the same writer identity and see
             // the restored rows; no live SQLite file replacement occurred.
@@ -126,6 +130,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
                     personalTasks: 1,
                     eventChangeLog: 1,
                     calendarPreferences: 1,
+                    calendarUsagePreferences: 1,
                     providerAccounts: 1,
                     providerItems: 1,
                     providerBindings: 1,
@@ -135,14 +140,14 @@ final class LocalDataBackupServiceTests: XCTestCase {
                     contextReferences: 1
                 )
             )
-            XCTAssertEqual(result.deletedRowCounts.total, 13)
+            XCTAssertEqual(result.deletedRowCounts.total, 14)
             XCTAssertEqual(
                 try allUserTableCounts(in: database),
-                Array(repeating: 0, count: 13)
+                Array(repeating: 0, count: 14)
             )
             XCTAssertEqual(
                 try database.appliedMigrations(),
-                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider"]
+                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage"]
             )
 
             _ = try service.importBackup(
@@ -153,7 +158,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
             )
             XCTAssertEqual(
                 try allUserTableCounts(in: database),
-                Array(repeating: 1, count: 13)
+                Array(repeating: 1, count: 14)
             )
         }
     }
@@ -219,7 +224,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
                         .appendingPathComponent("RECOVERY.txt").path
                 )
             )
-            XCTAssertEqual(result.manifest.schemaIdentifier, "v7_microsoft_to_do_provider")
+            XCTAssertEqual(result.manifest.schemaIdentifier, "v8_calendar_usage")
         }
     }
 
@@ -676,9 +681,9 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 }
                 XCTAssertEqual(
                     expected,
-                    ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider"]
+                    ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage"]
                 )
-                XCTAssertEqual(found, ["8 migration ledger entries"])
+                XCTAssertEqual(found, ["9 migration ledger entries"])
             }
         }
     }
@@ -687,7 +692,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
         let database = try AppDatabase.open(at: databaseURL)
         XCTAssertEqual(
             try database.appliedMigrations(),
-            ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider"]
+            ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage"]
         )
     }
 
@@ -775,6 +780,18 @@ final class LocalDataBackupServiceTests: XCTestCase {
                         calendar_identifier, source_title_snapshot,
                         calendar_title_snapshot, role, created_at, updated_at
                     ) VALUES (?, 'Exchange', '일정', 'work', ?, ?)
+                    """,
+                arguments: ["calendar-\(suffix)", timestamp, timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO calendar_usage_preferences (
+                        calendar_identifier, source_identifier_snapshot,
+                        source_title_snapshot, calendar_title_snapshot,
+                        visibility_override, blocking_override,
+                        created_at, updated_at
+                    ) VALUES (?, 'exchange-source', 'Exchange', '일정',
+                        0, 1, ?, ?)
                     """,
                 arguments: ["calendar-\(suffix)", timestamp, timestamp]
             )
@@ -871,6 +888,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 "personal_tasks",
                 "event_change_log",
                 "calendar_preferences",
+                "calendar_usage_preferences",
                 "provider_accounts",
                 "provider_items",
                 "task_bindings",

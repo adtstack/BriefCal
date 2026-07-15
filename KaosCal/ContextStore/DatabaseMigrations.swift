@@ -641,6 +641,31 @@ enum DatabaseMigrations {
                 CREATE INDEX provider_pending_operations_account ON provider_pending_operations(account_id, updated_at);
             """)
         }
+        migrator.registerMigration("v8_calendar_usage") { db in
+            try db.execute(sql: """
+                CREATE TABLE calendar_usage_preferences (
+                    calendar_identifier TEXT PRIMARY KEY NOT NULL
+                        CHECK (length(trim(calendar_identifier)) > 0),
+                    source_identifier_snapshot TEXT NOT NULL,
+                    source_title_snapshot TEXT NOT NULL,
+                    calendar_title_snapshot TEXT NOT NULL,
+                    visibility_override BOOLEAN
+                        CHECK (visibility_override IS NULL
+                            OR visibility_override IN (0, 1)),
+                    blocking_override BOOLEAN
+                        CHECK (blocking_override IS NULL
+                            OR blocking_override IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CHECK (
+                        visibility_override IS NOT NULL
+                        OR blocking_override IS NOT NULL
+                    )
+                );
+                CREATE INDEX calendar_usage_preferences_source
+                    ON calendar_usage_preferences(source_identifier_snapshot);
+            """)
+        }
         return migrator
     }
 }

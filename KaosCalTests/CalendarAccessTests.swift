@@ -213,6 +213,7 @@ final class CalendarAccessTests: XCTestCase {
             id: "exchange-calendar",
             title: "KAOS-TEST",
             sourceTitle: "Work",
+            sourceIdentifier: "work-source",
             accountType: .exchange,
             isWritable: true,
             color: nil
