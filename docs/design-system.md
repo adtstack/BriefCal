@@ -54,7 +54,7 @@ Sidebar:
 - 고정 6×7 mini month 날짜 탐색기
 - role·source·permission을 함께 보여 주는 calendar list와 role 변경 menu
 - `All Calendars`와 role별 virtual Calendar Set
-- Set은 Day/Week/Agenda visibility만 좁히며 EventKit fetch·Event Brief·editor destination을 제거하지 않음
+- Set은 현재 Day/Week/Agenda visibility를 좁힌다. 승인된 `UI-005`에서는 mini month 일정 존재 표시에도 같은 filter를 적용하며 EventKit fetch·Event Brief·editor destination은 제거하지 않는다.
 
 Calendar Area:
 - Day/Week/Agenda는 모두 v1 필수
@@ -103,7 +103,7 @@ Task Center:
 - calendar rail은 EventKit calendar의 실제 sRGB color snapshot을 사용한다. 색을 가져올 수 없을 때만 Exchange 공통 blue 또는 secondary gray를 fallback으로 쓴다.
 - Phase 8의 calendar role과 role별 virtual set을 적용했다. 사용자 color override와 임의 이름 saved set은 아직 구현 범위가 아니다.
 
-### Mini month 실제 적용값
+### Mini month 적용값과 승인된 확장
 
 - Sidebar `List` 위에 고정하고 calendar 목록만 독립적으로 scroll한다.
 - Sidebar 최소 폭 210pt에서 바깥 padding 12pt, 7열 간격 2pt, 날짜 최소 높이 24pt, 요일 header 최소 높이 16pt를 사용한다.
@@ -112,7 +112,11 @@ Task Center:
 - 다른 월을 둘러보는 중 toolbar Today 또는 이미 focused인 같은 날짜를 다시 선택해도 focused month로 복귀한다.
 - focused date는 accent 원형 fill과 흰 숫자, today는 accent ring, focused+today는 흰 inset ring, 인접 월은 secondary와 낮은 opacity로 표시한다.
 - 모든 날짜와 월 화살표는 `Button`이고 grid는 keyboard focus section이다. 날짜 접근성 label은 요일+전체 날짜, value는 focused/today/adjacent 상태, identifier는 calendar civil key를 쓴다.
-- event dot은 42일 전체 fetch coverage를 보장할 때까지 표시하지 않는다.
+- 일정이 하나 이상 있는 날짜는 숫자 아래에 지름 3pt 단일 event dot을 둔다. 숫자, focused fill과 today ring에는 겹치지 않는다.
+- focused date의 dot은 흰색, 일반 날짜는 accent, 인접 월 날짜는 같은 accent에 낮은 opacity를 사용한다. 일정이 없으면 dot을 그리지 않으며 일정 수가 여러 개여도 시각 표시는 하나로 유지한다.
+- dot 요약은 `calendar visibility ∩ 선택 Calendar Set`을 적용하고 availability blocking과는 독립이다. 따라서 hide+block 일정에는 dot이 없고 show+ignore 일정에는 dot이 있다. timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 모든 civil day에 표시한다.
+- 표시 중인 42일 전체 fetch coverage가 성공한 뒤 grid 단위로 dot을 공개한다. 부분 결과를 섞지 않으며 loading/failure를 `일정 없음`으로 표현하지 않는다.
+- dot은 별도 hit target이나 접근성 element가 아니다. 날짜 Button의 접근성 value에는 `일정 N개`를 포함하고, grid는 loading/unavailable 상태를 별도로 전달한다.
 
 ## Event Brief 규칙
 

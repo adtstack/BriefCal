@@ -355,7 +355,8 @@ EventKitProvider
 - `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
 - `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
 - Phase 8 role set은 EventKit fetch·`ContextStore.observe`·editor destination을 줄이지 않고 렌더링에 쓰는 `visibleEvents`만 필터링한다. set 변경으로 선택 일정이 숨겨지면 pending notes를 먼저 flush하고 selection을 정리한다. duplicate candidate를 열 때는 `All Calendars`로 돌리고 Day에서 정확한 candidate를 선택한다.
-- Sidebar의 `MiniMonthGrid`는 Foundation calendar로 month start, first-weekday offset과 42개 civil day만 계산한다. SwiftUI `MiniMonthView`는 월 탐색을 local state로 유지하고 날짜 선택만 `AppState.selectMiniMonthDate`로 보내 기존 selection 정리·range fetch 경계를 재사용한다. incomplete fetch를 일정 없음으로 오인하지 않도록 event dot은 만들지 않는다.
+- Sidebar의 `MiniMonthGrid`는 Foundation calendar로 month start, first-weekday offset과 42개 civil day만 계산한다. SwiftUI `MiniMonthView`는 월 탐색을 local state로 유지하고 날짜 선택만 `AppState.selectMiniMonthDate`로 보내 기존 selection 정리·range fetch 경계를 재사용한다. 현재 구현은 incomplete fetch를 일정 없음으로 오인하지 않도록 event dot을 만들지 않는다.
+- 승인된 `CAL-007`/`UI-005` 확장은 grid의 42일 범위를 완전히 조회하되 기존 loaded interval과 합치거나 별도 cache를 사용해 본문 visible snapshot을 보존한다. 본문 `visibleInterval`에 제한된 `visibleEvents`를 그대로 재사용하지 않고, interval-scoped projection에서 raw event에 `calendar visibility ∩ 선택 Set`을 적용한다. `CalendarEventDateFormatting.effectiveDateRange`의 배타 종료와 표시 calendar의 civil-day overlap으로 `[civil key: count]` index를 셀 렌더링 전에 한 번 계산한 뒤 단일 dot과 접근성 count를 공개한다. 부분 coverage와 오래된 browse 응답에서는 grid 전체 요약을 공개하지 않는다.
 - UI용 `DisplayEventIdentity`는 SwiftUI 선택 안정성을 위한 값이다. all-day/floating 반복은 local occurrence anchor를 써 시스템 시간대 변경에도 같은 civil occurrence ID를 유지한다. 영속 resolver와 같은 ID 또는 같은 우선순위를 보장하지 않는다.
 
 세부 배치 결정은 [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md)을 따른다.
@@ -394,13 +395,40 @@ CalendarSource + DisplayEvent raw snapshot
 
 - `CalendarRole`은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`다. subscribed/birthdays만 `Subscription`으로 추론하고 Exchange·CalDAV·iCloud·local은 이름이나 account type으로 용도를 추측하지 않아 `Other`다.
 - 사용자가 role을 바꾼 때만 `CalendarRoleRepository`가 `calendar_preferences`를 upsert한다. 단순 EventKit fetch는 preference row를 만들지 않고, role write는 `CalendarProviding` create/update/delete를 호출하지 않는다.
-- `CalendarSetFilter`는 `All`과 role별 virtual filter다. 선택 set은 process UI state이며 v3에 저장하지 않는다. 임의 이름 saved set, calendar별 visibility와 color/name override는 현재 계약이 아니다.
+- `CalendarSetFilter`는 `All`과 role별 virtual filter다. 선택 set은 process UI state이며 v3에 저장하지 않는다. calendar별 visibility는 후속 v8 usage policy에서 구현했고 임의 이름 saved set과 color/name override는 현재 계약이 아니다.
 - `CalendarWriteRestriction` 우선순위는 invitation → attendee → subscribed → birthdays → provider-reported read-only다. provider ACL의 구체 사유를 추측하지 않으며 모든 제한 문구는 local Event Brief가 editable임을 함께 밝힌다.
 - duplicate detector는 다른 calendar의 정규화 title이 같고, timed start/end가 각각 15분 이내이거나 all-day civil exclusive range가 같을 때만 candidate를 만든다. 같은 strong identity/occurrence는 제외하고 deterministic하게 정렬하며 저장·자동 merge·hide·delete하지 않는다. `AppState`는 fetch snapshot을 받을 때 candidate index를 한 번 계산하고 card/Inspector는 event ID로 O(1) 조회하므로 렌더링 중 전체 event pair를 반복 검사하지 않는다.
 - role preference는 exact calendar identifier로만 적용한다. source/calendar title snapshot은 보조 기록이지 identifier churn 후 자동 재연결 근거가 아니다.
 - event/task snapshot이 남아 있어도 현재 `calendarSources`에 source가 없고 exact explicit override도 없으면 account type snapshot으로 role을 다시 추론하지 않고 `Other`로 표시한다.
 
 세부 결정은 [ADR-014](adr/ADR-014-multi-calendar-clarity.md)를 따른다. shared read-only Exchange의 실제 typed reason과 긴 source/role 조합의 화면 표시는 fixture·session lock 제한으로 아직 live visual gate를 통과하지 않았다.
+
+## Calendar usage와 availability pipeline
+
+```text
+EventKit sourceIdentifier + CalendarSource
+  → account별 Settings group
+  → sparse CalendarUsagePreference lookup
+  → resolved visibility + blocking policy
+      ├─ visibleEvents = visible ∩ selected role Set
+      └─ blockingEvents = raw events ∩ blocking ∩ event busy state
+           → effective interval clamp + overlap union
+```
+
+- additive `v8_calendar_usage`는 nullable visibility/blocking override를 역할 preference와
+  분리한다. 두 값이 모두 기본값이면 row를 삭제하고 raw fetch만으로 row를 만들지 않는다.
+- `CalendarSource.sourceIdentifier`는 source title이 같은 계정을 UI에서 합치지 않기 위한
+  grouping identity다. identifier churn 뒤 title만으로 preference를 자동 재연결하지 않는다.
+- 모든 calendar는 기본 visible이다. subscribed/birthdays는 기본 non-blocking이고 나머지는
+  기본 blocking이다. provider read-only는 non-blocking 근거가 아니다.
+- EventKit availability가 free이거나 canceled/current-user-declined인 event는 block하지 않는다.
+  tentative와 availability 미지원 event는 MVP에서 block한다. 숨긴 calendar도 blocking에
+  참여하며 merged interval은 중복/겹침을 한 번만 나타낸다.
+- Settings와 Sidebar 변경은 local repository만 쓰고 `CalendarProviding` mutation을 호출하지
+  않는다. raw fetch, Event Brief identity/observation, recovery, duplicate review와 editor
+  destination은 usage filter로 줄이지 않는다.
+
+세부 결정은 [ADR-017](adr/ADR-017-calendar-visibility-and-availability.md)을 따른다.
 
 ## Phase 9 backup/import/reset pipeline
 

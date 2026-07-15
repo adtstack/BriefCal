@@ -155,6 +155,8 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - calendar color는 `EKCalendar.cgColor`를 sRGB 값 snapshot으로 바꾸고 rail에만 사용한다.
 - all-day/floating local components에는 원래 calendar identifier를 보존한다. 표시 달력이 Buddhist/Japanese 등이어도 재구성 날짜가 이동하지 않게 하고, 표시 time zone만 적용한다.
 - UI occurrence identity는 calendar identifier + 가능한 EventKit item identifier + 반복 occurrence anchor 조합이다. all-day/floating은 raw UTC `Date` 대신 local occurrence anchor를 사용한다. 영속 Event Brief 복구는 결정 7의 별도 resolver를 따른다.
+- 승인된 `CAL-007` 후속 조회는 mini month grid 첫날 시작부터 42번째 날 다음 날 시작까지의 coverage를 성공한 뒤에만 일정 존재를 확정한다. 기존 loaded interval과 합쳐 조회하거나 별도 cache를 사용해 Day/Week/Agenda snapshot을 축소·교체하지 않아야 하며, 빠른 월 탐색에서 취소됐거나 오래된 응답이 최신 grid를 덮어서는 안 된다.
+- coverage가 불완전하거나 실패하면 부분 dot을 노출하거나 dot 부재를 `일정 없음`으로 해석하지 않는다. 이 조회는 read-only이며 EventKit create/update/delete를 호출하지 않는다.
 
 ## 결정 10: 원본 write는 최신 강한 identity와 변경 필드만 사용한다
 

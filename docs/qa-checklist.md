@@ -63,6 +63,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 3. 이전/다음 월로 탐색한 뒤 본문 날짜가 그대로인지 확인한다. toolbar Today와 이미 focused인 같은 spillover 날짜로 focused month 복귀를 확인하고, 현재 월과 인접 월 날짜를 각각 선택한다.
 4. Day, Week, Agenda, Tasks와 선택 없는 상태에서 날짜를 선택한다.
 5. keyboard focus/Space·Return과 VoiceOver 날짜 label·selected/today/adjacent value를 확인한다.
+6. `UI-005` 구현 gate에서는 현재 42일 바깥의 월을 빠르게 연속 탐색해 loading→완료와 stale 응답 무시를 확인한다. 0개·단일·복수, 자정에 끝나는 일정, 자정을 넘는 timed multi-day와 all-day 일정을 월 경계와 spillover 첫·끝 셀에 배치한다. Calendar Set과 calendar visibility도 각각 바꾼다.
 
 기대 결과:
 - 월은 항상 42개의 연속 civil day/6행이며 DST 시작·종료와 윤년·연도 경계에서 누락·중복이 없다.
@@ -70,7 +71,10 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 같은 loaded range에서 현재 event가 새 visible period에도 남는 Week/Agenda 선택은 event selection과 fetch count를 유지한다. Day에서 다른 날짜를 고르거나 먼 날짜로 이동해 event가 새 visible period 밖이면 selection을 정리한다. 새 range fetch는 선택 날짜를 포함해 정확히 한 번 실행하며 EventKit create/update/delete는 없다.
 - focused는 fill, today는 ring, 인접 월은 낮은 강조도로 구분되고 색만으로 상태를 전달하지 않는다.
 - 긴 월 제목과 6행이 210pt에서 잘리지 않고 calendar 목록만 별도로 scroll한다.
-- event dot은 완전한 42일 fetch coverage가 없으므로 표시하지 않는다.
+- 현재 구현은 완전한 42일 coverage가 없으므로 event dot을 표시하지 않는다. `CAL-007`/`UI-005` 구현 뒤에는 42일 전체 조회 성공 전 grid 전체 dot이 숨겨지고 loading/unavailable 상태가 `일정 없음`과 구분돼야 한다.
+- coverage 완료 뒤 일정이 있는 날짜에는 숫자 아래 단일 dot이 표시된다. focused date는 흰색, 일반 날짜는 accent, 인접 월은 낮은 opacity이며 숫자·fill·ring과 겹치지 않는다.
+- timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 각 civil day에 dot을 만든다. 자정에 끝나는 일정은 다음 날에 표시하지 않으며 hide+block은 세지 않고 show+ignore는 센다. 선택 Set 밖의 일정도 제외한다. 여러 일정도 dot은 하나지만 VoiceOver value는 정확히 `일정 N개`를 전달한다.
+- 월 탐색과 요약 조회는 본문 focused date·현재 event snapshot을 바꾸거나 EventKit create/update/delete를 호출하지 않는다.
 
 ### 2. 권한 거부
 
@@ -187,6 +191,24 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - typed reason 우선순위는 invitation→attendee→subscription→birthdays→provider read-only이며 UI 설명과 원본 write preflight가 같다. local Event Brief는 계속 편집 가능하다.
 - 작은 card는 icon, 자세한 role/source/reason은 help·VoiceOver와 Inspector에 남는다. 44pt 고밀도와 210pt Sidebar, 긴 한국어/source명은 실제 화면에서 잘림과 VoiceOver 순서를 별도 확인한다.
 
+### 7-d. Calendar visibility와 availability blocking
+
+절차:
+1. 같은 account source 아래 둘 이상의 calendar를 준비하고 Settings의 Calendars tab을 연다.
+2. 각 calendar를 show+block, show+ignore, hide+block, hide+ignore 네 조합으로 설정한다.
+3. busy, free, tentative, canceled, current-user-declined와 availability 미지원 event를 준비한다.
+4. Sidebar eye, Settings account bulk action, Day/Week/Agenda와 blocked interval projection을 비교한다.
+5. 앱을 재실행하고 backup export/import/reset 뒤 설정을 다시 확인한다.
+
+기대 결과:
+- account group은 EventKit source identifier를 사용하며 source title이 같아도 다른 identifier를 합치지 않는다.
+- hide는 Day/Week/Agenda와 현재 선택만 정리하고 raw fetch, Event Brief observation/relink, duplicate와 editor destination을 줄이지 않는다.
+- hide+block event는 화면에 없지만 blocking projection에는 남고 show+ignore event는 화면에 보이지만 blocking에는 없다.
+- free, canceled와 current-user-declined event는 block하지 않는다. busy, tentative, unavailable과 availability 미지원 event는 blocking calendar에서 block한다.
+- 겹치거나 맞닿은 block interval은 union되어 중복 calendar/event가 시간을 이중 가중하지 않는다.
+- 기본값은 모든 calendar show, subscribed/birthdays ignore, 나머지 account type block이다. read-only만으로 ignore하지 않는다.
+- explicit usage만 `calendar_usage_preferences`에 sparse 저장하고 마지막 override reset에서 row를 삭제한다. 어떤 설정도 EventKit create/update/delete를 호출하지 않는다.
+
 ### 7-a. 종료 일정과 After Review (Phase 7A)
 
 절차:
@@ -254,7 +276,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - import cancellation과 모든 preflight 실패는 active DB, WAL/SHM과 EventKit provider write count를 바꾸지 않는다.
 - valid import는 Event Brief/tasks/personal tasks/change log/role을 복구하고 import 직전 DB의 automatic ZIP 경로를 결과에 표시한다.
 - restore 또는 사후 schema/integrity/FK failure는 사전 snapshot으로 rollback하고 partial active DB를 성공으로 표시하지 않는다.
-- reset은 automatic backup이 먼저 성공한 경우에만 실행되며 `event_change_log`, `event_tasks`, `event_links`, `event_contexts`, `personal_tasks`, `calendar_preferences` row를 비운다. schema와 GRDB migration history는 유지한다.
+- reset은 automatic backup이 먼저 성공한 경우에만 실행되며 `event_change_log`, `event_tasks`, `event_links`, `event_contexts`, `personal_tasks`, `calendar_preferences`, `calendar_usage_preferences`를 포함한 KaosCal user row를 비운다. schema와 GRDB migration history는 유지한다.
 - export/import/reset 어느 경로도 Calendar/Exchange 원본 일정이나 EventKit provider write count를 바꾸지 않는다.
 - 현재 UI는 linked title/time/location/identifier와 original-notes change snapshot이 plaintext ZIP에 포함될 수 있고 complete calendar record/account credential/Exchange password는 전용 export 대상이 아니라고 설명한다. KaosCal이 credential/token과 attendee 전체 목록을 전용 필드로 저장하지 않는다는 점, 사용자 notes/tasks는 검사·redact하지 않아 본문 민감정보가 포함될 수 있다는 점도 Settings copy와 backup 정책에 구현됐다. run `20260712-1616-KST`에서 Settings 전체 scroll과 실제 Export/Import panel 문구를 확인했다.
 - `Backups`의 recovery ZIP은 자동 삭제·prune되지 않는다.
@@ -621,6 +643,7 @@ Phase 10 Paid Beta Polish 자동·수동 gate:
 
 Mini month 자동/Release gate:
 
+- 아래 증거는 event-dot 확장 이전 gate이며 `CAL-007`/`UI-005` 구현 통과 근거가 아니다.
 - Sunday/Monday-first, 윤년·연도 경계, New York DST 시작/종료, LA/Tokyo absolute-date 차이와 42개 고유 civil identifier 검증
 - 같은 범위·먼 범위 날짜 선택의 selection/fetch 경계와 provider create/update/delete 0회 검증
 - `MiniMonthView`를 Sidebar 최소 폭 210×240, German locale, Monday-first로 직접 offscreen render해 6행·인접 월·focused/today 상태와 잘림 없음 확인. 전체 `NavigationSplitView` offscreen 결과는 sidebar가 렌더되지 않아 근거에서 제외

@@ -88,11 +88,15 @@ Task Center는 프로젝트 관리 도구가 아니다.
 - 복잡한 반복 규칙을 KaosCal이 안전하게 표현할 수 없을 때의 강제 수정
 - detached occurrence의 `이번 이후`, 강한 context reconciliation 계획이 없는 linked future-series write
 - 반복 series·detached occurrence·delete의 일반 Undo와 앱 재실행 뒤 Undo
-- 임의 이름 saved Calendar Set, calendar별 visibility·role color/name override
+- 임의 이름 saved Calendar Set, v1의 calendar별 visibility·role color/name override
 - possible duplicate의 자동 merge·hide·delete 또는 EventKit 원본 변경
 - backup record-level merge, schedule backup, 자동 retention/pruning
 - schema가 다른 backup migration/downgrade, 임의 SQLite 복구와 backup 없는 destructive
   bootstrap reset
+
+v1 동결 뒤 additive `v8_calendar_usage`에서 calendar별 visibility와 availability blocking은
+구현했다. 이는 frozen v1 제공 범위를 소급 변경하지 않으며 saved Set과 role color/name
+override는 계속 제외한다.
 
 ## 범위 변경 규칙
 

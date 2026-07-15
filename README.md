@@ -2,6 +2,8 @@
 
 KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 각 일정의 준비물·메모·후속 작업을 로컬에 보존하는 macOS 앱이다.
 
+현행 제품 동작, 시스템 불변식과 요구사항별 인수 기준은
+[제품·시스템 스펙](docs/specification.md)을 기준으로 한다.
 현재 개발 단계, 최신 자동·Release 증거와 아직 닫히지 않은 live/manual gate는
 [Current Status](docs/current-status.md)를 단일 기준으로 사용한다. 과거 검증 결과는
 [Implementation Log](docs/implementation-log.md), Exchange 지원 판정은

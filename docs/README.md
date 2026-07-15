@@ -4,31 +4,34 @@ KaosCal 문서는 제품 판단, 기술 결정, 구현 단계, QA 기준과 실�
 
 ## 먼저 읽을 문서
 
-1. [current-status.md](current-status.md)
+1. [specification.md](specification.md)
+   - 현행 제품·시스템 동작, 요구사항 ID와 인수 기준의 단일 스펙이다.
+
+2. [current-status.md](current-status.md)
    - 현재 phase, 최신 검증 결과와 열린 manual/live gate의 단일 상태 기준이다.
 
-2. [user-guide.md](user-guide.md)
+3. [user-guide.md](user-guide.md)
    - 설치, 권한, 주요 기능, backup/reset과 사용자 데이터 경계를 설명한다.
 
-3. [v1-scope.md](v1-scope.md)
+4. [v1-scope.md](v1-scope.md)
    - 현재 v1의 필수·제외 범위와 Exchange 지원 경계를 정의한다.
 
-4. [v1-freeze.md](v1-freeze.md)
+5. [v1-freeze.md](v1-freeze.md)
    - v1 기능 개발 종료선, 유지보수 예외와 v2 전환 기준을 정의한다.
 
-5. [v2-execution-plan.md](v2-execution-plan.md)
+6. [v2-execution-plan.md](v2-execution-plan.md)
    - v1 이후 T0~T5 단계의 순서, 공통 계약과 완료 게이트를 정의한다.
 
-6. [adr/README.md](adr/README.md)
+7. [adr/README.md](adr/README.md)
    - Accepted 결정의 근거와 대체 이력을 관리한다.
 
-7. [implementation-log.md](implementation-log.md)
+8. [implementation-log.md](implementation-log.md)
    - 실제 변경, 검증 결과, 미해결 위험을 시간순으로 남긴다.
 
-8. [developer-setup.md](developer-setup.md)
+9. [developer-setup.md](developer-setup.md)
    - Xcode와 Exchange 테스트 환경 준비물을 정리한다.
 
-7. [exchange-compatibility.md](exchange-compatibility.md)
+10. [exchange-compatibility.md](exchange-compatibility.md)
    - 추측이 아닌 실계정 검증 결과로 Exchange 지원 범위를 선언한다.
 
 ## 제품·기술 기준 문서

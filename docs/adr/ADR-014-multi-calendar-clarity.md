@@ -42,6 +42,15 @@ Event Brief identity, change log와 Exchange 동기화 경계를 바꾸지 않�
   timeline card의 밀도는 유지하고 자세한 이유와 후보 목록은 Inspector를 기준
   화면으로 삼는다.
 
+## 2026-07-15 mini month projection 확장
+
+- `UI-005`가 구현되면 Calendar Set의 display projection은 Day/Week/Agenda뿐 아니라
+  mini month 일정 존재 표시에도 적용한다. 이는 `설계 승인 / 구현 대기`이며 기존
+  Phase 8 구현 완료를 뜻하지 않는다.
+- mini month 요약은 `calendar visibility ∩ 선택 Calendar Set`만 사용하고 availability
+  blocking과는 독립이다. raw fetch, Event Brief 관찰·복구, duplicate review와 editor
+  destination을 줄이지 않는다는 기존 비파괴 경계는 그대로 유지한다.
+
 ## 결과
 
 사용자는 여러 계정의 캘린더를 자기 의미로 분류하고 역할별로 볼 수 있으며,

@@ -899,6 +899,66 @@
 - 결과: **implemented / live pending**. 실제 iCloud·On My Mac fixture, 권한 철회, cleanup,
   fake provider contract와 Task Center source badge는 후속 gate로 남겼다. T2 이후는 시작하지 않았다.
 
+## 2026-07-15 — 현행 스펙 기준선과 calendar usage 자동 checkpoint
+
+- 관련 문서: [제품·시스템 스펙](specification.md),
+  [ADR-017](adr/ADR-017-calendar-visibility-and-availability.md),
+  [v2 실행계획](v2-execution-plan.md)
+- 문서 변경:
+  - 현재 구현을 제품 계약, 데이터 소유권, 기능·비기능 요구사항, 상태 전이, 인수 등급과
+    추적성으로 정리한 `docs/specification.md`를 추가했다.
+  - calendar/Event Brief/task/provider/reference/backup 경계를 고유 요구사항 ID로 연결하고,
+    새 기능은 스펙→ADR→test→implementation→evidence 순서로 진행하도록 규칙을 고정했다.
+  - 루트 README와 docs index에서 스펙을 현행 동작·인수 기준의 진입점으로 연결했다.
+- 구현 변경:
+  - EventKit source identifier로 account를 묶고 calendar별 visibility와 availability blocking을
+    역할과 독립된 local policy로 추가했다. 모든 calendar는 기본 visible이며
+    subscribed/birthdays만 기본 non-blocking이다.
+  - `DisplayEvent`의 availability, canceled와 current-user-declined snapshot으로 blocking을
+    계산한다. free/canceled/declined는 제외하고 나머지는 보수적으로 포함하며 겹치거나
+    맞닿은 interval을 union한다. raw event observation·recovery·editor destination은 숨김으로
+    줄이지 않는다.
+  - additive `v8_calendar_usage` sparse preference, Settings의 account별 Show/Block/Role과
+    bulk action, Sidebar visibility button/blocking indicator를 구현했다. backup/import/reset이
+    새 preference를 보존·정리하며 어떤 설정도 EventKit write를 호출하지 않는다.
+- 검증:
+  - 스펙의 로컬 Markdown link 26개가 모두 존재함을 확인했다.
+  - unsigned Debug 전체 suite:
+    **237 executed / 236 passed / 1 intentional `ManualEventKitQATests` skip /
+    0 failures / 0 unexpected**, `TEST SUCCEEDED`.
+  - result bundle:
+    `/tmp/KaosCalCalendarUsageFullTests-20260715-1445.xcresult`
+  - calendar usage 자동 범위에는 visibility/blocking 독립 persistence, free/cancelled/declined
+    제외, Settings offscreen render, current-schema export/import/reset 회귀가 포함된다.
+  - `testCalendarUsageSettingsFitsAndProducesOffscreenBitmap`은 pass했지만 임시
+    `calendar-settings.sqlite` cleanup 중 열린 file descriptor unlink libsqlite 경고가 한 번
+    출력됐다. production DB는 열지 않았으며 fixture lifetime 정리는 후속 점검으로 남긴다.
+  - offscreen test resource lifetime 정리 뒤
+    `/tmp/KaosCalCalendarUsageUIFinal-20260715-1450.xcresult`에서 UI test 1/1을 SQLite
+    lifecycle 경고 없이 재통과했다. `git diff --check`도 통과했다.
+- 결과: 현행 작업 트리의 자동 기준선과 요구사항 추적 문서는 **pass**.
+- 남은 위험: 이 실행은 unsigned Debug이며 실제 Exchange/provider, final Settings·Sidebar
+  window/VoiceOver, Release signing과 운영 DB 불변을 검증하지 않았다. 해당 항목은
+  `implemented / live pending`으로 유지한다.
+
+## 2026-07-15 — mini month 일정 존재 표시 스펙 승인
+
+- 관련 문서: [제품·시스템 스펙](specification.md),
+  [ADR-002](adr/ADR-002-calendar-and-task-experience.md),
+  [Design System](design-system.md), [QA Checklist](qa-checklist.md)
+- 문서 변경:
+  - `CAL-007`에 표시 중인 6×7/42일 전체 조회, 본문 snapshot 보존, partial/stale 응답
+    금지 계약을 추가했다.
+  - `UI-005`에 날짜 숫자 아래 3pt 단일 dot, focused/normal/adjacent 색상,
+    `visibility ∩ Calendar Set`, availability blocking과의 독립, multi-day/all-day 배타
+    종료와 접근성 count를 추가했다.
+  - 초기 mini month의 event-dot 보류는 역사적 사실로 유지하고, ADR·architecture·조회
+    결정·QA에 승인된 후속 구현 경계와 인수 시나리오를 연결했다.
+- 검증: 문서 diff와 로컬 Markdown link를 검사했다. 코드·테스트 파일은 이 문서-only
+  변경 범위에 포함하지 않았다.
+- 결과: **설계 승인 / 구현 대기**. 현재 앱은 event dot을 표시하지 않으며 자동·offscreen·
+  실창·VoiceOver 통과 근거도 아직 없다.
+
 ## 다음 항목 템플릿
 
 ```markdown
