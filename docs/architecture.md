@@ -36,13 +36,15 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 | Event Brief 상태 | KaosCal | Local SQLite |
 | Personal task | KaosCal | Local SQLite |
 | 명시적 캘린더 역할 override | KaosCal | Local SQLite |
+| 캘린더 표시·availability 사용 정책 | KaosCal | Local SQLite |
+| 저장 Calendar Set, exact membership, 현재 선택 | KaosCal | Local SQLite |
 | 수동·recovery backup | 사용자 / KaosCal | 사용자가 고른 위치 또는 Application Support `Backups`의 plaintext ZIP |
 
 원칙: KaosCal 고유 데이터는 `EKEvent.notes`에 쓰지 않는다.
 
 ## 현재 모듈 구조
 
-아래 tree는 Phase 9 Local Data 구현을 포함한 실제 구조다. recurrence editor와 mutation/linked-delete impact review는 `EventEditorView`, scope·partial-success·session Undo와 missing/orphan/deleted-original recovery 조정은 `AppState`, change-log/relink/delete-finalize transaction은 기존 `ContextStore`에 유지했다. Phase 8은 EventKit snapshot을 바꾸지 않고 `CalendarClarity`의 로컬 projection과 additive v3 preference 저장소를 추가했다. Phase 9은 같은 `AppDatabase` writer의 snapshot/restore와 `ContextStore` local-data service를 Settings UI에 연결하며 새 schema table을 만들지 않는다.
+아래 tree는 Phase 9 Local Data 이후의 calendar usage와 saved Calendar Set 확장을 포함한 실제 구조다. recurrence editor와 mutation/linked-delete impact review는 `EventEditorView`, scope·partial-success·session Undo와 missing/orphan/deleted-original recovery 조정은 `AppState`, change-log/relink/delete-finalize transaction은 기존 `ContextStore`에 유지했다. Phase 8은 EventKit snapshot을 바꾸지 않고 `CalendarClarity`의 로컬 projection과 additive v3 preference 저장소를 추가했다. 이후 v8은 calendar usage를, v9는 저장 Set·membership·현재 선택을 additive table로 추가한다. Phase 9 Local Data 기능은 같은 `AppDatabase` writer의 snapshot/restore와 `ContextStore` local-data service를 Settings UI에 연결한다.
 
 ```text
 KaosCal.app
@@ -67,6 +69,10 @@ KaosCal.app
 │  ├─ PersonalTaskRepository.swift
 │  ├─ TaskCenterRepository.swift
 │  ├─ CalendarRoleRepository.swift
+│  ├─ CalendarSetRepository.swift
+│  ├─ TaskProviderModels.swift
+│  ├─ TaskProviderRepository.swift
+│  ├─ ContextReferenceRepository.swift
 │  ├─ LocalDataBackupService.swift
 │  └─ EventIdentityFingerprint.swift
 ├─ Features/
@@ -100,7 +106,7 @@ KaosCal.app
    └─ FakeCalendarProvider.swift
 ```
 
-`EventBrief`와 `TaskCenter` feature 경계는 Phase 4, `EventEditor`는 Phase 5에서 추가했다. Phase 6과 Phase 7A/7B/7C는 위의 기존 경계를 확장했다. missing/relink와 deleted-original recovery UI도 기존 Calendar shell, Event Brief와 Task Center에 배치했으며 별도 저장 모듈을 만들지 않았다. Phase 8은 `CalendarClarity.swift`에 role·typed restriction·virtual set·duplicate projection을, `CalendarRoleRepository.swift`에 명시적 role override만 두었다. Phase 9의 `LocalDataSettingsView`는 backup/import/reset 확인과 결과 표시만 담당하고 archive validation, automatic backup, hot restore와 reset transaction은 ContextStore 경계에 둔다.
+`EventBrief`와 `TaskCenter` feature 경계는 Phase 4, `EventEditor`는 Phase 5에서 추가했다. Phase 6과 Phase 7A/7B/7C는 위의 기존 경계를 확장했다. missing/relink와 deleted-original recovery UI도 기존 Calendar shell, Event Brief와 Task Center에 배치했으며 별도 저장 모듈을 만들지 않았다. Phase 8은 `CalendarClarity.swift`에 role·typed restriction·Smart Role Filter·duplicate projection을, `CalendarRoleRepository.swift`에 role override와 usage preference를 둔다. `CalendarSetRepository.swift`는 저장 Set CRUD·순서·exact membership·현재 선택을 같은 DB writer에서 관리한다. Phase 9의 `LocalDataSettingsView`는 backup/import/reset 확인과 결과 표시만 담당하고 archive validation, automatic backup, hot restore와 reset transaction은 ContextStore 경계에 둔다.
 
 ## 런타임 흐름
 
@@ -117,8 +123,8 @@ KaosCal.app
 9. Phase 6의 위험한 변경은 impact preview와 명시적 scope 확인 뒤 EventKit을 쓰고, linked context rebind와 change log를 한 local transaction으로 조정한다. 마지막 linked 비반복 single calendar/time 변경만 process session 안에서 Undo 후보가 된다.
 10. 사용자가 linked 원본 열기/Recheck를 요청하면 occurrence-aware provider lookup을 실행한다. 첫 명시적 notFound는 missing, 두 번째 명시적 notFound는 orphan review만 열며 Keep/검증된 Relink/local-only Delete를 서로 다른 명령으로 처리한다.
 11. linked 원본 삭제는 saved-link·notes/tasks impact를 고정한 별도 review와 final Confirm을 거친다. 성공한 EventKit receipt 뒤 `cancelled + orphaned`, saved-link unavailable cancellation log와 Undo supersede를 한 SQLite transaction으로 finalize한다. deleted-original projection은 이 current-link-generation provenance까지 확인한다.
-12. calendar fetch 후 sparse role preference를 읽어 `CalendarDescriptor`를 만든다. 선택한 role set은 Day/Week/Agenda의 `visibleEvents`만 좁히고, typed restriction과 duplicate candidate는 원본 write 없이 화면·VoiceOver에 projection한다.
-13. Settings의 Local Data 명령은 pending local draft와 진행 중 mutation을 먼저 막고 같은 file-backed writer에서 export snapshot을 만든다. import/reset은 현재 DB를 `Backups`에 자동 export한 뒤 검증된 snapshot hot restore 또는 six-table reset transaction을 수행하고 local projection을 다시 읽는다. 이 흐름은 EventKit provider write와 분리된다.
+12. calendar fetch 후 sparse role·usage preference와 saved Calendar Set snapshot을 읽어 `CalendarDescriptor`를 만든다. 전역 Enabled를 master mask로 적용한 뒤 선택한 All, Smart Role Filter 또는 saved Set으로 Day/Week/Agenda의 `visibleEvents`만 좁힌다. typed restriction과 duplicate candidate는 원본 write 없이 화면·VoiceOver에 projection한다.
+13. Settings의 Local Data 명령은 pending local draft와 진행 중 mutation을 먼저 막고 같은 file-backed writer에서 export snapshot을 만든다. import/reset은 현재 DB를 `Backups`에 자동 export한 뒤 검증된 snapshot hot restore 또는 현재 user-data table reset transaction을 수행하고 local projection을 다시 읽는다. 이 흐름은 EventKit provider write와 분리된다.
 
 ## Phase 4 local interaction pipeline
 
@@ -342,7 +348,7 @@ EventEditor draft + selected occurrence
 ```text
 EventKitProvider
   → DisplayEvent value snapshot
-  → AppState visible period + virtual role-set filter/cache
+  → AppState visible period + global Enabled + selected Calendar Set filter/cache
   → CalendarEventLayout
   → CalendarTimelineView / AgendaView / EventInspectorView
 ```
@@ -354,9 +360,9 @@ EventKitProvider
 - pending 범위 조회는 다음 navigation 전에 취소해 오래된 결과가 현재 화면을 덮지 않게 한다. `EKEventStoreChanged`는 마지막 loaded interval을 250ms 병합 재조회한다.
 - `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
 - `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
-- Phase 8 role set은 EventKit fetch·`ContextStore.observe`·editor destination을 줄이지 않고 렌더링에 쓰는 `visibleEvents`만 필터링한다. set 변경으로 선택 일정이 숨겨지면 pending notes를 먼저 flush하고 selection을 정리한다. duplicate candidate를 열 때는 `All Calendars`로 돌리고 Day에서 정확한 candidate를 선택한다.
+- Calendar Set은 EventKit fetch·`ContextStore.observe`·editor destination을 줄이지 않고 렌더링에 쓰는 `visibleEvents`만 필터링한다. 전역 Enabled가 모든 Set의 master mask이고 Set 변경으로 선택 일정이 숨겨지면 pending notes를 먼저 flush하고 selection을 정리한다. duplicate/relink 후보 또는 성공한 original write의 focus 대상이 normal filter 밖일 때만 저장된 Set 선택을 바꾸지 않고 해당 일정을 임시로 reveal한다.
 - Sidebar의 `MiniMonthGrid`는 Foundation calendar로 month start, first-weekday offset과 42개 civil day만 계산한다. SwiftUI `MiniMonthView`는 월 탐색을 local state로 유지하고 날짜 선택만 `AppState.selectMiniMonthDate`로 보내 기존 selection 정리·range fetch 경계를 재사용한다. 현재 구현은 incomplete fetch를 일정 없음으로 오인하지 않도록 event dot을 만들지 않는다.
-- 승인된 `CAL-007`/`UI-005` 확장은 grid의 42일 범위를 완전히 조회하되 기존 loaded interval과 합치거나 별도 cache를 사용해 본문 visible snapshot을 보존한다. 본문 `visibleInterval`에 제한된 `visibleEvents`를 그대로 재사용하지 않고, interval-scoped projection에서 raw event에 `calendar visibility ∩ 선택 Set`을 적용한다. `CalendarEventDateFormatting.effectiveDateRange`의 배타 종료와 표시 calendar의 civil-day overlap으로 `[civil key: count]` index를 셀 렌더링 전에 한 번 계산한 뒤 단일 dot과 접근성 count를 공개한다. 부분 coverage와 오래된 browse 응답에서는 grid 전체 요약을 공개하지 않는다.
+- 승인된 `CAL-007`/`UI-005` 확장은 grid의 42일 범위를 완전히 조회하되 기존 loaded interval과 합치거나 별도 cache를 사용해 본문 visible snapshot을 보존한다. 본문 `visibleInterval`에 제한된 `visibleEvents`를 그대로 재사용하지 않고, interval-scoped projection에서 raw event에 `global Enabled ∩ 선택 Set`을 적용한다. `CalendarEventDateFormatting.effectiveDateRange`의 배타 종료와 표시 calendar의 civil-day overlap으로 `[civil key: count]` index를 셀 렌더링 전에 한 번 계산한 뒤 단일 dot과 접근성 count를 공개한다. 부분 coverage와 오래된 browse 응답에서는 grid 전체 요약을 공개하지 않는다.
 - UI용 `DisplayEventIdentity`는 SwiftUI 선택 안정성을 위한 값이다. all-day/floating 반복은 local occurrence anchor를 써 시스템 시간대 변경에도 같은 civil occurrence ID를 유지한다. 영속 resolver와 같은 ID 또는 같은 우선순위를 보장하지 않는다.
 
 세부 배치 결정은 [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md)을 따른다.
@@ -365,13 +371,13 @@ EventKitProvider
 
 ```text
 KaosCalApp / AppBootstrap
-  → AppDatabase(DatabaseQueue + v1 + v2 + v3 additive migrations)
+  → AppDatabase(DatabaseQueue + v1 ... v9 additive migrations)
   → ContextStore transaction boundary
-  → EventContext/EventTask/PersonalTask/CalendarRole repositories
+  → EventContext/EventTask/PersonalTask/CalendarRole/CalendarSet repositories
   → TaskCenterRepository combined read
 ```
 
-- `v1_context_store`는 `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`만 만든 immutable baseline이다. Phase 6은 이 baseline을 바꾸지 않고 `v2_event_change_log`를 additive migration으로 추가했다. Phase 7B는 기존 status/snapshot/foreign key와 v2 `relinked`, Phase 7C는 기존 `cancelled`/`orphaned`, `cancelled` log, scope와 unavailable Undo를 재사용해 migration을 추가하지 않았다. Phase 8은 기존 table을 바꾸지 않고 `v3_calendar_clarity`의 sparse `calendar_preferences`를 추가했다. Phase 9 settings/backup metadata는 DB table이 아니라 archive manifest이며 새 migration을 추가하지 않는다.
+- `v1_context_store`는 `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`만 만든 immutable baseline이다. Phase 6은 이 baseline을 바꾸지 않고 `v2_event_change_log`를 additive migration으로 추가했다. Phase 7B는 기존 status/snapshot/foreign key와 v2 `relinked`, Phase 7C는 기존 `cancelled`/`orphaned`, `cancelled` log, scope와 unavailable Undo를 재사용해 migration을 추가하지 않았다. Phase 8은 기존 table을 바꾸지 않고 `v3_calendar_clarity`의 sparse `calendar_preferences`를 추가했다. Phase 9 settings/backup metadata는 DB table이 아니라 archive manifest다. 이후 task provider/reference 확장이 v4~v7, calendar usage가 v8, 저장 Calendar Set이 `v9_saved_calendar_sets`로 이어진다.
 - 테스트 host는 `XCTestConfigurationFilePath`를 감지해 default Application Support DB를 열지 않는다. repository test는 in-memory 또는 임시 파일 DB만 사용한다.
 - 앱 시작 DB open/migration 실패는 in-memory fallback 없이 전역 복구 화면으로 전환한다. 기존 DB를 삭제하거나 덮어쓰지 않는다.
 - 첫 non-empty notes 또는 event task 저장만 context+link를 만들며, resolve부터 insert/update까지 하나의 write transaction이다.
@@ -387,7 +393,8 @@ KaosCalApp / AppBootstrap
 CalendarSource + DisplayEvent raw snapshot
   → sparse CalendarRolePreference lookup
   → CalendarDescriptor(role + explicit/inferred)
-  → virtual CalendarSetFilter for visibleEvents only
+  → global Enabled master mask
+  → CalendarSetFilter(All / Smart Role Filter / saved exact-membership Set)
   → role/source: Sidebar / Day / Week / Agenda / Inspector / Task Center / Editor
   → typed restriction: Sidebar / Day / Week / Agenda / Inspector + write preflight
   → duplicate read projection: Day / Week / Agenda / Inspector
@@ -395,7 +402,7 @@ CalendarSource + DisplayEvent raw snapshot
 
 - `CalendarRole`은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`다. subscribed/birthdays만 `Subscription`으로 추론하고 Exchange·CalDAV·iCloud·local은 이름이나 account type으로 용도를 추측하지 않아 `Other`다.
 - 사용자가 role을 바꾼 때만 `CalendarRoleRepository`가 `calendar_preferences`를 upsert한다. 단순 EventKit fetch는 preference row를 만들지 않고, role write는 `CalendarProviding` create/update/delete를 호출하지 않는다.
-- `CalendarSetFilter`는 `All`과 role별 virtual filter다. 선택 set은 process UI state이며 v3에 저장하지 않는다. calendar별 visibility는 후속 v8 usage policy에서 구현했고 임의 이름 saved set과 color/name override는 현재 계약이 아니다.
+- `CalendarSetFilter`는 synthetic `All`, role별 `Smart Role Filter`, 사용자 이름의 saved Set을 구분한다. v9 singleton selection row가 현재 filter를 보존하고 active saved Set 삭제·잘못된 선택 복원 시 `All`로 fallback한다. saved Set은 exact calendar identifier membership을 가지므로 역할이 섞이거나 서로 겹칠 수 있다. identifier가 사라져도 membership은 보존하며 title 기반 자동 재연결 없이 사용자가 `Replace…`를 명시해야 한다. unavailable 표시는 권한 있는 loaded/authoritative-empty source snapshot에서만 계산한다.
 - `CalendarWriteRestriction` 우선순위는 invitation → attendee → subscribed → birthdays → provider-reported read-only다. provider ACL의 구체 사유를 추측하지 않으며 모든 제한 문구는 local Event Brief가 editable임을 함께 밝힌다.
 - duplicate detector는 다른 calendar의 정규화 title이 같고, timed start/end가 각각 15분 이내이거나 all-day civil exclusive range가 같을 때만 candidate를 만든다. 같은 strong identity/occurrence는 제외하고 deterministic하게 정렬하며 저장·자동 merge·hide·delete하지 않는다. `AppState`는 fetch snapshot을 받을 때 candidate index를 한 번 계산하고 card/Inspector는 event ID로 O(1) 조회하므로 렌더링 중 전체 event pair를 반복 검사하지 않는다.
 - role preference는 exact calendar identifier로만 적용한다. source/calendar title snapshot은 보조 기록이지 identifier churn 후 자동 재연결 근거가 아니다.
@@ -410,7 +417,7 @@ EventKit sourceIdentifier + CalendarSource
   → account별 Settings group
   → sparse CalendarUsagePreference lookup
   → resolved visibility + blocking policy
-      ├─ visibleEvents = visible ∩ selected role Set
+      ├─ visibleEvents = global Enabled ∩ selected Calendar Set
       └─ blockingEvents = raw events ∩ blocking ∩ event busy state
            → effective interval clamp + overlap union
 ```
@@ -428,7 +435,13 @@ EventKit sourceIdentifier + CalendarSource
   않는다. raw fetch, Event Brief identity/observation, recovery, duplicate review와 editor
   destination은 usage filter로 줄이지 않는다.
 
-세부 결정은 [ADR-017](adr/ADR-017-calendar-visibility-and-availability.md)을 따른다.
+`visibleEvents`의 정확한 식은 `global Enabled ∩ selected Set`이다. `All`은 모든 globally
+enabled calendar, Smart Role Filter는 enabled calendar 중 해당 role, saved Set은 enabled
+calendar 중 exact membership만 포함한다. Set membership과 availability blocking은 독립이며
+globally disabled calendar도 blocking 정책에 따라 busy 계산에는 계속 참여할 수 있다.
+
+세부 결정은 [ADR-017](adr/ADR-017-calendar-visibility-and-availability.md)과
+[ADR-018](adr/ADR-018-saved-calendar-sets.md)을 따른다.
 
 ## Phase 9 backup/import/reset pipeline
 
@@ -439,16 +452,16 @@ Settings / AppState local-data operation gate
   → strict store-only ZIP: kaoscal.sqlite + manifest.json
   → import preflight: archive/manifest/hash/schema/migrations/integrity/FK
   → automatic current-DB ZIP in Application Support/KaosCal/Backups
-  → same-writer hot restore or six-table reset transaction
+  → same-writer hot restore or current user-data reset transaction
   → post-restore schema/integrity/FK check + local projection reload
 ```
 
-- archive format version은 SQLite schema와 독립적이다. manifest는 현재 v3까지의 migration 목록, DB byte count와 SHA-256을 기록하며 기기 이름은 기록하지 않는다.
+- archive format version은 SQLite schema와 독립적이다. manifest는 현재 v9까지의 migration 목록, DB byte count와 SHA-256을 기록하며 기기 이름은 기록하지 않는다.
 - 수동 파일 작업은 `NSSavePanel`/`NSOpenPanel`에서 사용자가 고른 security-scoped URL과 user-selected read/write entitlement만 사용한다. 자동 backup은 sandbox Application Support 안에 둔다.
 - import는 root의 정확한 두 store-only entry만 허용한다. manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 두고 filesystem file replacement, WAL/SHM copy, nested path, duplicate/symlink/extra entry, deflate/encryption/data-descriptor/ZIP64/multi-disk와 record-level merge는 사용하지 않는다.
 - SHA-256은 archive 내부 byte integrity 검사일 뿐 제작자 서명이 아니다. 실행 중인 앱과 application identifier·current schema object·migration 목록이 정확히 같은 신뢰 가능한 KaosCal backup만 import하며 과거 schema 자동 migration이나 미래 schema downgrade는 하지 않는다.
 - import/reset은 automatic backup이 성공해야 active data를 바꾼다. restore 사후 검증이 실패하면 같은 writer에 pre-operation snapshot rollback을 시도한다.
-- reset은 여섯 user-data table row만 한 transaction에서 비우고 GRDB migration history와 schema를 유지한다.
+- reset은 현재 user-data table row를 한 transaction에서 비우고 GRDB migration history와 schema를 유지한다. 여기에는 saved Set·membership·selection도 포함된다.
 - ZIP은 plaintext이고 linked title/time/location/identifier, original-notes change snapshot을 포함할 수 있다. KaosCal은 계정 credential/token을 전용 필드로 수집하지 않고 EventKit 전체 event store도 export하지 않지만, 사용자 notes/tasks 본문은 검사·redact하지 않으므로 그 안에 입력한 민감정보는 그대로 포함될 수 있다.
 - 자동 backup은 retention/pruning 없이 `Backups`에 보존한다. 사용자가 직접 관리한다.
 - 정상 store가 열려야 Phase 9 Settings operation을 시작할 수 있다. Phase 10의 별도

@@ -28,8 +28,11 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
   delete review/finalize를 추가했다.
 - **Phase 8 — Multi-calendar clarity:** local calendar role, role별 virtual Set, source와
   typed permission/restriction 표시, 비파괴 possible-duplicate review를 추가했다.
+- **Saved Calendar Sets:** synthetic All과 Smart Role Filter에 더해 사용자 이름의 저장 Set,
+  CRUD·순서·exact calendar membership·현재 선택 persistence, missing membership 보존과
+  명시적 Replace, global Enabled master mask와 duplicate/relink temporary reveal을 추가했다.
 - **Phase 9 — Backup and Settings:** healthy current-schema DB의 strict two-entry plaintext
-  ZIP export/import, import/reset 전 recovery backup, 여섯 local-data table reset,
+  ZIP export/import, import/reset 전 recovery backup, 현재 local-data table reset,
   rollback-failure quarantine과 Local Data Settings를 추가했다.
 - **Phase 10 paid-beta polish:** first-run privacy/workflow onboarding, `⌘R` reload,
   Day/Week empty-state 안내와 DB open/migration 실패 시 strict same-schema backup을 고르는
@@ -73,5 +76,5 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
   아직 manual pending이며 자세한 경계는 [Backup and Restore](docs/backup-restore.md)에 있다.
 - Undo는 같은 session의 좁은 supported mutation에만 적용되며 app 재실행, recurrence,
   detached occurrence와 delete의 일반 복구 수단이 아니다.
-- custom saved calendar Set, calendar별 color/name override, automatic duplicate merge와
-  모바일/cloud/team collaboration은 현재 범위 밖이다.
+- saved Calendar Set의 cloud/device sync, 시간·위치 기반 자동 전환, calendar별 color/name
+  override, automatic duplicate merge와 모바일/team collaboration은 현재 범위 밖이다.

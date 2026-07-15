@@ -677,6 +677,7 @@ private struct RuntimeLocalDataFailureView: View {
 
 private struct SidebarView: View {
     @ObservedObject var appState: AppState
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(spacing: 0) {
@@ -702,15 +703,56 @@ private struct SidebarView: View {
                 }
 
                 Section("Calendar Set") {
-                    Picker("Calendar Set", selection: calendarSetSelection) {
-                        ForEach(CalendarSetFilter.allCases) { filter in
-                            Label(filter.title, systemImage: filter.symbolName)
-                                .tag(filter)
+                    HStack(spacing: 6) {
+                        Picker(
+                            "Active Calendar Set",
+                            selection: calendarSetSelection
+                        ) {
+                            Label(
+                                "All Calendars",
+                                systemImage: CalendarSetFilter.all.symbolName
+                            )
+                            .tag(CalendarSetFilter.all)
+
+                            if !appState.savedCalendarSets.isEmpty {
+                                Section("Saved Sets") {
+                                    ForEach(appState.savedCalendarSets) { set in
+                                        Label(
+                                            set.name,
+                                            systemImage: "calendar.badge.checkmark"
+                                        )
+                                        .tag(CalendarSetFilter.saved(set.id))
+                                    }
+                                }
+                            }
+
+                            Section("Smart Role Filters") {
+                                ForEach(CalendarRole.allCases) { role in
+                                    Label(
+                                        role.title,
+                                        systemImage: role.symbolName
+                                    )
+                                    .tag(CalendarSetFilter.role(role))
+                                }
+                            }
                         }
+                        .pickerStyle(.menu)
+                        .accessibilityIdentifier("sidebar.calendarSet")
+                        .help(
+                            "Switch between saved calendar combinations and role-based Smart Filters"
+                        )
+
+                        Button {
+                            appState.selectedSettingsPane = .calendarSets
+                            openSettings()
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
+                        .buttonStyle(.plain)
+                        .help("Manage Calendar Sets in Settings")
+                        .accessibilityLabel("Manage Calendar Sets")
+                        .accessibilityIdentifier("sidebar.calendarSet.manage")
                     }
-                    .pickerStyle(.menu)
-                    .accessibilityIdentifier("sidebar.calendarSet")
-                    .help("Show events from calendars with the selected KaosCal role")
                 }
 
                 Section("Calendars") {
@@ -770,13 +812,13 @@ private struct SidebarView: View {
                                 )
                                 .help(
                                     usage.isVisible
-                                        ? "Hide this calendar from Day, Week, and Agenda"
-                                        : "Show this calendar in Day, Week, and Agenda"
+                                        ? "Disable this calendar in every Calendar Set"
+                                        : "Enable this calendar for Calendar Sets"
                                 )
                                 .accessibilityLabel(
                                     usage.isVisible
-                                        ? "Hide \(source.title) calendar"
-                                        : "Show \(source.title) calendar"
+                                        ? "Disable \(source.title) calendar in every Calendar Set"
+                                        : "Enable \(source.title) calendar for Calendar Sets"
                                 )
                                 .accessibilityIdentifier(
                                     "sidebar.calendar.\(source.id).visibility"
@@ -1255,6 +1297,28 @@ private struct WorkspaceView: View {
 
             Divider()
 
+            if let message = appState.calendarSetTemporaryDisplayMessage,
+               appState.selectedSection != .tasks {
+                HStack(spacing: 10) {
+                    Label(message, systemImage: "eye")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    Spacer()
+                    Button("Return to \(appState.selectedCalendarSetTitle)") {
+                        appState.endTemporaryCalendarSetDisplay()
+                    }
+                    .controlSize(.small)
+                    .accessibilityIdentifier("calendarSet.temporaryDisplay.end")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(KaosCalTheme.accentSoft)
+                .accessibilityIdentifier("calendarSet.temporaryDisplay")
+
+                Divider()
+            }
+
             content
             .accessibilityIdentifier("calendar.content")
         }
@@ -1331,8 +1395,8 @@ private struct WorkspaceView: View {
                 .overlay(alignment: .top) {
                     if appState.visibleEvents.isEmpty {
                         Label(
-                            "No events in this period",
-                            systemImage: "calendar.badge.minus"
+                            appState.calendarWorkspaceEmptyMessage,
+                            systemImage: appState.calendarWorkspaceEmptySymbolName
                         )
                         .font(.callout.weight(.medium))
                         .foregroundStyle(.secondary)
@@ -1427,8 +1491,8 @@ private struct AgendaView: View {
     var body: some View {
         if appState.visibleEvents.isEmpty {
             ContentUnavailableView(
-                "No events in this period",
-                systemImage: "list.bullet.rectangle",
+                appState.calendarWorkspaceEmptyMessage,
+                systemImage: appState.calendarWorkspaceEmptySymbolName,
                 description: Text(appState.focusedPeriodTitle)
             )
         } else {

@@ -38,7 +38,7 @@ KaosCal 문서는 제품 판단, 기술 결정, 구현 단계, QA 기준과 실�
 
 - [product-principles.md](product-principles.md): 제품의 역할과 사용자 가치
 - [architecture.md](architecture.md): SwiftUI, EventKit, SQLite/GRDB, local-first 경계
-- [data-model.md](data-model.md): Event Brief, Task Center, identity lifecycle의 로컬 모델
+- [data-model.md](data-model.md): Event Brief, Task Center, calendar usage/saved Set와 identity lifecycle의 로컬 모델
 - [eventkit-decisions.md](eventkit-decisions.md): 권한, read-only, 반복, 변경 알림의 구현 규칙
 - [design-system.md](design-system.md): KaosCal 고유의 Calm Pro 3-pane UX
 - [phase-plan.md](phase-plan.md): 빌드 가능한 작은 phase와 완료 기준

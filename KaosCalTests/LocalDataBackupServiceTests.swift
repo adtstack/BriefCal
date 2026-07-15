@@ -28,10 +28,10 @@ final class LocalDataBackupServiceTests: XCTestCase {
             XCTAssertEqual(result.manifest.applicationVersion, "0.9-test")
             XCTAssertEqual(
                 result.manifest.appliedMigrations,
-                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage"]
+                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets"]
             )
-            XCTAssertEqual(result.manifest.schemaIdentifier, "v8_calendar_usage")
-            XCTAssertEqual(result.manifest.schemaVersion, 8)
+            XCTAssertEqual(result.manifest.schemaIdentifier, "v9_saved_calendar_sets")
+            XCTAssertEqual(result.manifest.schemaVersion, 9)
             XCTAssertEqual(result.manifest.databaseFilename, "kaoscal.sqlite")
             XCTAssertGreaterThan(result.manifest.databaseByteCount, 0)
             XCTAssertEqual(result.manifest.databaseSHA256.count, 64)
@@ -87,6 +87,19 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 try store.calendarUsage.fetchAll().map(\.calendarIdentifier),
                 ["calendar-source"]
             )
+            XCTAssertEqual(
+                try store.calendarSets.fetchAll().map(\.name),
+                ["Calendar Set source"]
+            )
+            XCTAssertEqual(
+                try store.calendarSets.fetchAll().flatMap(\.memberships)
+                    .map(\.calendarIdentifier),
+                ["calendar-source"]
+            )
+            XCTAssertEqual(
+                try store.calendarSets.fetchSelection(),
+                .saved("calendar-set-source")
+            )
 
             // Existing repositories retain the same writer identity and see
             // the restored rows; no live SQLite file replacement occurred.
@@ -131,6 +144,9 @@ final class LocalDataBackupServiceTests: XCTestCase {
                     eventChangeLog: 1,
                     calendarPreferences: 1,
                     calendarUsagePreferences: 1,
+                    calendarSets: 1,
+                    calendarSetMemberships: 1,
+                    calendarSetSelections: 1,
                     providerAccounts: 1,
                     providerItems: 1,
                     providerBindings: 1,
@@ -140,14 +156,14 @@ final class LocalDataBackupServiceTests: XCTestCase {
                     contextReferences: 1
                 )
             )
-            XCTAssertEqual(result.deletedRowCounts.total, 14)
+            XCTAssertEqual(result.deletedRowCounts.total, 17)
             XCTAssertEqual(
                 try allUserTableCounts(in: database),
-                Array(repeating: 0, count: 14)
+                Array(repeating: 0, count: 17)
             )
             XCTAssertEqual(
                 try database.appliedMigrations(),
-                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage"]
+                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets"]
             )
 
             _ = try service.importBackup(
@@ -158,7 +174,12 @@ final class LocalDataBackupServiceTests: XCTestCase {
             )
             XCTAssertEqual(
                 try allUserTableCounts(in: database),
-                Array(repeating: 1, count: 14)
+                Array(repeating: 1, count: 17)
+            )
+            let restoredStore = ContextStore(database: database)
+            XCTAssertEqual(
+                try restoredStore.calendarSets.fetchSelection(),
+                .saved("calendar-set-reset")
             )
         }
     }
@@ -224,7 +245,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
                         .appendingPathComponent("RECOVERY.txt").path
                 )
             )
-            XCTAssertEqual(result.manifest.schemaIdentifier, "v8_calendar_usage")
+            XCTAssertEqual(result.manifest.schemaIdentifier, "v9_saved_calendar_sets")
         }
     }
 
@@ -681,9 +702,9 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 }
                 XCTAssertEqual(
                     expected,
-                    ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage"]
+                    ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets"]
                 )
-                XCTAssertEqual(found, ["9 migration ledger entries"])
+                XCTAssertEqual(found, ["10 migration ledger entries"])
             }
         }
     }
@@ -692,7 +713,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
         let database = try AppDatabase.open(at: databaseURL)
         XCTAssertEqual(
             try database.appliedMigrations(),
-            ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage"]
+            ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets"]
         )
     }
 
@@ -797,6 +818,41 @@ final class LocalDataBackupServiceTests: XCTestCase {
             )
             try db.execute(
                 sql: """
+                    INSERT INTO calendar_sets (
+                        id, name, sort_order, created_at, updated_at
+                    ) VALUES (?, ?, 0, ?, ?)
+                    """,
+                arguments: [
+                    "calendar-set-\(suffix)", "Calendar Set \(suffix)",
+                    timestamp, timestamp,
+                ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO calendar_set_memberships (
+                        id, calendar_set_id, calendar_identifier,
+                        source_identifier_snapshot, source_title_snapshot,
+                        calendar_title_snapshot, sort_order,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, 'exchange-source', 'Exchange', '일정',
+                        0, ?, ?)
+                    """,
+                arguments: [
+                    "calendar-set-member-\(suffix)", "calendar-set-\(suffix)",
+                    "calendar-\(suffix)", timestamp, timestamp,
+                ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO calendar_set_selection (
+                        singleton_id, selection_kind, role,
+                        calendar_set_id, updated_at
+                    ) VALUES (1, 'saved', NULL, ?, ?)
+                    """,
+                arguments: ["calendar-set-\(suffix)", timestamp]
+            )
+            try db.execute(
+                sql: """
                     INSERT INTO provider_accounts (
                         id, provider, account_key, display_name,
                         authorization_state, created_at, updated_at
@@ -889,6 +945,9 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 "event_change_log",
                 "calendar_preferences",
                 "calendar_usage_preferences",
+                "calendar_sets",
+                "calendar_set_memberships",
+                "calendar_set_selection",
                 "provider_accounts",
                 "provider_items",
                 "task_bindings",

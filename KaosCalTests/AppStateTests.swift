@@ -1075,6 +1075,276 @@ final class Phase6AppStateTests: XCTestCase {
         XCTAssertEqual(provider.deleteCallCount, 0)
     }
 
+    func testSavedCalendarSetsSupportPartialRolesMixedRolesAndOverlappingMemberships() async throws {
+        let primaryWorkSource = makeCalendarSource(
+            id: "calendar",
+            title: "Primary Work"
+        )
+        let secondaryWorkSource = makeCalendarSource(
+            id: "secondary-work",
+            title: "Secondary Work"
+        )
+        let personalSource = makeCalendarSource(
+            id: "destination",
+            title: "Personal"
+        )
+        let primaryWork = makeEvent(
+            id: "primary-work",
+            start: date(2026, 7, 10, 9),
+            calendarIdentifier: primaryWorkSource.id
+        )
+        let secondaryWork = makeEvent(
+            id: "secondary-work",
+            start: date(2026, 7, 10, 10),
+            calendarIdentifier: secondaryWorkSource.id
+        )
+        let personal = makeEvent(
+            id: "personal",
+            start: date(2026, 7, 10, 11),
+            calendarIdentifier: personalSource.id
+        )
+        let provider = makeProvider(
+            events: [primaryWork, secondaryWork, personal]
+        )
+        provider.calendars = [
+            primaryWorkSource,
+            secondaryWorkSource,
+            personalSource
+        ]
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        XCTAssertTrue(state.setCalendarRole(.work, for: primaryWorkSource))
+        XCTAssertTrue(state.setCalendarRole(.work, for: secondaryWorkSource))
+        XCTAssertTrue(state.setCalendarRole(.personal, for: personalSource))
+
+        let partialWorkSet = try XCTUnwrap(state.createCalendarSet(
+            name: "Primary Work Only",
+            calendarIdentifiers: Set([primaryWorkSource.id])
+        ))
+        let mixedSet = try XCTUnwrap(state.createCalendarSet(
+            name: "Work and Personal",
+            calendarIdentifiers: Set([
+                primaryWorkSource.id,
+                personalSource.id
+            ])
+        ))
+
+        XCTAssertEqual(
+            partialWorkSet.calendarIdentifiers,
+            Set([primaryWorkSource.id])
+        )
+        XCTAssertFalse(
+            partialWorkSet.calendarIdentifiers.contains(secondaryWorkSource.id)
+        )
+        XCTAssertEqual(
+            mixedSet.calendarIdentifiers,
+            Set([primaryWorkSource.id, personalSource.id])
+        )
+        XCTAssertTrue(
+            partialWorkSet.calendarIdentifiers.contains(primaryWorkSource.id)
+        )
+        XCTAssertTrue(
+            mixedSet.calendarIdentifiers.contains(primaryWorkSource.id)
+        )
+
+        XCTAssertTrue(state.selectCalendarSet(.saved(partialWorkSet.id)))
+        XCTAssertEqual(state.visibleEvents.map(\.id), [primaryWork.id])
+
+        XCTAssertTrue(state.selectCalendarSet(.saved(mixedSet.id)))
+        XCTAssertEqual(
+            state.visibleEvents.map(\.id),
+            [primaryWork.id, personal.id]
+        )
+        XCTAssertFalse(state.visibleEvents.contains(where: {
+            $0.id == secondaryWork.id
+        }))
+        XCTAssertEqual(provider.createCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
+    func testSavedCalendarSetSelectionRestoresAfterRelaunchAndActiveDeletionFallsBackToAll() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "CalendarSetAppStateTests-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let databaseURL = directory.appendingPathComponent("calendar-sets.sqlite")
+        let member = makeEvent(
+            id: "member",
+            calendarIdentifier: "calendar"
+        )
+        let nonmember = makeEvent(
+            id: "nonmember",
+            start: date(2026, 7, 10, 10),
+            calendarIdentifier: "destination"
+        )
+
+        let firstProvider = makeProvider(events: [member, nonmember])
+        let firstStore = ContextStore(
+            database: try AppDatabase.open(at: databaseURL)
+        )
+        let firstState = makeState(provider: firstProvider, store: firstStore)
+        await firstState.loadCalendarStatus()
+        let savedSet = try XCTUnwrap(firstState.createCalendarSet(
+            name: "Persisted Focus",
+            calendarIdentifiers: Set(["calendar"])
+        ))
+        XCTAssertTrue(firstState.selectCalendarSet(.saved(savedSet.id)))
+        XCTAssertEqual(
+            try firstStore.calendarSets.fetchSelection(),
+            .saved(savedSet.id)
+        )
+
+        let reopenedProvider = makeProvider(events: [member, nonmember])
+        let reopenedStore = ContextStore(
+            database: try AppDatabase.open(at: databaseURL)
+        )
+        let reopenedState = makeState(
+            provider: reopenedProvider,
+            store: reopenedStore
+        )
+        await reopenedState.loadCalendarStatus()
+
+        XCTAssertEqual(reopenedState.selectedCalendarSet, .saved(savedSet.id))
+        XCTAssertEqual(reopenedState.visibleEvents.map(\.id), [member.id])
+        XCTAssertTrue(reopenedState.deleteCalendarSet(id: savedSet.id))
+        XCTAssertEqual(reopenedState.selectedCalendarSet, .all)
+        XCTAssertEqual(
+            reopenedState.visibleEvents.map(\.id),
+            [member.id, nonmember.id]
+        )
+        XCTAssertEqual(try reopenedStore.calendarSets.fetchSelection(), .all)
+
+        let finalStore = ContextStore(
+            database: try AppDatabase.open(at: databaseURL)
+        )
+        let finalState = makeState(
+            provider: makeProvider(events: [member, nonmember]),
+            store: finalStore
+        )
+        XCTAssertEqual(finalState.selectedCalendarSet, .all)
+        XCTAssertNil(finalState.savedCalendarSet(id: savedSet.id))
+    }
+
+    func testSavedCalendarSetVisibilityUsesGlobalEnableAndMembershipWhileBlockingStaysIndependent() async throws {
+        let member = makeEvent(
+            id: "member-busy",
+            start: date(2026, 7, 10, 9),
+            calendarIdentifier: "calendar",
+            availability: .busy
+        )
+        let nonmember = makeEvent(
+            id: "nonmember-busy",
+            start: date(2026, 7, 10, 11),
+            calendarIdentifier: "destination",
+            availability: .busy
+        )
+        let provider = makeProvider(events: [member, nonmember])
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        let memberSource = try XCTUnwrap(
+            state.calendarSources.first(where: { $0.id == "calendar" })
+        )
+        let savedSet = try XCTUnwrap(state.createCalendarSet(
+            name: "Member Only",
+            calendarIdentifiers: Set([memberSource.id])
+        ))
+
+        XCTAssertTrue(state.selectCalendarSet(.saved(savedSet.id)))
+        XCTAssertEqual(state.visibleEvents.map(\.id), [member.id])
+        XCTAssertEqual(
+            state.blockingEvents.map(\.id),
+            [member.id, nonmember.id]
+        )
+
+        XCTAssertTrue(state.setCalendarVisibility(false, for: memberSource))
+        XCTAssertTrue(state.visibleEvents.isEmpty)
+        XCTAssertEqual(
+            state.calendarWorkspaceEmptyMessage,
+            "All calendars in Member Only are disabled in KaosCal"
+        )
+        XCTAssertEqual(
+            state.blockingEvents.map(\.id),
+            [member.id, nonmember.id]
+        )
+
+        XCTAssertTrue(state.setCalendarBlocksAvailability(
+            false,
+            for: memberSource
+        ))
+        XCTAssertEqual(state.blockingEvents.map(\.id), [nonmember.id])
+        XCTAssertTrue(state.setCalendarVisibility(true, for: memberSource))
+        XCTAssertEqual(state.visibleEvents.map(\.id), [member.id])
+        XCTAssertEqual(state.blockingEvents.map(\.id), [nonmember.id])
+    }
+
+    func testSavedCalendarSetKeepsUnavailableAndEmptyMembershipSelections() async throws {
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let unavailableSet = try store.calendarSets.create(
+            name: "Unavailable",
+            calendars: [
+                makeCalendarSource(
+                    id: "missing-calendar",
+                    title: "Missing Calendar"
+                )
+            ]
+        )
+        let emptySet = try store.calendarSets.create(
+            name: "Empty",
+            calendars: []
+        )
+        try store.calendarSets.saveSelection(.saved(unavailableSet.id))
+
+        let provider = makeProvider(events: [])
+        let state = makeState(provider: provider, store: store)
+        let initiallyLoadedUnavailableSet = try XCTUnwrap(
+            state.savedCalendarSet(id: unavailableSet.id)
+        )
+        XCTAssertFalse(state.canDetermineCalendarSetMembershipAvailability)
+        XCTAssertTrue(
+            state.unavailableMemberships(in: initiallyLoadedUnavailableSet)
+                .isEmpty
+        )
+        await state.loadCalendarStatus()
+
+        XCTAssertTrue(state.canDetermineCalendarSetMembershipAvailability)
+        XCTAssertEqual(state.selectedCalendarSet, .saved(unavailableSet.id))
+        let loadedUnavailableSet = try XCTUnwrap(
+            state.savedCalendarSet(id: unavailableSet.id)
+        )
+        XCTAssertEqual(
+            state.unavailableMemberships(in: loadedUnavailableSet)
+                .map(\.calendarIdentifier),
+            ["missing-calendar"]
+        )
+        XCTAssertTrue(state.visibleEvents.isEmpty)
+        XCTAssertEqual(
+            state.calendarWorkspaceEmptyMessage,
+            "Calendars in Unavailable are currently unavailable"
+        )
+
+        XCTAssertTrue(state.selectCalendarSet(.saved(emptySet.id)))
+        XCTAssertEqual(state.selectedCalendarSet, .saved(emptySet.id))
+        XCTAssertTrue(state.visibleEvents.isEmpty)
+        XCTAssertEqual(
+            state.calendarWorkspaceEmptyMessage,
+            "Empty has no calendars"
+        )
+        XCTAssertEqual(
+            try store.calendarSets.fetchSelection(),
+            .saved(emptySet.id)
+        )
+    }
+
     func testCalendarVisibilityAndBlockingAreIndependentAndPersist() async throws {
         let hiddenBusy = makeEvent(
             id: "hidden-busy",
@@ -1185,7 +1455,7 @@ final class Phase6AppStateTests: XCTestCase {
         XCTAssertEqual(state.blockingEvents.map(\.id), ["busy"])
     }
 
-    func testPossibleDuplicateCanOpenCandidateOutsideCurrentRoleSet() async throws {
+    func testPossibleDuplicateTemporarilyRevealsCandidateWithoutChangingCalendarSet() async throws {
         let work = makeEvent(
             id: "duplicate-work",
             title: "Team Sync",
@@ -1214,7 +1484,7 @@ final class Phase6AppStateTests: XCTestCase {
                 $0.id == "destination"
             }))
         ))
-        state.selectCalendarSet(.work)
+        XCTAssertTrue(state.selectCalendarSet(.work))
 
         let candidate = try XCTUnwrap(
             state.duplicateCandidates(for: work).first
@@ -1222,8 +1492,28 @@ final class Phase6AppStateTests: XCTestCase {
         XCTAssertEqual(candidate.event.id, personal.id)
         state.selectDuplicateCandidate(candidate)
 
+        XCTAssertEqual(state.selectedCalendarSet, .work)
+        XCTAssertEqual(state.selectedEventID, personal.id)
+        XCTAssertEqual(state.temporarilyRevealedEventID, personal.id)
+        XCTAssertEqual(
+            state.visibleEvents.map(\.id),
+            [work.id, personal.id]
+        )
+        XCTAssertNotNil(state.calendarSetTemporaryDisplayMessage)
+
+        state.endTemporaryCalendarSetDisplay()
+
+        XCTAssertEqual(state.selectedCalendarSet, .work)
+        XCTAssertNil(state.temporarilyRevealedEventID)
+        XCTAssertNil(state.selectedEventID)
+        XCTAssertEqual(state.visibleEvents.map(\.id), [work.id])
+
+        XCTAssertTrue(state.selectCalendarSet(.all))
+        state.selectDuplicateCandidate(candidate)
         XCTAssertEqual(state.selectedCalendarSet, .all)
         XCTAssertEqual(state.selectedEventID, personal.id)
+        XCTAssertNil(state.temporarilyRevealedEventID)
+        XCTAssertNil(state.calendarSetTemporaryDisplayMessage)
         XCTAssertEqual(provider.createCallCount, 0)
         XCTAssertEqual(provider.updateCallCount, 0)
         XCTAssertEqual(provider.deleteCallCount, 0)
@@ -1256,6 +1546,21 @@ final class Phase6AppStateTests: XCTestCase {
                 color: nil
             )
         ]
+    }
+
+    private func makeCalendarSource(
+        id: String,
+        title: String
+    ) -> CalendarSource {
+        CalendarSource(
+            id: id,
+            title: title,
+            sourceTitle: "Exchange QA",
+            sourceIdentifier: "exchange-qa",
+            accountType: .exchange,
+            isWritable: true,
+            color: nil
+        )
     }
 
     private func makeProvider(
@@ -1900,6 +2205,83 @@ final class Phase9AppStateTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         try await assertCalendarUsageSettingsBitmap(in: directory)
+    }
+
+    func testCalendarSetSettingsFitsAndProducesOffscreenBitmap() async throws {
+        var store: ContextStore? = ContextStore(
+            database: try AppDatabase.inMemory()
+        )
+        var provider: FakeCalendarProvider? = makeProvider(events: [makeEvent()])
+        let personalSource = CalendarSource(
+            id: "personal-calendar",
+            title: "Personal Calendar With A Long Name",
+            sourceTitle: "iCloud Personal Account",
+            sourceIdentifier: "icloud-personal",
+            accountType: .local,
+            isWritable: true,
+            color: nil
+        )
+        provider?.calendars.append(personalSource)
+        var state: AppState? = makeState(
+            provider: try XCTUnwrap(provider),
+            store: try XCTUnwrap(store)
+        )
+        defer {
+            provider?.storeChangeHandler = nil
+            state = nil
+            store = nil
+            provider = nil
+        }
+        await state?.loadCalendarStatus()
+
+        try autoreleasepool {
+            let state = try XCTUnwrap(state)
+            let savedSet = try XCTUnwrap(state.createCalendarSet(
+                name: "Work and Personal Focus",
+                calendarIdentifiers: Set([calendarSource.id, personalSource.id])
+            ))
+            XCTAssertTrue(state.selectCalendarSet(.saved(savedSet.id)))
+            state.selectedSettingsPane = .calendarSets
+            XCTAssertEqual(state.selectedSettingsPane, .calendarSets)
+
+            let hostingView = NSHostingView(rootView:
+                CalendarSetSettingsView(appState: state)
+                    .background(Color(nsColor: .windowBackgroundColor))
+            )
+            let fittingSize = hostingView.fittingSize
+            XCTAssertLessThanOrEqual(fittingSize.width, 780)
+            XCTAssertLessThanOrEqual(fittingSize.height, 680)
+
+            hostingView.frame = NSRect(x: 0, y: 0, width: 780, height: 680)
+            hostingView.wantsLayer = true
+            let window = NSWindow(
+                contentRect: hostingView.frame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.contentView = hostingView
+            hostingView.layoutSubtreeIfNeeded()
+            hostingView.displayIfNeeded()
+            let representation = try XCTUnwrap(
+                hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
+            )
+            hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+            let pngData = try XCTUnwrap(
+                representation.representation(using: .png, properties: [:])
+            )
+
+            XCTAssertGreaterThanOrEqual(representation.pixelsWide, 780)
+            XCTAssertGreaterThanOrEqual(representation.pixelsHigh, 680)
+            XCTAssertGreaterThan(pngData.count, 10_000)
+            if let snapshotPath = ProcessInfo.processInfo.environment[
+                "KAOSCAL_CALENDAR_SET_SNAPSHOT_PATH"
+            ] {
+                try pngData.write(to: URL(fileURLWithPath: snapshotPath))
+            }
+            window.contentView = nil
+        }
+        assertNoCalendarWrites(try XCTUnwrap(provider))
     }
 
     private func assertCalendarUsageSettingsBitmap(

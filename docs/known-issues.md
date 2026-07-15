@@ -1,6 +1,6 @@
 # Known Issues and Current Limits
 
-> 마지막 갱신: 2026-07-12
+> 마지막 갱신: 2026-07-15
 >
 > 이 문서는 현재 코드와 검증 기록에서 확인된 사용자 관점의 제한만 다룬다. 구현됐지만 live 검증이 끝나지 않은 항목과 의도적으로 지원하지 않는 항목을 구분한다.
 
@@ -66,14 +66,21 @@ KaosCal이 read-only로 판정한 원본은 저장·이동·삭제할 수 없다
 **우회:** 권한이 있는 Calendar.app 또는 캘린더 소유자 쪽에서 원본을 변경한다.
 KaosCal의 local Event Brief는 원본 권한과 별도로 편집할 수 있다.
 
-### Calendar role과 duplicate 표시는 정리 보조 기능이다
+### Calendar role·saved Set은 로컬이며 새 live 검증이 남아 있다
 
-Work/Personal 같은 role과 role별 Set은 KaosCal 안에서만 적용된다. Calendar.app의
-캘린더 이름·색·공유 권한을 바꾸지 않으며 임의 이름의 saved Set이나 calendar별
-visibility override는 제공하지 않는다. possible duplicate도 검토 후보일 뿐 자동으로
-병합·숨김·삭제하지 않는다.
+Work/Personal 같은 role, role별 Smart Role Filter, calendar별 Enabled/Block과 사용자
+이름의 saved Set은 KaosCal의 로컬 SQLite에만 적용된다. Calendar.app의 캘린더 이름·색·
+공유 권한을 바꾸거나 다른 Mac/iPhone으로 동기화하지 않는다. saved Set은 exact calendar
+identifier membership을 사용하므로 계정 재추가 등으로 identifier가 바뀌면 unavailable로
+남고, 같은 이름의 calendar에 자동 연결하지 않는다. `Replace…` 또는 `Remove`를 사용자가
+명시해야 한다. CRUD·겹치는 Set·혼합 role·missing rebind와 후속 AppState review 수정의
+최종 자동/offscreen gate는 통과했지만 실계정/실창/VoiceOver gate는 아직 완료 판정 전이다.
+possible duplicate는 검토 후보일 뿐
+자동으로 병합·숨김·삭제하지 않는다.
 
-**우회:** 원본 캘린더 설정과 실제 중복 일정 정리는 Calendar.app에서 수행한다.
+**현재 권장:** 중요한 Set은 재실행 뒤 membership을 확인한다. unavailable 항목은 source와
+calendar를 확인한 뒤에만 Replace한다. 원본 캘린더 설정과 실제 중복 일정 정리는
+Calendar.app에서 수행한다.
 
 ### 복잡한 반복 변경은 제한된다
 
@@ -127,7 +134,8 @@ Calendar 원본과 KaosCal local DB는 하나의 원자적 저장으로 묶이�
 ### backup은 plaintext이며 서명되지 않는다
 
 ZIP에는 Event Brief notes/tasks, personal task, linked 일정의 제목·시간·위치·식별
-metadata, change snapshot의 원본 notes와 calendar role이 포함될 수 있다. 본문은
+metadata, change snapshot의 원본 notes, calendar role·usage와 saved Set 이름·membership·
+현재 선택이 포함될 수 있다. 본문은
 검사하거나 가리지 않는다. KaosCal은 ZIP/SQLite를 암호화하거나 제작자 서명하지
 않으며 SHA-256은 파일 일치 확인일 뿐 출처 인증이 아니다.
 
@@ -167,9 +175,10 @@ power-loss window는 manual pending이다.
 
 ### Reset Local Data는 Calendar 일정 삭제가 아니다
 
-Reset은 Event Brief, event/personal task, link/change history와 calendar role 같은
-KaosCal local data만 비운다. Calendar.app·Exchange 원본 일정은 만들거나 수정하거나
-삭제하지 않는다. 반대로 local Brief 삭제도 원본 일정을 삭제하지 않는다.
+Reset은 Event Brief, event/personal task, provider/reference row, link/change history,
+calendar role·usage와 saved Set·membership·selection 같은 KaosCal local data를 비운다.
+Calendar.app·Exchange 원본 일정은 만들거나 수정하거나 삭제하지 않는다. 반대로 local
+Brief 삭제도 원본 일정을 삭제하지 않는다.
 
 **주의:** 원본과 local data를 모두 지우려면 각각의 명시적 삭제 흐름을 별도로
 실행해야 한다. Reset 전 recovery ZIP 생성이 실패하면 Reset도 시작하지 않는다.
@@ -184,7 +193,8 @@ Exchange Tasks, 팀 프로젝트나 다른 기기의 KaosCal과 동기화되지 
 
 ## 화면·수동 검증 상태
 
-Phase 8의 긴 source/role/restriction 문구, 고밀도 card와 VoiceOver는 자동 또는
+Phase 8의 긴 source/role/restriction 문구, saved Calendar Set Settings/Sidebar,
+고밀도 card와 VoiceOver는 자동 또는
 offscreen checkpoint만 통과했다. Phase 9의 실제 Settings scroll, Open/Save panel과
 typed Reset activation은 run `20260712-1616-KST`에서 통과했지만, 파일 작성·backup을
 선택한 import·reset mutation, signed Release의 failed-bootstrap file-panel 복구와 실제

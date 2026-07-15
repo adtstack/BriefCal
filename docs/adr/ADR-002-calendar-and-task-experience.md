@@ -33,7 +33,7 @@ KaosCal에는 모든 캘린더 관점과 눈에 보이는 할 일 목록이 필�
 ## 2026-07-15 mini month 일정 indicator 결정
 
 - 이 결정은 초기 event-dot 보류를 대체한다. 후속 확장은 표시 grid의 첫날 시작부터 42번째 날 다음 날 시작까지 event 조회가 성공한 뒤에만 일정 요약을 공개한다. 월 탐색을 위한 추가 조회는 본문 focused date를 바꾸거나 현재 visible interval의 snapshot을 유실하게 해서는 안 되며, 빠른 연속 탐색의 오래된 응답이 최신 월을 덮어서도 안 된다.
-- 날짜별 요약은 raw fetch를 직접 세지 않고 `calendar visibility ∩ 선택 Calendar Set`을 적용하며 availability blocking과는 독립이다. timed multi-day와 all-day 일정은 표시 calendar의 civil-day overlap으로 계산하며 all-day 배타 종료 날짜와 자정에 끝나는 timed event의 다음 날에는 dot을 만들지 않는다.
+- 날짜별 요약은 raw fetch를 직접 세지 않고 `global Enabled ∩ 선택 Calendar Set`을 적용하며 availability blocking과는 독립이다. timed multi-day와 all-day 일정은 표시 calendar의 civil-day overlap으로 계산하며 all-day 배타 종료 날짜와 자정에 끝나는 timed event의 다음 날에는 dot을 만들지 않는다.
 - 일정이 하나 이상 겹치면 날짜 숫자 아래에 단일 dot을 둔다. focused date는 흰색, 일반 날짜는 accent, 인접 월은 낮은 opacity를 사용한다. calendar별 다중 색상 dot과 일정 제목 배치는 이번 결정에 포함하지 않는다.
 - 42일 중 일부만 조회됐거나 조회가 실패하면 grid 전체의 dot을 숨기고 loading/unavailable 상태를 별도로 전달한다. 부분 dot과 dot 부재를 `일정 없음`으로 해석하게 해서는 안 된다.
 - VoiceOver 날짜 값은 시각 dot과 별개로 정확한 일정 수를 전달한다. 상세 인수 기준은 `CAL-007`, `UI-005`를 따른다.

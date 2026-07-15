@@ -26,7 +26,7 @@ KaosCal-Backup-YYYY-MM-DD-HHmm.zip
 
 하위 폴더, symlink, 중복 이름, `-wal`/`-shm`, Finder metadata와 다른 payload는
 허용하지 않는다. archive format version은 SQLite schema version과 별도다.
-현재 DB schema의 마지막 migration은 `v8_calendar_usage`이며 import는
+현재 DB schema의 마지막 migration은 `v9_saved_calendar_sets`이며 import는
 manifest에 기록된 migration 목록과 실제 SQLite migration table을 함께 확인한다.
 
 format v1 제한은 다음과 같다.
@@ -66,6 +66,7 @@ format에 없다.
 - change snapshot에 보존된 원본 event notes snapshot
 - local calendar role preference
 - local calendar visibility와 availability-blocking preference
+- saved Calendar Set 이름·순서, exact calendar membership과 현재 선택
 
 KaosCal은 계정 credential, Exchange password, MFA code, OAuth token이나 attendee
 전체 목록을 전용 필드로 수집·저장하지 않고 EventKit의 전체 event store도 export하지
@@ -129,14 +130,24 @@ Reset은 확인 sheet에서 정확히 `RESET`을 입력한 뒤 실행한다. 실
 자동 ZIP을 `Backups` 폴더에 남기며 자동 backup 생성이 실패하면 reset을 시작하지
 않는다.
 
-reset은 한 SQLite transaction에서 다음 여섯 user-data table의 active row를
+reset은 한 SQLite transaction에서 다음 current user-data table의 active row를
 비운다.
 
+- `provider_pending_operations`
+- `provider_sync_cursors`
+- `task_bindings`
+- `calendar_task_destinations`
+- `provider_items`
+- `provider_accounts`
+- `context_references`
 - `event_change_log`
 - `event_tasks`
 - `event_links`
 - `event_contexts`
 - `personal_tasks`
+- `calendar_set_selection`
+- `calendar_set_memberships`
+- `calendar_sets`
 - `calendar_preferences`
 - `calendar_usage_preferences`
 

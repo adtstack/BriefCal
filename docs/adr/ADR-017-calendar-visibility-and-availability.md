@@ -2,7 +2,7 @@
 
 > 상태: Accepted
 > 날짜: 2026-07-15
-> 관계: ADR-014, ADR-016
+> 관계: ADR-014, ADR-016, ADR-018
 
 ## 배경
 
@@ -32,7 +32,9 @@ EventKit은 calendar source identifier와 event별 free/busy availability를 제
 - event별 최종 차단은 calendar blocking 정책과 EventKit event snapshot을 함께 사용한다.
   free, canceled, 현재 사용자가 declined한 event는 막지 않는다. busy, tentative,
   unavailable과 availability 미지원 event는 MVP에서 보수적으로 막는다.
-- `visibleEvents`는 `calendar visibility ∩ selected role Set`으로 계산한다. 가용시간은
+- `visibleEvents`는 `global calendar visibility ∩ selected Calendar Set`으로 계산한다.
+  선택이 All이면 모든 enabled calendar, role Smart Filter면 해당 role, saved Set이면
+  exact membership을 사용한다. global disable은 saved membership을 삭제하지 않는다. 가용시간은
   `visibleEvents`가 아니라 raw fetched events에서 계산하고 겹치거나 맞닿은 interval을
   union한다. 따라서 숨긴 calendar도 시간을 막을 수 있고 중복 interval이 가중되지 않는다.
 - usage 설정은 Day/Week/Agenda 표시와 가용시간 projection에만 영향을 준다. EventKit raw

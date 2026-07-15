@@ -12,7 +12,7 @@ private struct CalendarUsageSettingsView: View {
                     Text("Calendars")
                         .font(.title2.weight(.semibold))
                     Text(
-                        "Choose which calendars appear in KaosCal and which ones reserve time when availability is calculated. These choices are independent."
+                        "Enable calendars for KaosCal views and Calendar Sets, and choose which ones reserve time when availability is calculated. These choices are independent."
                     )
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -55,7 +55,7 @@ private struct CalendarUsageSettingsView: View {
     private func accountGroup(
         _ account: CalendarAccountDescriptor
     ) -> some View {
-        let shownCount = account.calendars.filter {
+        let enabledCount = account.calendars.filter {
             appState.calendarUsagePolicy(for: $0).isVisible
         }.count
         let blockingCount = account.calendars.filter {
@@ -66,7 +66,7 @@ private struct CalendarUsageSettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack {
                     Text(
-                        "\(shownCount) shown · \(blockingCount) block time"
+                        "\(enabledCount) enabled · \(blockingCount) block time"
                     )
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -74,13 +74,13 @@ private struct CalendarUsageSettingsView: View {
                     Spacer()
 
                     Menu("Account Actions") {
-                        Button("Show All") {
+                        Button("Enable All") {
                             _ = appState.setCalendarVisibility(
                                 true,
                                 for: account.calendars
                             )
                         }
-                        Button("Hide All") {
+                        Button("Disable All") {
                             _ = appState.setCalendarVisibility(
                                 false,
                                 for: account.calendars
@@ -160,10 +160,10 @@ private struct CalendarUsageSettingsView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Toggle("Show", isOn: visibilityBinding(for: source))
+            Toggle("Enabled", isOn: visibilityBinding(for: source))
                 .toggleStyle(.checkbox)
-                .frame(width: 78, alignment: .leading)
-                .help("Show events from this calendar in Day, Week, and Agenda")
+                .frame(width: 88, alignment: .leading)
+                .help("Allow this calendar to appear in KaosCal and saved Calendar Sets")
 
             Toggle("Block", isOn: blockingBinding(for: source))
                 .toggleStyle(.checkbox)
@@ -177,7 +177,7 @@ private struct CalendarUsageSettingsView: View {
             }
             .labelsHidden()
             .frame(width: 122)
-            .help("KaosCal role used by Calendar Set filters")
+            .help("KaosCal role used by Smart Role Filters")
 
             Menu {
                 Button("Use Visibility and Blocking Defaults") {
@@ -233,6 +233,708 @@ private struct CalendarUsageSettingsView: View {
             return true
         }
         return false
+    }
+}
+
+private enum CalendarSetSettingsSelection: Hashable {
+    case all
+    case saved(String)
+}
+
+private struct CalendarSetNameEditor: Identifiable {
+    enum Kind: Hashable {
+        case create
+        case rename(String)
+    }
+
+    let kind: Kind
+    let initialName: String
+
+    var id: String {
+        switch kind {
+        case .create: "create"
+        case let .rename(setID): "rename:\(setID)"
+        }
+    }
+}
+
+struct CalendarSetSettingsView: View {
+    @ObservedObject var appState: AppState
+
+    @State private var selection: CalendarSetSettingsSelection? = .all
+    @State private var nameEditor: CalendarSetNameEditor?
+    @State private var pendingDelete: SavedCalendarSetSnapshot?
+
+    var body: some View {
+        HSplitView {
+            setList
+            setDetail
+        }
+        .frame(width: 760, height: 620)
+        .tint(KaosCalTheme.accent)
+        .sheet(item: $nameEditor) { editor in
+            CalendarSetNameEditorView(
+                appState: appState,
+                editor: editor
+            ) { createdSetID in
+                if let createdSetID {
+                    selection = .saved(createdSetID)
+                }
+                nameEditor = nil
+            }
+        }
+        .alert(
+            pendingDelete.map { "Delete ‘\($0.name)’?" }
+                ?? "Delete Calendar Set?",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            )
+        ) {
+            Button("Delete Calendar Set", role: .destructive) {
+                guard let pendingDelete else { return }
+                if appState.deleteCalendarSet(id: pendingDelete.id) {
+                    selection = .all
+                }
+                self.pendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDelete = nil
+            }
+        } message: {
+            Text(
+                "This removes only the saved view and its memberships. Calendar events, accounts, roles, and availability settings are not deleted."
+            )
+        }
+        .onAppear {
+            if case let .saved(setID) = appState.selectedCalendarSet,
+               appState.savedCalendarSet(id: setID) != nil {
+                selection = .saved(setID)
+            }
+        }
+        .accessibilityIdentifier("settings.calendarSets")
+    }
+
+    private var setList: some View {
+        VStack(spacing: 0) {
+            List(selection: $selection) {
+                setRow(
+                    title: "All Calendars",
+                    systemImage: "calendar",
+                    isActive: appState.selectedCalendarSet == .all
+                )
+                .tag(CalendarSetSettingsSelection.all)
+
+                Section("Saved Sets") {
+                    if appState.savedCalendarSets.isEmpty {
+                        Text("No saved sets")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(appState.savedCalendarSets) { set in
+                            setRow(
+                                title: set.name,
+                                systemImage: "calendar.badge.checkmark",
+                                isActive: appState.selectedCalendarSet
+                                    == .saved(set.id)
+                            )
+                            .tag(CalendarSetSettingsSelection.saved(set.id))
+                            .contextMenu {
+                                Button("Rename") {
+                                    beginRenaming(set)
+                                }
+                                Button("Delete", role: .destructive) {
+                                    pendingDelete = set
+                                }
+                            }
+                            .accessibilityIdentifier(
+                                "settings.calendarSets.set.\(set.id)"
+                            )
+                        }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .onDeleteCommand {
+                if let selectedSavedSet {
+                    pendingDelete = selectedSavedSet
+                }
+            }
+
+            Divider()
+
+            HStack(spacing: 10) {
+                Button {
+                    nameEditor = CalendarSetNameEditor(
+                        kind: .create,
+                        initialName: ""
+                    )
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .help("Create Calendar Set")
+                .accessibilityLabel("Create Calendar Set")
+                .accessibilityIdentifier("settings.calendarSets.create")
+
+                Button {
+                    if let selectedSavedSet {
+                        pendingDelete = selectedSavedSet
+                    }
+                } label: {
+                    Image(systemName: "minus")
+                }
+                .disabled(selectedSavedSet == nil)
+                .help("Delete selected Calendar Set")
+                .accessibilityLabel("Delete selected Calendar Set")
+
+                Spacer()
+
+                Button {
+                    moveSelectedSet(by: -1)
+                } label: {
+                    Image(systemName: "arrow.up")
+                }
+                .disabled(!canMoveSelectedSet(by: -1))
+                .help("Move selected Calendar Set up")
+                .accessibilityLabel("Move selected Calendar Set up")
+
+                Button {
+                    moveSelectedSet(by: 1)
+                } label: {
+                    Image(systemName: "arrow.down")
+                }
+                .disabled(!canMoveSelectedSet(by: 1))
+                .help("Move selected Calendar Set down")
+                .accessibilityLabel("Move selected Calendar Set down")
+            }
+            .buttonStyle(.borderless)
+            .padding(10)
+        }
+        .frame(minWidth: 205, idealWidth: 220, maxWidth: 240)
+    }
+
+    @ViewBuilder
+    private var setDetail: some View {
+        switch selection ?? .all {
+        case .all:
+            allCalendarsDetail
+        case let .saved(setID):
+            if let set = appState.savedCalendarSet(id: setID) {
+                savedSetDetail(set)
+            } else {
+                ContentUnavailableView(
+                    "Calendar Set unavailable",
+                    systemImage: "calendar.badge.exclamationmark",
+                    description: Text(
+                        "Choose another set. Missing calendar memberships are preserved when their Set still exists."
+                    )
+                )
+                .onAppear { selection = .all }
+            }
+        }
+    }
+
+    private var allCalendarsDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                detailHeader(
+                    title: "All Calendars",
+                    subtitle: "Every calendar enabled in the Calendars settings."
+                ) {
+                    Button("Use All Calendars") {
+                        _ = appState.selectCalendarSet(.all)
+                    }
+                    .disabled(appState.selectedCalendarSet == .all)
+                }
+
+                GroupBox("How Sets Work") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(
+                            "Saved Sets are exact calendar combinations. A calendar may belong to more than one Set."
+                        )
+                        Text(
+                            "Disabling a calendar in the Calendars tab hides it from All Calendars and every saved Set without deleting its memberships."
+                        )
+                        Text(
+                            "Availability blocking remains independent, so a hidden calendar can still reserve busy time."
+                        )
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 4)
+                }
+
+                Button("Create Calendar Set…") {
+                    nameEditor = CalendarSetNameEditor(
+                        kind: .create,
+                        initialName: ""
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+
+                operationError
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func savedSetDetail(
+        _ set: SavedCalendarSetSnapshot
+    ) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                detailHeader(
+                    title: set.name,
+                    subtitle: setSummary(set)
+                ) {
+                    Button("Use This Set") {
+                        _ = appState.selectCalendarSet(.saved(set.id))
+                    }
+                    .disabled(appState.selectedCalendarSet == .saved(set.id))
+
+                    Menu {
+                        Button("Rename") { beginRenaming(set) }
+                        Button("Delete", role: .destructive) {
+                            pendingDelete = set
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .accessibilityLabel("More actions for \(set.name)")
+                }
+
+                if set.memberships.isEmpty {
+                    Label(
+                        "This Set is empty. Include calendars below before using it, or keep it as an intentional empty view.",
+                        systemImage: "calendar.badge.plus"
+                    )
+                    .foregroundStyle(.secondary)
+                }
+
+                if appState.calendarAccounts.isEmpty {
+                    GroupBox("Available Calendars") {
+                        Text(
+                            appState.canDetermineCalendarSetMembershipAvailability
+                                ? "No calendars are currently loaded. Existing memberships remain saved and will resolve again only when the exact calendar identifier returns."
+                                : "Calendar availability cannot be verified yet. Existing memberships remain saved while access or loading recovers."
+                        )
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                    }
+                } else {
+                    ForEach(appState.calendarAccounts) { account in
+                        membershipAccountGroup(account, set: set)
+                    }
+                }
+
+                let unavailable = appState.unavailableMemberships(in: set)
+                if !unavailable.isEmpty {
+                    unavailableMembershipGroup(unavailable, set: set)
+                }
+
+                operationError
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func detailHeader<Actions: View>(
+        title: String,
+        subtitle: String,
+        @ViewBuilder actions: () -> Actions
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.title2.weight(.semibold))
+                    Text(subtitle)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                actions()
+            }
+            Divider()
+        }
+    }
+
+    private func membershipAccountGroup(
+        _ account: CalendarAccountDescriptor,
+        set: SavedCalendarSetSnapshot
+    ) -> some View {
+        let includedCount = account.calendars.filter {
+            set.calendarIdentifiers.contains($0.id)
+        }.count
+
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("\(includedCount) of \(account.calendars.count) included")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Menu("Account Membership") {
+                        Button("Include All") {
+                            _ = appState.setCalendarSetMemberships(
+                                true,
+                                sources: account.calendars,
+                                setID: set.id
+                            )
+                        }
+                        Button("Remove All") {
+                            _ = appState.setCalendarSetMemberships(
+                                false,
+                                sources: account.calendars,
+                                setID: set.id
+                            )
+                        }
+                    }
+                }
+
+                Divider()
+
+                ForEach(account.calendars) { source in
+                    Toggle(isOn: membershipBinding(source: source, setID: set.id)) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(source.title)
+                                Text(appState.calendarRole(for: source).title)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if !appState.calendarUsagePolicy(for: source).isVisible {
+                                Text("Disabled globally")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                    .accessibilityLabel(
+                        "Include \(source.title) in \(set.name)"
+                    )
+                    .accessibilityValue(
+                        set.calendarIdentifiers.contains(source.id)
+                            ? "Included"
+                            : "Not included"
+                    )
+                    .accessibilityIdentifier(
+                        "settings.calendarSets.\(set.id).calendar.\(source.id)"
+                    )
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Label(
+                account.title,
+                systemImage: account.accountType == .exchange
+                    ? "building.2"
+                    : "person.crop.circle"
+            )
+        }
+    }
+
+    private func unavailableMembershipGroup(
+        _ memberships: [CalendarSetMembership],
+        set: SavedCalendarSetSnapshot
+    ) -> some View {
+        let replacementSources = appState.calendarAccounts.flatMap(\.calendars)
+            .filter { !set.calendarIdentifiers.contains($0.id) }
+
+        return GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(
+                    "These exact calendar identifiers are not currently available. KaosCal does not reconnect them by name."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                ForEach(memberships) { membership in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(membership.calendarTitleSnapshot)
+                            Text(membership.sourceTitleSnapshot)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Menu("Replace…") {
+                            ForEach(appState.calendarAccounts) { account in
+                                Section(account.title) {
+                                    ForEach(account.calendars.filter {
+                                        !set.calendarIdentifiers.contains($0.id)
+                                    }) { source in
+                                        Button(source.title) {
+                                            _ = appState.rebindCalendarSetMembership(
+                                                membership,
+                                                to: source
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        .disabled(replacementSources.isEmpty)
+                        .accessibilityLabel(
+                            "Replace \(membership.calendarTitleSnapshot) in \(set.name)"
+                        )
+                        Button("Remove", role: .destructive) {
+                            _ = appState.removeCalendarSetMembership(membership)
+                        }
+                        .accessibilityLabel(
+                            "Remove \(membership.calendarTitleSnapshot) from \(set.name)"
+                        )
+                    }
+                    .accessibilityElement(children: .contain)
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Label(
+                "Unavailable Calendars",
+                systemImage: "calendar.badge.exclamationmark"
+            )
+        }
+    }
+
+    private func membershipBinding(
+        source: CalendarSource,
+        setID: String
+    ) -> Binding<Bool> {
+        Binding(
+            get: {
+                appState.savedCalendarSet(id: setID)?
+                    .calendarIdentifiers.contains(source.id) == true
+            },
+            set: {
+                _ = appState.setCalendarSetMembership(
+                    $0,
+                    source: source,
+                    setID: setID
+                )
+            }
+        )
+    }
+
+    private var selectedSavedSet: SavedCalendarSetSnapshot? {
+        guard case let .saved(setID) = selection ?? .all else { return nil }
+        return appState.savedCalendarSet(id: setID)
+    }
+
+    private func setRow(
+        title: String,
+        systemImage: String,
+        isActive: Bool
+    ) -> some View {
+        HStack {
+            Label(title, systemImage: systemImage)
+                .lineLimit(1)
+            Spacer()
+            if isActive {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(KaosCalTheme.accent)
+                    .accessibilityLabel("Active")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var operationError: some View {
+        if let message = appState.localOperationError {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.callout)
+                .foregroundStyle(.red)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func setSummary(_ set: SavedCalendarSetSnapshot) -> String {
+        guard appState.canDetermineCalendarSetMembershipAvailability else {
+            return "\(set.memberships.count) calendars · availability unknown"
+        }
+        let availableByID = Dictionary(
+            uniqueKeysWithValues: appState.calendarSources.map { ($0.id, $0) }
+        )
+        let unavailableCount = set.memberships.filter {
+            availableByID[$0.calendarIdentifier] == nil
+        }.count
+        let disabledCount = set.memberships.compactMap {
+            availableByID[$0.calendarIdentifier]
+        }.filter {
+            !appState.calendarUsagePolicy(for: $0).isVisible
+        }.count
+        var parts = ["\(set.memberships.count) calendars"]
+        if disabledCount > 0 { parts.append("\(disabledCount) disabled") }
+        if unavailableCount > 0 {
+            parts.append("\(unavailableCount) unavailable")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private func beginRenaming(_ set: SavedCalendarSetSnapshot) {
+        nameEditor = CalendarSetNameEditor(
+            kind: .rename(set.id),
+            initialName: set.name
+        )
+    }
+
+    private func canMoveSelectedSet(by offset: Int) -> Bool {
+        guard let selectedSavedSet,
+              let index = appState.savedCalendarSets.firstIndex(where: {
+                  $0.id == selectedSavedSet.id
+              }) else {
+            return false
+        }
+        return appState.savedCalendarSets.indices.contains(index + offset)
+    }
+
+    private func moveSelectedSet(by offset: Int) {
+        guard let selectedSavedSet,
+              let index = appState.savedCalendarSets.firstIndex(where: {
+                  $0.id == selectedSavedSet.id
+              }),
+              appState.savedCalendarSets.indices.contains(index + offset) else {
+            return
+        }
+        var ids = appState.savedCalendarSets.map(\.id)
+        ids.swapAt(index, index + offset)
+        _ = appState.reorderCalendarSets(ids)
+    }
+}
+
+private struct CalendarSetNameEditorView: View {
+    @ObservedObject var appState: AppState
+    let editor: CalendarSetNameEditor
+    let onComplete: (String?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var nameIsFocused: Bool
+    @State private var name: String
+    @State private var startsWithEnabledCalendars = true
+
+    init(
+        appState: AppState,
+        editor: CalendarSetNameEditor,
+        onComplete: @escaping (String?) -> Void
+    ) {
+        self.appState = appState
+        self.editor = editor
+        self.onComplete = onComplete
+        _name = State(initialValue: editor.initialName)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(isCreating ? "New Calendar Set" : "Rename Calendar Set")
+                .font(.title2.weight(.semibold))
+
+            TextField("Name", text: $name)
+                .focused($nameIsFocused)
+                .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("settings.calendarSets.name")
+
+            if isCreating {
+                Toggle(
+                    "Start with calendars currently enabled in KaosCal",
+                    isOn: $startsWithEnabledCalendars
+                )
+                Text(
+                    startsWithEnabledCalendars
+                        ? "You can add or remove calendars after creating the Set."
+                        : "An empty Set intentionally shows no calendars until you add them."
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            if let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else if let message = appState.localOperationError {
+                Label(message, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    dismiss()
+                    onComplete(nil)
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button(isCreating ? "Create" : "Save") {
+                    submit()
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(validationMessage != nil)
+                .accessibilityIdentifier("settings.calendarSets.name.confirm")
+            }
+        }
+        .padding(24)
+        .frame(width: 440)
+        .onAppear { nameIsFocused = true }
+        .accessibilityIdentifier("settings.calendarSets.nameSheet")
+    }
+
+    private var isCreating: Bool {
+        if case .create = editor.kind { return true }
+        return false
+    }
+
+    private var validationMessage: String? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return "Enter a name for this Calendar Set." }
+        if trimmed.unicodeScalars.count
+            > CalendarSetRepository.maximumNameLength {
+            return "Calendar Set names can contain at most \(CalendarSetRepository.maximumNameLength) characters."
+        }
+        let editingID: String? = switch editor.kind {
+        case .create: nil
+        case let .rename(setID): setID
+        }
+        if appState.savedCalendarSets.contains(where: {
+            $0.id != editingID
+                && $0.name.compare(
+                    trimmed,
+                    options: [.caseInsensitive]
+                ) == .orderedSame
+        }) {
+            return "A Calendar Set with this name already exists."
+        }
+        return nil
+    }
+
+    private func submit() {
+        guard validationMessage == nil else { return }
+        switch editor.kind {
+        case .create:
+            let identifiers: Set<String> = startsWithEnabledCalendars
+                ? Set(appState.calendarSources.filter {
+                    appState.calendarUsagePolicy(for: $0).isVisible
+                }.map(\.id))
+                : []
+            guard let created = appState.createCalendarSet(
+                name: name,
+                calendarIdentifiers: identifiers
+            ) else {
+                return
+            }
+            dismiss()
+            onComplete(created.id)
+        case let .rename(setID):
+            guard appState.renameCalendarSet(id: setID, name: name) else {
+                return
+            }
+            dismiss()
+            onComplete(nil)
+        }
     }
 }
 
@@ -390,7 +1092,7 @@ struct LocalDataSettingsView: View {
             systemImage: "hand.raised"
         ) {
             Label(
-                "Included: Event Brief checklists and notes, personal tasks, calendar role and usage preferences, and local change history.",
+                "Included: Event Brief checklists and notes, personal tasks, saved Calendar Set names and memberships, calendar role and usage preferences, the active Set selection, and local change history.",
                 systemImage: "checkmark.circle"
             )
             Label(
@@ -428,7 +1130,7 @@ struct LocalDataSettingsView: View {
             systemImage: "trash"
         ) {
             Text(
-                "Remove KaosCal checklists, personal tasks, notes, calendar preferences, and change history from the active database. An automatic recovery backup remains on this Mac, and its location appears in the result. Original calendar events remain in their calendar accounts."
+                "Remove KaosCal checklists, personal tasks, notes, saved Calendar Sets, calendar preferences, and change history from the active database. An automatic recovery backup remains on this Mac, and its location appears in the result. Original calendar events remain in their calendar accounts."
             )
             .foregroundStyle(.secondary)
 
@@ -580,11 +1282,20 @@ struct SettingsRootView: View {
     @ObservedObject var appState: AppState
 
     var body: some View {
-        TabView {
+        TabView(selection: $appState.selectedSettingsPane) {
             CalendarUsageSettingsView(appState: appState)
                 .tabItem {
                     Label("Calendars", systemImage: "calendar")
                 }
+                .tag(SettingsPane.calendars)
+            CalendarSetSettingsView(appState: appState)
+                .tabItem {
+                    Label(
+                        "Calendar Sets",
+                        systemImage: "calendar.badge.checkmark"
+                    )
+                }
+                .tag(SettingsPane.calendarSets)
             if let coordinator = appState.taskProviderCoordinator {
                 TaskProviderSettingsView(
                     appState: appState,
@@ -593,11 +1304,13 @@ struct SettingsRootView: View {
                 .tabItem {
                     Label("Task Providers", systemImage: "checklist")
                 }
+                .tag(SettingsPane.taskProviders)
             }
             LocalDataSettingsView(appState: appState)
                 .tabItem {
                     Label("Local Data", systemImage: "externaldrive")
                 }
+                .tag(SettingsPane.localData)
         }
     }
 }

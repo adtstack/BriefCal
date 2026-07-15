@@ -2,11 +2,12 @@
 
 > 상태: Accepted
 > 날짜: 2026-07-12
-> 관계: ADR-006의 entitlement 기준과 ADR-008의 Phase 9 migration/recovery 예상을 확장·수정함. Phase 10 bootstrap recovery 결정을 포함함
+> 관계: ADR-006의 entitlement 기준과 ADR-008의 Phase 9 migration/recovery 예상을 확장·수정함. Phase 10 bootstrap recovery와 ADR-018의 saved Calendar Set 데이터를 포함함
 
 ## 배경
 
-KaosCal의 Event Brief, task, link snapshot, change history와 calendar role은 로컬
+KaosCal의 Event Brief, task, link snapshot, change history, calendar role·usage와 saved
+Calendar Set은 로컬
 SQLite에만 존재한다. 이 파일을 단순 복사하면 실행 중 WAL과 시점이 어긋날 수 있고,
 검증하지 않은 ZIP을 active DB에 덮어쓰면 로컬 데이터 전체를 잃을 수 있다. 반대로
 backup/reset 기능이 EventKit을 건드리면 로컬 데이터 관리가 원본 Calendar/Exchange
@@ -49,9 +50,10 @@ Phase 9는 정상 부팅한 current-schema DB에서 사용자가 명시적으로
   DB의 자동 ZIP을 만든다. 자동 backup 실패는 destructive operation을 차단한다.
   restore나 사후 검증 실패는 pre-operation snapshot으로 같은 writer에 rollback을
   시도한다.
-- reset은 `event_change_log`, `event_tasks`, `event_links`, `event_contexts`,
-  `personal_tasks`, `calendar_preferences`의 user row만 한 transaction에서 지우고
-  migration history와 schema를 유지한다.
+- reset은 provider pending/cursor/account/item/binding/destination, context reference,
+  event change/task/link/context, personal task, calendar role·usage, saved Set·membership·
+  selection의 user row를 child-first 한 transaction에서 지우고 migration history와
+  schema를 유지한다.
 - ZIP과 SQLite는 KaosCal이 암호화하지 않는 plaintext다. UI는 Event Brief 본문뿐
   아니라 linked title/time/location/identifier와 change snapshot의 원본 notes가
   포함될 수 있음을 명시한다. KaosCal은 계정 credential, Exchange password/MFA,

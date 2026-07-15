@@ -79,6 +79,129 @@ extension CalendarUsagePreference: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
+struct SavedCalendarSet: Equatable, Identifiable {
+    let id: String
+    var name: String
+    var sortOrder: Int
+    let createdAt: Date
+    var updatedAt: Date
+}
+
+extension SavedCalendarSet: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "calendar_sets"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy {
+        .deferredToDate
+    }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy {
+        .deferredToDate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case sortOrder = "sort_order"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct CalendarSetMembership: Equatable, Identifiable {
+    let id: String
+    let calendarSetID: String
+    var calendarIdentifier: String
+    var sourceIdentifierSnapshot: String
+    var sourceTitleSnapshot: String
+    var calendarTitleSnapshot: String
+    var sortOrder: Int
+    let createdAt: Date
+    var updatedAt: Date
+}
+
+extension CalendarSetMembership: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "calendar_set_memberships"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy {
+        .deferredToDate
+    }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy {
+        .deferredToDate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case calendarSetID = "calendar_set_id"
+        case calendarIdentifier = "calendar_identifier"
+        case sourceIdentifierSnapshot = "source_identifier_snapshot"
+        case sourceTitleSnapshot = "source_title_snapshot"
+        case calendarTitleSnapshot = "calendar_title_snapshot"
+        case sortOrder = "sort_order"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct SavedCalendarSetSnapshot: Equatable, Identifiable {
+    let calendarSet: SavedCalendarSet
+    let memberships: [CalendarSetMembership]
+
+    var id: String { calendarSet.id }
+    var name: String { calendarSet.name }
+
+    var calendarIdentifiers: Set<String> {
+        Set(memberships.map(\.calendarIdentifier))
+    }
+}
+
+enum CalendarSetSelectionKind: String, Codable, DatabaseValueConvertible {
+    case role
+    case saved
+}
+
+struct CalendarSetSelectionRecord: Equatable {
+    static let singletonID = 1
+
+    let singletonID: Int
+    var selectionKind: CalendarSetSelectionKind
+    var role: CalendarRole?
+    var calendarSetID: String?
+    var updatedAt: Date
+}
+
+extension CalendarSetSelectionRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "calendar_set_selection"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy {
+        .deferredToDate
+    }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy {
+        .deferredToDate
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case singletonID = "singleton_id"
+        case selectionKind = "selection_kind"
+        case role
+        case calendarSetID = "calendar_set_id"
+        case updatedAt = "updated_at"
+    }
+}
+
 enum EventLifecycleStatus: String, Codable, CaseIterable, DatabaseValueConvertible {
     case scheduled
     case completed

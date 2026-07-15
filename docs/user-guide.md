@@ -141,9 +141,25 @@ Personal task와 Event Brief 작업은 Apple Reminders, Exchange Tasks 또는 Ka
   공유 설정 또는 계정 데이터는 바꾸지 않는다.
 - subscribed/birthdays 캘린더는 현재 source 정보가 있을 때 `Subscription`으로
   추론하고, 그 밖의 캘린더는 사용자가 정하기 전 `Other`로 둔다.
-- `Calendar Set`의 `All Calendars` 또는 role 필터는 Day/Week/Agenda에 보이는 일정을
-  좁힌다. 현재 버전에는 임의 이름의 saved set이나 캘린더별 visibility 저장 기능이
-  없다.
+- Sidebar의 `Calendar Set`에는 모든 enabled calendar를 보여 주는 `All Calendars`,
+  role을 기준으로 계산하는 `Smart Role Filters`, 사용자가 저장한 정확한 calendar
+  조합이 따로 표시된다. 선택한 항목은 로컬 DB에 저장되어 재실행 뒤 복원된다.
+- **Settings > Calendar Sets**에서 `+`로 이름 있는 Set을 만들고, rename/delete/reorder,
+  account별 `Include All`/`Remove All` 또는 calendar별 checkbox로 membership을 바꾼다.
+  새 Set은 현재 enabled calendar로 시작하거나 의도적으로 비워 둘 수 있다. 한 calendar는
+  여러 Set에 들어갈 수 있고 서로 다른 role의 calendar도 같은 Set에 함께 넣을 수 있다.
+- **Settings > Calendars**의 `Enabled`는 모든 Set에 적용하는 master display 설정이다.
+  calendar를 disable하면 All, Smart Filter와 saved Set에서 숨지만 저장된 membership은
+  삭제되지 않는다. `Block`은 표시/Set과 독립이므로 숨긴 calendar도 busy time을 막을 수 있다.
+- membership은 EventKit calendar identifier의 exact match로만 자동 복원한다. Set에
+  들어 있던 calendar가 사라지면 `Unavailable Calendars`에 snapshot 이름을 남기고
+  이름만 같은 calendar로 자동 연결하지 않는다. 사용자가 `Replace…`로 새 calendar를
+  고르거나 `Remove`를 눌러야 membership이 바뀐다. 권한 거부·로딩·조회 실패 중에는
+  missing으로 단정하지 않고, 권한 있는 calendar 조회가 완료된 뒤에만 unavailable을 표시한다.
+- Set 전환은 Day/Week/Agenda 표시만 좁히고 raw Calendar fetch, Event Brief 연결·복구,
+  duplicate review와 editor destination을 삭제하거나 제한하지 않는다. 숨겨진 duplicate·
+  relink 대상 또는 원본 저장 뒤 focus할 일정이 현재 filter 밖이면 active Set을 바꾸지 않는
+  temporary reveal을 사용하고, 이미 보이는 일정에는 임시 상태를 만들지 않는다.
 
 ## 6. Possible duplicate 이해하기
 
@@ -202,10 +218,10 @@ manifest, byte count/SHA-256, 현재 migration/schema, SQLite integrity와 forei
 2. 확인란에 정확히 `RESET`을 입력한다.
 3. `Delete Local Data`를 선택하고 recovery backup 경로를 기록한다.
 
-Reset은 Event Brief, event link/task, Personal task, local change history와 calendar
-role preference의 active row를 비운다. 실행 전 자동 recovery ZIP을 만들며 이 생성이
-실패하면 reset하지 않는다. Calendar/Exchange 일정과 DB schema/migration history는
-삭제하지 않는다.
+Reset은 Event Brief, event link/task, Personal task, local change history, calendar
+role/usage preference, saved Calendar Set·membership·선택과 provider/reference local row를
+비운다. 실행 전 자동 recovery ZIP을 만들며 이 생성이 실패하면 reset하지 않는다.
+Calendar/Exchange 일정과 DB schema/migration history는 삭제하지 않는다.
 
 Import/reset 전 자동 recovery ZIP은 active DB 옆의 `Backups` 폴더에 남는다.
 KaosCal은 이를 자동 삭제하지 않으므로 사용자가 보관 공간과 수명을 관리해야 한다.
@@ -256,7 +272,8 @@ restore/reset과 rollback까지 실패하면 그 session의 로컬 변경과 캘
 - 프로젝트·팀 작업·Kanban, Apple Reminders/Exchange Tasks 동기화
 - 복잡한 반복 규칙의 강제 변환, linked `This and future`, 일반적인 반복/delete Undo,
   앱 재실행 뒤 Undo
-- custom saved Calendar Set, role별 색/이름 override, duplicate 자동 정리
+- Calendar Set의 cloud/device sync·시간/위치 자동 전환, role별 색/이름 override,
+  duplicate 자동 정리
 - backup record merge, 예약 backup, 자동 retention/pruning
 - schema가 다른 backup migration/downgrade, 임의 SQLite 복구와 backup 없는 bootstrap reset
 - exact Release에서 실제 export 파일 작성·backup import·reset mutation의 live gate

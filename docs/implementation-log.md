@@ -959,6 +959,57 @@
 - 결과: **설계 승인 / 구현 대기**. 현재 앱은 event dot을 표시하지 않으며 자동·offscreen·
   실창·VoiceOver 통과 근거도 아직 없다.
 
+## 2026-07-15 — saved Calendar Set v9 구현·문서 정합화
+
+- 관련 ADR: [ADR-014](adr/ADR-014-multi-calendar-clarity.md),
+  [ADR-017](adr/ADR-017-calendar-visibility-and-availability.md),
+  [ADR-018](adr/ADR-018-saved-calendar-sets.md)
+- 데이터 계약:
+  - additive `v9_saved_calendar_sets`가 `calendar_sets`, `calendar_set_memberships`,
+    `calendar_set_selection`을 추가한다. All은 synthetic이라 row를 만들지 않는다.
+  - `CalendarSetRepository`가 saved Set CRUD·순서, exact calendar identifier membership,
+    singleton selection과 active saved Set 삭제 시 All fallback을 관리한다.
+  - identifier가 사라진 membership도 보존한다. source/title 유사성으로 자동 rebind하지
+    않고 사용자가 `Replace…` 또는 `Remove`를 명시해야 한다.
+- 제품 동작:
+  - `CalendarSetFilter`는 All, role별 Smart Role Filter, saved Set을 구분한다. saved Set은
+    서로 겹치거나 여러 role을 섞을 수 있다.
+  - 표시 식은 `global Enabled ∩ selected Set`이다. globally disable해도 membership은
+    삭제하지 않으며 availability blocking은 Set과 독립이다.
+  - Settings는 saved Set 생성·rename·delete·reorder, enabled/empty 시작, account별
+    Include All/Remove All, membership checkbox와 unavailable Replace/Remove를 제공한다.
+    Sidebar와 command menu는 All/saved/Smart Filter를 분리한다.
+  - duplicate/relink navigation은 persisted Set을 All로 바꾸지 않고 exact event를 임시
+    reveal한다. 후속 review에서 이 동작을 normal filter 밖 event와 성공한 write focus에만
+    적용하고, unavailable 판정도 권한 있는 authoritative source state로 제한했다. reset과
+    strict backup은 v9 Set/membership/selection을 함께 다룬다.
+- 문서 검증:
+  - 현행 스펙·데이터 모델·아키텍처·사용자 가이드·QA·backup/privacy/security와 ADR index를
+    v9 계약에 맞춰 갱신했다.
+  - 저장소 Markdown의 상대 링크 존재 여부와 `git diff --check`를 통과했다. Phase 8/9의
+    과거 checkpoint 문구는 역사적 범위로 남기고 현행 계약에는 v9/ADR-018을 연결했다.
+- 자동 검증:
+  - ContextStore/LocalDataBackupService 집중 suite는 **84 executed / 84 succeeded /
+    0 skipped / 0 failed**, action status `succeeded`다. result bundle은
+    `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-34-47-+0900.xcresult`다.
+  - 전체 suite는 **248 executed / 247 succeeded / 1 intentional
+    `ManualEventKitQATests` skip / 0 failed**, action status `succeeded`다. result bundle은
+    `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-36-07-+0900.xcresult`다.
+  - `xcresulttool` metrics/testsRef의 `testStatus`를 직접 집계했다. migration/CRUD/order/
+    exact membership/missing rebind/selection, overlapping·mixed-role·empty Set, global
+    Enabled·blocking 독립, duplicate temporary reveal, backup/reset과 Settings offscreen을
+    포함한다.
+  - 이 실행 뒤 review에서 normal visibility 조건부 reveal, write focus reveal, missing 판정의
+    authoritative-state guard 3건이 수정됐다. 위 bundle은 해당 수정 전 checkpoint이며 최종
+    판정은 아래 250-test 재실행을 따른다.
+  - 수정 후 build와 새 UI/post-write 회귀를 포함한 focused **73 tests / 0 failures**를
+    통과했다. result bundle은
+    `/tmp/KaosCalCalendarSets/Logs/Test/Test-KaosCal-2026.07.15_18-53-22-+0900.xcresult`다.
+  - review 수정 뒤 최종 전체 **250 executed / 249 passed / 1 intentional
+    `ManualEventKitQATests` skip / 0 failures**를 통과했다. result bundle은
+    `/tmp/KaosCalCalendarSets-Final-20260715.xcresult`다.
+- 결과: **구현·최종 자동/offscreen pass / 실제 Exchange·실창·keyboard·VoiceOver pending**.
+
 ## 다음 항목 템플릿
 
 ```markdown

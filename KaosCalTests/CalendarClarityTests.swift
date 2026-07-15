@@ -41,6 +41,12 @@ final class CalendarClarityTests: XCTestCase {
 
         for role in CalendarRole.allCases {
             XCTAssertTrue(CalendarSetFilter.all.includes(role: role))
+            let roleFilter = CalendarSetFilter.role(role)
+            XCTAssertEqual(roleFilter.id, "role:\(role.rawValue)")
+            XCTAssertEqual(roleFilter.title, role.title)
+            XCTAssertEqual(roleFilter.symbolName, role.symbolName)
+            XCTAssertTrue(roleFilter.includes(role: role))
+            XCTAssertTrue(CalendarSetFilter.allCases.contains(roleFilter))
         }
         XCTAssertTrue(CalendarSetFilter.work.includes(role: .work))
         XCTAssertFalse(CalendarSetFilter.work.includes(role: .personal))
@@ -48,6 +54,30 @@ final class CalendarClarityTests: XCTestCase {
             CalendarSetFilter.subscription.symbolName,
             CalendarRole.subscription.symbolName
         )
+        XCTAssertEqual(
+            CalendarSetFilter.allCases,
+            [.all, .work, .personal, .family, .shared, .subscription, .other]
+        )
+    }
+
+    func testCalendarSetSelectionIdentityAndSavedIdentifierValidation() {
+        XCTAssertEqual(CalendarSetFilter.all.id, "all")
+        XCTAssertEqual(CalendarSetFilter.work, .role(.work))
+        XCTAssertEqual(CalendarSetFilter.work.id, "role:work")
+        XCTAssertEqual(CalendarSetFilter.work.title, CalendarRole.work.title)
+
+        let saved = CalendarSetFilter(savedSetIdentifier: "  set-123  ")
+        XCTAssertEqual(saved, .saved("set-123"))
+        XCTAssertEqual(saved?.id, "saved:set-123")
+        XCTAssertEqual(saved?.title, "Saved Set")
+        XCTAssertEqual(saved?.symbolName, "calendar.badge.checkmark")
+        XCTAssertEqual(saved?.savedSetIdentifier, "set-123")
+        XCTAssertFalse(saved?.includes(role: .work) ?? true)
+
+        XCTAssertNil(CalendarSetFilter(savedSetIdentifier: ""))
+        XCTAssertNil(CalendarSetFilter(savedSetIdentifier: " \n\t "))
+        XCTAssertNil(CalendarSetFilter.all.savedSetIdentifier)
+        XCTAssertNil(CalendarSetFilter.role(.personal).savedSetIdentifier)
     }
 
     func testCalendarUsageDefaultsAreConservativeAndIndependent() {
@@ -415,7 +445,8 @@ final class CalendarClarityTests: XCTestCase {
                 "v5_oauth_task_providers",
                 "v6_context_references",
                 "v7_microsoft_to_do_provider",
-                "v8_calendar_usage"
+                "v8_calendar_usage",
+                "v9_saved_calendar_sets"
             ]
         )
         XCTAssertEqual(

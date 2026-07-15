@@ -175,17 +175,22 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 왜 수정할 수 없는지 설명한다.
 - KaosCal local Event Brief는 편집 가능해야 한다.
 
-### 7-c. Multi-calendar clarity (Phase 8)
+### 7-c. Multi-calendar clarity와 saved Calendar Set
 
 절차:
-1. `KAOS-TEST`와 `일정`에 서로 다른 role을 지정하고 All/Work/Personal 등 virtual Set을 전환한다.
-2. 같은 제목이며 시작·종료가 각각 15분 이내인 다른-calendar 일정, 같은 all-day civil range인 일정과 경계 밖 일정을 준비한다.
-3. Sidebar, Day, Week, Agenda, Inspector, 원본 editor와 Task Center의 role/source/account/permission 표시를 비교한다.
-4. invitation, attendee, subscription, birthdays와 provider read-only fixture에서 원본 편집을 시도한다.
+1. `KAOS-TEST`와 `일정`에 서로 다른 role을 지정하고 All/Work/Personal Smart Role Filter를 전환한다.
+2. 사용자 이름의 saved Set을 둘 이상 만들고 순서·이름을 바꾼다. 겹치는 membership과 Work/Personal 혼합 membership, 빈 Set을 각각 만든다.
+3. Settings에서 account별 Include All/Remove All과 개별 membership을 바꾸고, 전역 Enabled를 끈 뒤 membership이 보존되는지 확인한다. Block도 독립적으로 바꾼다.
+4. 선택한 saved Set을 재실행 뒤 복원하고, active Set 삭제 시 All fallback을 확인한다. calendar identifier가 사라진 membership은 authoritative loaded/empty 상태에서만 unavailable로 남는지, loading·permission denied·failure에서는 missing으로 단정하지 않는지, 같은 이름 calendar에 자동 연결하지 않는지, 명시적 Replace/Remove만 적용되는지 확인한다.
+5. 같은 제목이며 시작·종료가 각각 15분 이내인 다른-calendar 일정, 같은 all-day civil range인 일정과 경계 밖 일정을 준비한다. filter 밖 calendar에 원본 create/update한 뒤 focus도 확인한다.
+6. Sidebar, Day, Week, Agenda, Inspector, 원본 editor와 Task Center의 role/source/account/permission 표시를 비교한다.
+7. invitation, attendee, subscription, birthdays와 provider read-only fixture에서 원본 편집을 시도한다.
 
 기대 결과:
 - role 변경은 local `calendar_preferences`만 갱신하고 EventKit create/update/delete를 호출하지 않는다. Set 전환도 원본 fetch·Event Brief·Task Center row를 삭제하지 않는다.
-- 현재 Set 밖의 선택은 pending notes를 저장한 뒤 안전하게 정리되며, Task Center/relink/duplicate 후보 열기는 필요한 경우 All로 전환해 정확한 일정을 선택한다.
+- 현재 Set 밖의 선택은 pending notes를 저장한 뒤 안전하게 정리된다. relink/duplicate 또는 성공한 write focus 대상이 normal filter 밖일 때만 persisted Set 선택을 All로 덮어쓰지 않고 exact 일정을 임시 reveal한다.
+- `visibleEvents = global Enabled ∩ selected Set`이다. saved Set membership을 변경하거나 calendar를 globally disable해도 서로의 저장값을 삭제하지 않고, availability blocking도 Set과 독립이다.
+- saved Set은 exact calendar identifier만 사용한다. missing membership은 보존하고 title/source 유사성으로 자동 rebind하지 않는다.
 - source가 있는 subscribed/birthdays만 기본 `Subscription`, 나머지는 `Other`다. source와 explicit override가 모두 없으면 account type을 추측하지 않고 `Other`로 표시한다.
 - timed/all-day duplicate는 다른 calendar의 검토 후보로만 표시되고 strong same occurrence, 제목/시간 범위 밖 항목은 제외된다. 자동 merge·hide·delete와 EventKit write는 없다.
 - typed reason 우선순위는 invitation→attendee→subscription→birthdays→provider read-only이며 UI 설명과 원본 write preflight가 같다. local Event Brief는 계속 편집 가능하다.
@@ -261,22 +266,22 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ### 9. Backup / Import
 
 절차:
-1. Event Brief notes/tasks, personal task, change history와 explicit calendar role이 있는 healthy current-schema file DB에서 수동 export를 만든다.
+1. Event Brief notes/tasks, personal task, change history, explicit calendar role·usage와 saved Set/membership/selection이 있는 healthy current-schema file DB에서 수동 export를 만든다.
 2. ZIP root가 store-only `kaoscal.sqlite`, `manifest.json` 정확히 두 entry인지 확인하고 manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 각각 시험한다.
-3. manifest의 archive format version이 schema version과 분리돼 있고 app/export metadata, v1/v2/v3 migration 목록, DB byte count와 SHA-256이 snapshot과 일치하는지 확인한다. 기기 이름이 없는지도 확인한다. SHA-256은 제작자 인증이 아님을 문구로 확인한다.
+3. manifest의 archive format version이 schema version과 분리돼 있고 app/export metadata, v1~v9 migration 목록, DB byte count와 SHA-256이 snapshot과 일치하는지 확인한다. 기기 이름이 없는지도 확인한다. SHA-256은 제작자 인증이 아님을 문구로 확인한다.
 4. active DB 내용을 구분할 수 있게 바꾼 뒤 export ZIP import를 선택하고 replacement confirmation을 취소해 no-op을 확인한다.
 5. 다시 승인해 import 전 `Backups` automatic ZIP 생성, validated hot restore와 projection reload를 확인한다.
 6. extra/nested/duplicate entry, deflate/encryption/data descriptor/ZIP64/multi-disk, extra/comment/attribute, trailing/gapped/overlapping payload, manifest 누락·변조, byte/hash 불일치, unknown archive format, incompatible schema/migration, corrupt SQLite, integrity/FK failure fixture를 각각 import한다. 다시 압축한 ZIP과 신뢰할 수 없는 출처도 성공 경로로 취급하지 않는다.
 7. pending notes 저장 실패, 진행 중 event mutation, automatic-backup 경로 실패 상태에서 import/reset을 시도한다.
-8. reset sheet에서 틀린 문자열과 `RESET`을 각각 입력한다. 성공 전후 active 여섯 user table과 migration history를 확인한다.
+8. reset sheet에서 틀린 문자열과 `RESET`을 각각 입력한다. 성공 전후 모든 current user-data table과 migration history를 확인한다.
 
 기대 결과:
 - 정상 export ZIP에는 정확히 두 store-only entry만 있고 manifest byte/hash가 DB와 일치한다.
 - app identifier, current schema object와 migration 목록이 정확히 같은 신뢰 가능한 backup만 import한다. 과거 schema 자동 migration이나 미래 schema downgrade, SHA-256만으로 제작자 신뢰 판정은 하지 않는다.
 - import cancellation과 모든 preflight 실패는 active DB, WAL/SHM과 EventKit provider write count를 바꾸지 않는다.
-- valid import는 Event Brief/tasks/personal tasks/change log/role을 복구하고 import 직전 DB의 automatic ZIP 경로를 결과에 표시한다.
+- valid import는 Event Brief/tasks/personal tasks/change log/role·usage/saved Set·membership·selection을 복구하고 import 직전 DB의 automatic ZIP 경로를 결과에 표시한다.
 - restore 또는 사후 schema/integrity/FK failure는 사전 snapshot으로 rollback하고 partial active DB를 성공으로 표시하지 않는다.
-- reset은 automatic backup이 먼저 성공한 경우에만 실행되며 `event_change_log`, `event_tasks`, `event_links`, `event_contexts`, `personal_tasks`, `calendar_preferences`, `calendar_usage_preferences`를 포함한 KaosCal user row를 비운다. schema와 GRDB migration history는 유지한다.
+- reset은 automatic backup이 먼저 성공한 경우에만 실행되며 provider/reference row, `event_change_log`, event task/link/context, personal task, calendar role·usage, saved Set·membership·selection을 포함한 KaosCal user row를 비운다. schema와 GRDB migration history는 유지한다.
 - export/import/reset 어느 경로도 Calendar/Exchange 원본 일정이나 EventKit provider write count를 바꾸지 않는다.
 - 현재 UI는 linked title/time/location/identifier와 original-notes change snapshot이 plaintext ZIP에 포함될 수 있고 complete calendar record/account credential/Exchange password는 전용 export 대상이 아니라고 설명한다. KaosCal이 credential/token과 attendee 전체 목록을 전용 필드로 저장하지 않는다는 점, 사용자 notes/tasks는 검사·redact하지 않아 본문 민감정보가 포함될 수 있다는 점도 Settings copy와 backup 정책에 구현됐다. run `20260712-1616-KST`에서 Settings 전체 scroll과 실제 Export/Import panel 문구를 확인했다.
 - `Backups`의 recovery ZIP은 자동 삭제·prune되지 않는다.
@@ -427,7 +432,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - import는 기존 DB를 경고 없이 덮어쓰지 않고 automatic recovery ZIP이 실패하면 restore를 시작하지 않는다.
 - archive는 store-only two-entry 구조, format/schema/migration 분리, byte/SHA-256, integrity/FK를 모두 통과해야 한다.
 - local snapshot/restore는 같은 live SQLite writer를 사용하고 DB/WAL file replacement로 우회하지 않는다.
-- reset은 여섯 user-data table만 지우고 migration history를 유지하며, reset 전 automatic backup이 필수다.
+- reset은 모든 current user-data table row를 지우고 migration history를 유지하며, reset 전 automatic backup이 필수다.
 - backup/import/reset은 EventKit write를 호출하지 않는다.
 - 일정 이동 취소는 EventKit과 local DB 모두 변경하지 않는다.
 - orphaned context는 사용자 선택 없이 자동 삭제하지 않는다.
@@ -591,10 +596,10 @@ Phase 7C linked original delete live Exchange gate:
 - recurring server fixture는 `seriesMaster`와 daily occurrence 3개 생성·전체 cleanup, residue 0 **pass**. session auto-lock 이전에 UI에 진입하지 못해 recurring `thisEvent` mutation은 **not tested**, 제품 failure 아님
 - 서버 최종 residue single 0, recurring 0. retained single local Brief의 `Delete Local Brief`와 원본 비재생성 확인은 **manual pending**
 
-Phase 8 Multi-Calendar Clarity 자동·Release gate:
+Phase 8 Multi-Calendar Clarity 자동·Release gate(당시 All/role runtime filter 범위):
 
 - conservative role inference, explicit sparse role 저장·재열기·delete/reset과 v1/v2→`v3_calendar_clarity` additive migration, role CHECK를 검증
-- virtual Set filtering, selection 밖 전환 전 notes flush, Task Center/duplicate 후보의 All 전환과 calendar identifier 기반 role projection을 검증
+- 당시 virtual Set filtering, selection 밖 전환 전 notes flush, Task Center/duplicate 후보의 All 전환과 calendar identifier 기반 role projection을 검증
 - invitation·attendee·subscription·birthdays·provider read-only typed precedence와 같은 reason을 쓰는 AppState 원본 write preflight, provider write 0회를 검증
 - normalized title, timed 15분 경계, all-day civil range, cross-calendar/strong-occurrence 제외, deterministic candidate index를 검증. index는 fetch 때 한 번 만들고 card lookup은 O(1)
 - 최종 전체 **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase8FinalTests-20260712-1415.xcresult`
@@ -602,9 +607,28 @@ Phase 8 Multi-Calendar Clarity 자동·Release gate:
 - 전체 test 전후 direct/sandbox 운영 DB의 mtime·size·SHA-256과 WAL/SHM 부재 불변. exact Release 정상 bootstrap에서는 사전 backup 뒤 sandbox DB만 v2→v3로 migration하고 integrity `ok`, FK violation 0, 새 table 0행과 기존 다섯 table count·SHA3 불변, 종료 뒤 process 0을 확인
 - macOS session lock 때문에 Sidebar/Inspector/고밀도 card/VoiceOver 실화면은 **not tested**. shared read-only Viewer가 없어 provider read-only reason live gate도 **manual pending**이며 자동 결과로 대체하지 않음
 
+Saved Calendar Set v9 gate:
+
+- `v9_saved_calendar_sets` additive migration, CRUD·rename·delete·reorder, exact membership 중복/CASCADE, singleton selection과 active-delete All fallback을 검증한다.
+- global Enabled master mask, saved Set overlap·mixed role·empty/unavailable empty state, membership 보존, explicit missing Replace/Remove와 no title-based auto-rebind를 검증한다.
+- duplicate/relink temporary reveal이 persisted selection을 바꾸지 않는지, backup/import/reset이 Set 데이터를 보존·정리하는지, fake provider write 0회인지 검증한다.
+- Settings/Sidebar keyboard, shortcut `⌃1`/정렬된 첫 8개 saved Set의 `⌃2`~`⌃9`, 긴 이름·account group·unavailable row와 VoiceOver는 실제 창 gate를 별도로 기록한다.
+- 집중 ContextStore/LocalDataBackupService는 **84 executed / 84 succeeded / 0 skipped /
+  0 failed**, 전체 suite는 **248 executed / 247 succeeded / 1 intentional manual-only skip /
+  0 failed**이며 두 action status 모두 `succeeded`다. result bundle은 각각
+  `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-34-47-+0900.xcresult`,
+  `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-36-07-+0900.xcresult`다.
+- 이 자동·offscreen checkpoint 뒤 AppState review 수정 3건이 적용됐다. 수정 후 build와
+  UI/post-write를 포함한 focused **73 tests / 0 failures**는 통과했으며 result bundle은
+  `/tmp/KaosCalCalendarSets/Logs/Test/Test-KaosCal-2026.07.15_18-53-22-+0900.xcresult`다.
+  최종 전체는 **250 executed / 249 passed / 1 intentional manual-only skip / 0 failures**이며
+  result bundle은 `/tmp/KaosCalCalendarSets-Final-20260715.xcresult`다.
+- 실제 Exchange saved Set CRUD/rebind와 Settings/Sidebar 실창·keyboard·VoiceOver는 계속
+  manual pending이다. 이전 237-test checkpoint는 v9 통과 근거로 사용하지 않는다.
+
 Phase 9 Local Data 자동·Release gate:
 
-- 집중 자동 검증은 live-writer export snapshot, standard `unzip -t` 호환 two-entry ZIP, manifest v1 핵심 값, same-writer import, pre-import automatic ZIP의 실제 재복구, six-table reset·migration history 유지와 pre-reset ZIP의 실제 재복구를 포함한다.
+- 당시 집중 자동 검증은 live-writer export snapshot, standard `unzip -t` 호환 two-entry ZIP, manifest v1 핵심 값, same-writer import, pre-import automatic ZIP의 실제 재복구, 당시 six-table reset·migration history 유지와 pre-reset ZIP의 실제 재복구를 포함한다.
 - hostile fixture는 input symlink, CRC/path traversal/attribute, trailing byte, multi-disk, encryption/data descriptor/deflate/ZIP64/overlap/oversize, 예상 밖 schema object, 숨은 `sqlite_*` trigger와 미등록 migration ledger 행을 거부한다. export destination은 live DB와 WAL/SHM/journal, hard link, symlink parent 경유까지 차단한다.
 - AppState 집중 자동 검증은 pending selected notes를 flush한 export, import/reset 성공 뒤 local projection reload, automatic ZIP의 별도 DB 복구와 export/import/reset의 fake provider write 0회를 확인한다. 주입한 import/reset `rollbackSucceeded = false`는 local/provider mutation과 refresh를 session quarantine으로 차단한다.
 - file-backed healthy DB로 620×620 Settings bitmap 생성과 fitting size를 확인했다. 이 자동 결과 자체는 실제 panel·scroll·typed reset을 대신하지 않으며, 별도 live run `20260712-1616-KST`에서 해당 상호작용을 확인했다.

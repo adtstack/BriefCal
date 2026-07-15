@@ -110,7 +110,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `UI-002` | 기준선 | Sidebar mini month는 고정 6×7 grid로 날짜를 선택하고, 선택 날짜에 맞춰 현재 calendar 화면을 이동해야 한다. |
 | `UI-003` | 기준선 | timed event는 겹침을 최소 column으로 배치하고, 짧은 event의 최소 시각 높이와 자정 경계 multi-day 분할을 보장해야 한다. |
 | `UI-004` | 기준선 | all-day/multi-day event는 배타 종료 날짜를 보존하면서 visible range에 clamp하고 재사용 가능한 lane에 배치해야 한다. |
-| `UI-005` | 설계 승인 / 구현 대기 | 완전한 `CAL-007` coverage가 있는 mini month는 일정이 하나 이상 겹치는 날짜의 숫자 아래에 단일 event dot을 표시해야 한다. dot은 숫자·focused fill·today ring과 겹치지 않아야 하며, focused date에서는 흰색, 일반 날짜에서는 accent, 인접 월에서는 낮은 opacity를 사용한다. 요약은 `calendar visibility ∩ 선택 Calendar Set`을 적용하되 availability blocking과는 독립이어야 한다. timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 모든 civil day에 반영한다. dot은 별도 hit target이 아니며 일정 수와 loading/unavailable 상태는 날짜 Button 또는 grid의 접근성 값으로 전달한다. |
+| `UI-005` | 설계 승인 / 구현 대기 | 완전한 `CAL-007` coverage가 있는 mini month는 일정이 하나 이상 겹치는 날짜의 숫자 아래에 단일 event dot을 표시해야 한다. dot은 숫자·focused fill·today ring과 겹치지 않아야 하며, focused date에서는 흰색, 일반 날짜에서는 accent, 인접 월에서는 낮은 opacity를 사용한다. 요약은 `global Enabled ∩ 선택 Calendar Set`을 적용하되 availability blocking과는 독립이어야 한다. timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 모든 civil day에 반영한다. dot은 별도 hit target이 아니며 일정 수와 loading/unavailable 상태는 날짜 Button 또는 grid의 접근성 값으로 전달한다. |
 | `TIME-001` | 기준선 | 시간 의미를 `allDay`, `floating`, `zoned`로 구분해야 한다. all-day는 날짜 범위, floating은 civil wall time, zoned는 시점과 zone 의미를 보존해야 한다. |
 | `TIME-002` | 기준선 | all-day 종료는 배타 날짜로 저장하고 사용자에게는 포함 종료 날짜로 표시해야 한다. 자정에 끝나는 timed event가 하루를 더 차지하면 안 된다. |
 | `TIME-003` | 기준선 | time zone 변경은 `현지 시각 유지`와 `동일 시점 유지`를 구분하고, DST gap/overlap의 존재하지 않거나 모호한 civil time을 자동 보정해서는 안 된다. |
@@ -121,15 +121,18 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | --- | --- | --- |
 | `CFG-001` | 기준선 | calendar role은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`를 제공해야 한다. subscribed/birthdays만 Subscription으로 추론하고 나머지 account 용도는 추측하지 않는다. |
 | `CFG-002` | 기준선 | 사용자가 명시한 role만 calendar identifier 기준 sparse row로 저장해야 한다. role 변경은 EventKit create/update/delete를 호출해서는 안 된다. |
-| `CFG-003` | 기준선 | virtual Set은 `All`과 role별 filter를 제공하고 Day/Week/Agenda 표시만 좁혀야 한다. 선택 Set은 process UI state이며 임의 이름 saved Set은 제공하지 않는다. |
+| `CFG-003` | 구현 / live 대기 | Calendar Set selector는 synthetic `All Calendars`, role별 Smart Filter와 사용자 이름의 saved Set을 구분해야 한다. saved Set은 calendar identifier의 exact membership 조합이며 한 calendar가 서로 다른 role의 calendar와 함께 또는 여러 saved Set에 중복 포함될 수 있어야 한다. |
 | `CFG-004` | 기준선 | 원본 write restriction은 invitation → attendee → subscribed → birthdays → provider read-only 순으로 결정해야 한다. 구체 ACL을 추측하지 않고 local Brief 편집 가능성을 함께 알려야 한다. |
 | `CFG-005` | 기준선 | possible duplicate는 다른 calendar의 정규화 title과 보수적 시간 범위로 후보만 만들어야 한다. 자동 merge, hide, delete 또는 원본 write를 해서는 안 된다. |
-| `CFG-006` | 구현 / live 대기 | calendar별 `isVisible`과 `blocksAvailability`를 독립 설정해 show+block, show+ignore, hide+block, hide+ignore를 모두 표현해야 한다. |
+| `CFG-006` | 구현 / live 대기 | calendar별 global display enable과 `blocksAvailability`를 독립 설정해 enable+block, enable+ignore, disable+block, disable+ignore를 모두 표현해야 한다. global disable은 saved membership을 지우지 않고 All, Smart Filter와 모든 saved Set에서 표시만 막아야 한다. |
 | `CFG-007` | 구현 / live 대기 | 모든 calendar는 기본 visible이어야 한다. subscribed/birthdays는 기본 non-blocking, 나머지는 기본 blocking이며 read-only나 이름으로 기본값을 바꾸면 안 된다. |
-| `CFG-008` | 구현 / live 대기 | visible event는 `visibility ∩ selected role Set`으로 계산해야 한다. raw fetch, Event Brief observation/recovery, duplicate review, editor destination은 이 filter로 줄이면 안 된다. |
+| `CFG-008` | 구현 / live 대기 | visible event는 `global display enable ∩ selected Set`으로 계산해야 한다. 선택이 All이면 모든 enabled calendar, Smart Filter면 enabled calendar 중 해당 role, saved Set이면 enabled calendar 중 exact membership만 표시한다. raw fetch, Event Brief observation/recovery, duplicate review와 editor destination은 이 filter로 줄이면 안 된다. |
 | `CFG-009` | 구현 / live 대기 | blocking은 raw event에서 별도로 계산해야 한다. free, canceled, current-user-declined는 제외하고 busy, tentative, unavailable, availability 미지원은 포함해야 한다. 숨긴 calendar도 block할 수 있어야 한다. |
 | `CFG-010` | 구현 / live 대기 | 겹치거나 맞닿은 blocking interval은 union해야 한다. 같은 시간이 여러 calendar/event에 있어도 중복 가중하면 안 된다. |
-| `CFG-011` | 구현 / live 대기 | Settings는 source identifier별 account group과 show/block/role, account bulk action을 제공하고 Sidebar는 빠른 visibility 전환과 blocking 설명을 제공해야 한다. 모든 변경은 local-only여야 한다. |
+| `CFG-011` | 구현 / live 대기 | Settings는 source identifier별 account group과 enable/block/role, account bulk action을 제공하고 별도 Calendar Sets pane에서 create/rename/delete/reorder, account별 membership checkbox, active Set 선택을 제공해야 한다. Sidebar는 Set 전환, global enable과 blocking 설명을 제공해야 하며 모든 변경은 local-only여야 한다. |
+| `CFG-012` | 구현 / live 대기 | saved Set과 각 membership은 stable local ID로 저장하고 `(calendar_set_id, calendar_identifier)`를 중복 허용하지 않아야 한다. membership은 source/calendar snapshot을 보조 표시값으로 보존하되 exact calendar identifier만 자동 resolve해야 한다. |
+| `CFG-013` | 구현 / live 대기 | 현재 source에서 사라진 membership은 bulk checkbox 갱신이나 refresh로 삭제하지 않아야 한다. 이름이 같다는 이유로 자동 연결하지 않고 Settings에서 사용자가 Remove 또는 명시적 Replace를 선택할 때만 제거·rebind해야 한다. loading·permission denied·fetch failure 같은 비권위 상태를 unavailable로 분류하면 안 되고, 권한 있는 loaded/authoritative-empty snapshot에서만 missing을 표시해야 한다. |
+| `CFG-014` | 구현 / live 대기 | 선택한 role Smart Filter 또는 saved Set은 SQLite singleton으로 재실행 뒤 복원해야 한다. All은 selection row가 없는 기본값이고, active saved Set 삭제·누락·무효 selection은 All로 안전하게 fallback해야 한다. duplicate/relink 탐색과 성공한 원본 write 뒤 focus 대상이 normal filter 밖일 때만 저장 selection을 바꾸지 않는 temporary reveal을 사용해야 한다. |
 
 ### 4.4 원본 일정 생성·편집·삭제
 
@@ -199,14 +202,14 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | ID | 상태 | 요구사항과 인수 기준 |
 | --- | --- | --- |
 | `DATA-001` | 기준선 | local store는 Application Support의 SQLite를 사용하고 foreign key를 항상 활성화해야 한다. hosted test는 production DB를 열면 안 된다. |
-| `DATA-002` | 기준선 | migration은 additive이며 이미 적용된 migration을 수정하면 안 된다. 현행 ledger는 `v1_context_store`부터 `v8_calendar_usage`까지 순서대로 적용한다. |
+| `DATA-002` | 기준선 | migration은 additive이며 이미 적용된 migration을 수정하면 안 된다. 현행 ledger는 `v1_context_store`부터 `v9_saved_calendar_sets`까지 순서대로 적용한다. |
 | `DATA-003` | 기준선 | EventKit ID 하나를 영구 identity로 간주하면 안 된다. strong IDs, calendar, recurrence/occurrence anchor, 시간 의미와 snapshot을 사용하고 weak/fingerprint 후보는 사용자 승인 전 자동 연결하면 안 된다. |
-| `DATA-004` | 기준선 | role·calendar usage preference는 exact calendar identifier에만 적용한다. identifier churn 뒤 같은 title이라는 이유로 자동 이식하면 안 된다. |
+| `DATA-004` | 기준선 | role·calendar usage preference와 saved Set membership은 exact calendar identifier에만 적용한다. identifier churn 뒤 같은 title이라는 이유로 자동 이식하면 안 되며 saved membership rebind는 사용자의 명시적 선택과 stale-ID 검증을 요구해야 한다. |
 | `BAK-001` | 기준선 | export는 store-only classic ZIP에 `kaoscal.sqlite`와 `manifest.json` 두 entry만 만들고 migration ledger, schema, byte count, SHA-256과 크기 상한을 검증 가능하게 기록해야 한다. |
 | `BAK-002` | 기준선 | ZIP은 plaintext이며 서명·암호화 backup으로 표현하면 안 된다. credential/token, 전체 EventKit store와 외부 원문은 넣지 않되 사용자 notes/tasks와 linked snapshot에는 민감정보가 있을 수 있음을 알려야 한다. |
 | `BAK-003` | 기준선 | import는 실행 중인 앱과 application ID·schema·migration이 정확히 같은 trusted backup만 허용해야 한다. preflight 전 active DB를 바꾸면 안 되고 record merge·schema upgrade/downgrade를 제공하면 안 된다. |
 | `BAK-004` | 기준선 | import/reset은 먼저 recovery ZIP을 만든 뒤 같은 live writer에서 restore 또는 local-data reset을 수행해야 한다. 모든 경로는 EventKit write를 호출하면 안 된다. |
-| `BAK-005` | 기준선 | reset은 KaosCal user-data table을 비우되 schema와 GRDB migration history를 유지해야 한다. provider metadata/cursor/binding/reference/role/usage도 현재 schema의 reset 대상에 포함한다. Keychain credential 삭제는 별도 Disconnect 확인 경계다. |
+| `BAK-005` | 기준선 | reset은 KaosCal user-data table을 비우되 schema와 GRDB migration history를 유지해야 한다. provider metadata/cursor/binding/reference, role/usage와 saved Set/membership/selection도 현재 schema의 reset 대상에 포함한다. Keychain credential 삭제는 별도 Disconnect 확인 경계다. |
 | `BAK-006` | 기준선 | bootstrap DB open/migration 실패 시 strict same-schema backup을 먼저 검증하고, 기존 SQLite family를 Recovery에 격리한 뒤 설치해야 한다. 설치 검증 실패 시 원본 family 전체 rollback을 시도해야 한다. |
 | `BAK-007` | 기준선 | rollback 자체가 실패하면 해당 session의 mutation과 refresh를 quarantine하고 부분 복구를 성공으로 표시하면 안 된다. |
 
@@ -215,9 +218,9 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | ID | 상태 | 요구사항과 인수 기준 |
 | --- | --- | --- |
 | `SET-001` | 기준선 | 첫 실행은 local-first 데이터 경계, Calendar full access 이유와 기본 workflow를 설명하고 사용자의 명시적 Continue 뒤 완료 상태를 저장해야 한다. |
-| `SET-002` | 기준선 | Settings는 Calendars, Task Providers, Local Data의 책임을 분리해 제공해야 한다. destructive reset은 정확한 `RESET` 입력과 별도 확인 없이는 활성화하면 안 된다. |
+| `SET-002` | 기준선 | Settings는 Calendars, Calendar Sets, Task Providers, Local Data의 책임을 분리해 제공해야 한다. destructive reset은 정확한 `RESET` 입력과 별도 확인 없이는 활성화하면 안 된다. |
 | `SET-003` | 기준선 | permission recovery, empty state, operation error와 partial success는 사용자가 다음 안전한 행동을 알 수 있는 문구를 제공해야 한다. |
-| `SET-004` | 구현 / live 대기 | Settings의 calendar usage와 provider account/list UI는 긴 account/calendar/provider 이름, keyboard, scroll과 VoiceOver에서 의미를 잃지 않아야 한다. 자동·offscreen 결과만으로 실제 접근성 통과를 선언하면 안 된다. |
+| `SET-004` | 구현 / live 대기 | Settings의 calendar usage, Calendar Sets와 provider account/list UI는 긴 account/calendar/provider/Set 이름, keyboard, scroll과 VoiceOver에서 의미를 잃지 않아야 한다. membership은 Included/Not included, disabled와 unavailable 상태를 색만으로 전달하면 안 되며 자동·offscreen 결과만으로 실제 접근성 통과를 선언하면 안 된다. |
 
 ## 5. 핵심 상태 전이
 
@@ -278,6 +281,7 @@ linked
 | `v6_context_references` | URL reference-only persistence |
 | `v7_microsoft_to_do_provider` | Microsoft To Do provider 확장 |
 | `v8_calendar_usage` | visibility/blocking sparse preference |
+| `v9_saved_calendar_sets` | named Set, exact calendar membership과 persisted role/saved selection |
 
 스키마의 column, CHECK, foreign key, index와 backup manifest의 정확한 계약은
 [Data Model](data-model.md)과 migration source를 따른다. 이 표는 migration을 재정의하지 않는다.
@@ -305,7 +309,7 @@ linked
 - 안전하게 표현할 수 없는 복잡 recurrence 강제 편집
 - linked future series의 전체 context reconciliation 없는 write
 - 일반적인 multi-step/app-restart Undo
-- 임의 이름 saved Calendar Set, calendar color/name override
+- calendar color/name override와 Calendar Set cloud/device sync 또는 time/location 자동 전환
 - duplicate 자동 merge/hide/delete
 - 외부 notes 본문 양방향 sync와 reference의 task 자동 변환
 - backup record merge, scheduled backup, automatic retention/pruning

@@ -1,8 +1,8 @@
 # KaosCal 개인정보 및 데이터 처리 안내
 
-> 마지막 갱신: 2026-07-12
+> 마지막 갱신: 2026-07-15
 >
-> 이 문서는 현재 저장소의 Phase 9 구현이 실제로 처리하는 데이터를 설명하는 기술적
+> 이 문서는 현재 저장소 구현이 실제로 처리하는 데이터를 설명하는 기술적
 > 안내다. 외부 배포 주체의 법적 명칭·주소, 개인정보 문의 연락처, 관할별 법적 근거와
 > 최종 보존 정책은 아직 결정되지 않았다. 따라서 이 문서를 확정된 상용 서비스의 법률
 > 고지로 해석해서는 안 되며, 외부 베타 전에 미정 항목을 확정해야 한다.
@@ -11,7 +11,8 @@
 
 KaosCal은 계정 가입 없이 작동하는 macOS 앱이다. 원본 일정은 macOS EventKit을 통해
 사용자가 이미 구성한 Calendar 계정에 저장된다. KaosCal의 Event Brief, 작업, 로컬
-notes, 연결 정보, calendar role과 변경 기록은 이 Mac의 로컬 SQLite에 저장된다.
+notes, 연결 정보, calendar role·usage, saved Calendar Set과 변경 기록은 이 Mac의 로컬
+SQLite에 저장된다.
 
 현재 앱 코드에는 KaosCal 서버, 자체 계정 시스템, 분석/광고 SDK, crash-reporting SDK
 또는 직접 캘린더 동기화용 network client가 없다. 다만 macOS Calendar와 사용자가
@@ -53,6 +54,8 @@ EventKit을 거쳐 연결된 Calendar 계정에 반영될 수 있다. 캘린더 
 - 원본 일정 변경 기록과 versioned before/after snapshot; 이 snapshot에는 원본 event
   notes가 포함될 수 있음
 - 사용자가 명시한 local calendar role preference
+- calendar별 표시·availability-blocking preference
+- saved Calendar Set 이름·순서, exact calendar membership과 현재 선택
 
 단순히 일정을 읽는 것만으로 Event Brief row를 만들지는 않는다. 사용자가 notes/task를
 저장하거나 연결이 필요한 동작을 수행할 때 관련 로컬 row가 만들어질 수 있고, 강한
@@ -88,8 +91,9 @@ manifest.json
 kaoscal.sqlite
 ```
 
-이 SQLite snapshot에는 Event Brief와 task, Personal task, calendar role, link
-metadata, 변경 기록과 원본 notes snapshot이 포함될 수 있다. 완전한 Calendar event
+이 SQLite snapshot에는 Event Brief와 task, Personal task, calendar role·usage,
+saved Calendar Set 이름·membership·selection, link metadata, 변경 기록과 원본 notes
+snapshot이 포함될 수 있다. 완전한 Calendar event
 store, 완전한 참석자 목록, 계정 credential은 backup 전용 필드로 추가되지 않지만,
 사용자 입력 본문에 들어간 민감정보는 그대로 포함될 수 있다.
 
@@ -122,7 +126,7 @@ KaosCal은 이 외부 서비스의 계정, 보존, 공유 또는 삭제 정책�
 ## 보존과 삭제
 
 - Active local data는 사용자가 삭제하거나 `Reset Local Data`를 실행할 때까지 남을 수
-  있다. 완료된 task와 변경 history도 기능상 보존될 수 있다.
+  있다. 완료된 task, 변경 history와 unavailable saved Set membership도 기능상 보존될 수 있다.
 - 원본 일정이 없어져도 Event Brief를 즉시 자동 삭제하지 않는다. 사용자는 orphan으로
   보관, 다른 일정에 relink 또는 `Delete Local Brief`를 선택할 수 있다.
 - `Delete Local Brief`와 `Reset Local Data`는 Calendar/Exchange 원본을 삭제하지 않는다.

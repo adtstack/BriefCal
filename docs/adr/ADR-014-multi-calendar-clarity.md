@@ -2,6 +2,7 @@
 
 > 상태: Accepted
 > 날짜: 2026-07-12
+> 후속 확장: ADR-018이 saved Calendar Set과 persisted selection을 추가한다.
 
 ## 배경
 
@@ -25,10 +26,10 @@ Event Brief identity, change log와 Exchange 동기화 경계를 바꾸지 않�
   `calendar_preferences`에 sparse upsert한다. 단순 EventKit 조회는 row를 만들지
   않으며 role 변경은 `CalendarProviding`을 호출할 수 없는 local repository에서만
   수행한다.
-- Phase 8의 Calendar Set은 `All`과 역할별 virtual filter다. raw fetch, Event Brief
+- Phase 8 당시 Calendar Set은 `All`과 역할별 virtual filter였다. raw fetch, Event Brief
   관찰, missing/relink와 editor의 writable destination 목록은 필터링하지 않고
-  Day/Week/Agenda 표시만 좁힌다. 임의 이름 saved set과 개별 visibility는 후속
-  settings 확장으로 이월한다.
+  Day/Week/Agenda 표시만 좁힌다. 이후 ADR-017은 global visibility를, ADR-018은 이름 있는
+  exact-membership saved Set과 selection persistence를 additive 확장으로 추가한다.
 - 수정 불가 사유는 invitation, attendee meeting, subscribed calendar,
   birthdays calendar, provider-reported read-only 순서의 typed projection으로
   통일한다. Exchange/CalDAV/iCloud의 소유자·관리자 ACL을 추측하지 않는다.
@@ -47,7 +48,7 @@ Event Brief identity, change log와 Exchange 동기화 경계를 바꾸지 않�
 - `UI-005`가 구현되면 Calendar Set의 display projection은 Day/Week/Agenda뿐 아니라
   mini month 일정 존재 표시에도 적용한다. 이는 `설계 승인 / 구현 대기`이며 기존
   Phase 8 구현 완료를 뜻하지 않는다.
-- mini month 요약은 `calendar visibility ∩ 선택 Calendar Set`만 사용하고 availability
+- mini month 요약은 `global Enabled ∩ 선택 Calendar Set`만 사용하고 availability
   blocking과는 독립이다. raw fetch, Event Brief 관찰·복구, duplicate review와 editor
   destination을 줄이지 않는다는 기존 비파괴 경계는 그대로 유지한다.
 
@@ -58,6 +59,8 @@ Event Brief identity, change log와 Exchange 동기화 경계를 바꾸지 않�
 Exchange/Calendar.app의 calendar 이름·색·권한을 바꾸지 않고 로컬 DB backup 대상이
 된다.
 
-가상 Set은 custom saved set의 완성형이 아니며, duplicate 후보도 확정 판정이 아니다.
+Phase 8의 가상 role Set은 현재 UI에서 Smart Role Filter로 구분한다. saved Set의 완성형
+계약은 [ADR-018](ADR-018-saved-calendar-sets.md)을 따르며 duplicate 후보는 여전히 확정
+판정이 아니다.
 공유 read-only Exchange 캘린더의 실제 설명과 긴 source/role 조합은 별도 live UI
 gate에서 검증해야 한다.

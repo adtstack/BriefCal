@@ -666,6 +666,72 @@ enum DatabaseMigrations {
                     ON calendar_usage_preferences(source_identifier_snapshot);
             """)
         }
+        migrator.registerMigration("v9_saved_calendar_sets") { db in
+            try db.execute(sql: """
+                CREATE TABLE calendar_sets (
+                    id TEXT PRIMARY KEY NOT NULL
+                        CHECK (length(trim(id)) > 0),
+                    name TEXT NOT NULL COLLATE NOCASE UNIQUE
+                        CHECK (length(trim(name)) BETWEEN 1 AND 80),
+                    sort_order INTEGER NOT NULL
+                        CHECK (sort_order >= 0),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX calendar_sets_order
+                    ON calendar_sets(sort_order, created_at, id);
+
+                CREATE TABLE calendar_set_memberships (
+                    id TEXT PRIMARY KEY NOT NULL
+                        CHECK (length(trim(id)) > 0),
+                    calendar_set_id TEXT NOT NULL
+                        REFERENCES calendar_sets(id) ON DELETE CASCADE,
+                    calendar_identifier TEXT NOT NULL
+                        CHECK (length(trim(calendar_identifier)) > 0),
+                    source_identifier_snapshot TEXT NOT NULL,
+                    source_title_snapshot TEXT NOT NULL,
+                    calendar_title_snapshot TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL
+                        CHECK (sort_order >= 0),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(calendar_set_id, calendar_identifier)
+                );
+                CREATE INDEX calendar_set_memberships_set_order
+                    ON calendar_set_memberships(
+                        calendar_set_id, sort_order, created_at, id
+                    );
+                CREATE INDEX calendar_set_memberships_calendar
+                    ON calendar_set_memberships(calendar_identifier);
+
+                CREATE TABLE calendar_set_selection (
+                    singleton_id INTEGER PRIMARY KEY NOT NULL
+                        CHECK (singleton_id = 1),
+                    selection_kind TEXT NOT NULL
+                        CHECK (selection_kind IN ('role', 'saved')),
+                    role TEXT
+                        CHECK (role IS NULL OR role IN (
+                            'work', 'personal', 'family', 'shared',
+                            'subscription', 'other'
+                        )),
+                    calendar_set_id TEXT
+                        REFERENCES calendar_sets(id) ON DELETE CASCADE,
+                    updated_at TEXT NOT NULL,
+                    CHECK (
+                        (
+                            selection_kind = 'role'
+                            AND role IS NOT NULL
+                            AND calendar_set_id IS NULL
+                        )
+                        OR (
+                            selection_kind = 'saved'
+                            AND role IS NULL
+                            AND calendar_set_id IS NOT NULL
+                        )
+                    )
+                );
+            """)
+        }
         return migrator
     }
 }

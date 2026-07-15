@@ -68,6 +68,9 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
     let eventChangeLog: Int
     let calendarPreferences: Int
     let calendarUsagePreferences: Int
+    let calendarSets: Int
+    let calendarSetMemberships: Int
+    let calendarSetSelections: Int
     let providerAccounts: Int
     let providerItems: Int
     let providerBindings: Int
@@ -84,6 +87,9 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
             + eventChangeLog
             + calendarPreferences
             + calendarUsagePreferences
+            + calendarSets
+            + calendarSetMemberships
+            + calendarSetSelections
             + providerAccounts
             + providerItems
             + providerBindings
@@ -330,6 +336,18 @@ struct LocalDataBackupService: Sendable {
                     db,
                     sql: "SELECT COUNT(*) FROM calendar_usage_preferences"
                 ) ?? 0,
+                calendarSets: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM calendar_sets"
+                ) ?? 0,
+                calendarSetMemberships: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM calendar_set_memberships"
+                ) ?? 0,
+                calendarSetSelections: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM calendar_set_selection"
+                ) ?? 0,
                 providerAccounts: Int.fetchOne(
                     db,
                     sql: "SELECT COUNT(*) FROM provider_accounts"
@@ -375,6 +393,9 @@ struct LocalDataBackupService: Sendable {
             try db.execute(sql: "DELETE FROM event_links")
             try db.execute(sql: "DELETE FROM event_contexts")
             try db.execute(sql: "DELETE FROM personal_tasks")
+            try db.execute(sql: "DELETE FROM calendar_set_selection")
+            try db.execute(sql: "DELETE FROM calendar_set_memberships")
+            try db.execute(sql: "DELETE FROM calendar_sets")
             try db.execute(sql: "DELETE FROM calendar_usage_preferences")
             try db.execute(sql: "DELETE FROM calendar_preferences")
             return counts

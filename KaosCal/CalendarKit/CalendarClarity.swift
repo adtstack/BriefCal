@@ -42,57 +42,80 @@ enum CalendarRole: String, Codable, CaseIterable, Hashable, Identifiable {
     }
 }
 
-enum CalendarSetFilter: String, CaseIterable, Hashable, Identifiable {
+enum CalendarSetFilter: CaseIterable, Hashable, Identifiable {
     case all
-    case work
-    case personal
-    case family
-    case shared
-    case subscription
-    case other
+    case role(CalendarRole)
+    case saved(String)
 
-    var id: Self { self }
+    static var work: Self { .role(.work) }
+    static var personal: Self { .role(.personal) }
+    static var family: Self { .role(.family) }
+    static var shared: Self { .role(.shared) }
+    static var subscription: Self { .role(.subscription) }
+    static var other: Self { .role(.other) }
+
+    static var allCases: [Self] {
+        [.all] + CalendarRole.allCases.map(Self.role)
+    }
+
+    var id: String {
+        switch self {
+        case .all:
+            "all"
+        case let .role(role):
+            "role:\(role.rawValue)"
+        case let .saved(identifier):
+            "saved:\(identifier)"
+        }
+    }
 
     var title: String {
         switch self {
         case .all: "All Calendars"
-        case .work: CalendarRole.work.title
-        case .personal: CalendarRole.personal.title
-        case .family: CalendarRole.family.title
-        case .shared: CalendarRole.shared.title
-        case .subscription: CalendarRole.subscription.title
-        case .other: CalendarRole.other.title
+        case let .role(role): role.title
+        case .saved: "Saved Set"
         }
     }
 
     var symbolName: String {
         switch self {
         case .all: "calendar"
-        case .work: CalendarRole.work.symbolName
-        case .personal: CalendarRole.personal.symbolName
-        case .family: CalendarRole.family.symbolName
-        case .shared: CalendarRole.shared.symbolName
-        case .subscription: CalendarRole.subscription.symbolName
-        case .other: CalendarRole.other.symbolName
+        case let .role(role): role.symbolName
+        case .saved: "calendar.badge.checkmark"
         }
+    }
+
+    var savedSetIdentifier: String? {
+        guard case let .saved(identifier) = self else { return nil }
+        return Self.normalizedSavedSetIdentifier(identifier)
+    }
+
+    init?(savedSetIdentifier: String) {
+        guard let identifier = Self.normalizedSavedSetIdentifier(
+            savedSetIdentifier
+        ) else {
+            return nil
+        }
+        self = .saved(identifier)
+    }
+
+    static func normalizedSavedSetIdentifier(
+        _ identifier: String
+    ) -> String? {
+        let normalized = identifier.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        return normalized.isEmpty ? nil : normalized
     }
 
     func includes(role: CalendarRole) -> Bool {
         switch self {
         case .all:
             true
-        case .work:
-            role == .work
-        case .personal:
-            role == .personal
-        case .family:
-            role == .family
-        case .shared:
-            role == .shared
-        case .subscription:
-            role == .subscription
-        case .other:
-            role == .other
+        case let .role(includedRole):
+            role == includedRole
+        case .saved:
+            false
         }
     }
 }

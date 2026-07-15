@@ -30,6 +30,13 @@ enum WorkspaceSection: String, CaseIterable, Hashable, Identifiable {
     var accessibilityIdentifier: String { "nav.\(rawValue)" }
 }
 
+enum SettingsPane: String, Hashable {
+    case calendars
+    case calendarSets
+    case taskProviders
+    case localData
+}
+
 enum TaskFilter: String, CaseIterable, Hashable, Identifiable {
     case today
     case upcoming
@@ -262,6 +269,7 @@ private struct FailedNotesDraft {
 @MainActor
 final class AppState: ObservableObject {
     @Published var selectedSection: WorkspaceSection? = .week
+    @Published var selectedSettingsPane: SettingsPane = .calendars
     @Published private(set) var selectedTaskFilter: TaskFilter = .today
     @Published var focusedDate: Date
     @Published private(set) var selectedEventID: String?
@@ -271,7 +279,10 @@ final class AppState: ObservableObject {
     @Published private(set) var calendarRoleOverrides: [String: CalendarRole] = [:]
     @Published private(set) var calendarUsageOverrides:
         [String: CalendarUsagePreference] = [:]
+    @Published private(set) var savedCalendarSets: [SavedCalendarSetSnapshot] = []
     @Published private(set) var selectedCalendarSet: CalendarSetFilter = .all
+    @Published private(set) var temporarilyRevealedEventID: String?
+    @Published private(set) var isCalendarSetFilterTemporarilyBypassed = false
     @Published private(set) var events: [DisplayEvent] = []
     @Published private(set) var localContextStoreState: LocalContextStoreState
     @Published private(set) var localDataOperationState: LocalDataOperationState = .idle
@@ -314,6 +325,7 @@ final class AppState: ObservableObject {
     private var localDataQuarantineMessage: String?
     private var duplicateCandidateIndex:
         [String: [CalendarDuplicateCandidate]] = [:]
+    private var calendarSetMembershipIndex: [String: Set<String>] = [:]
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
@@ -362,6 +374,7 @@ final class AppState: ObservableObject {
         }
         loadCalendarRolePreferences()
         loadCalendarUsagePreferences()
+        loadCalendarSets()
     }
 
     var selectedEvent: DisplayEvent? {
@@ -418,15 +431,20 @@ final class AppState: ObservableObject {
 
     var visibleEvents: [DisplayEvent] {
         let interval = visibleInterval
-        return events.filter {
+        return events.filter { event in
             let range = CalendarEventDateFormatting.effectiveDateRange(
-                for: $0,
+                for: event,
                 calendar: calendar
             )
+            let isTargetTemporarilyRevealed = temporarilyRevealedEventID
+                == event.id
+            let isGloballyEnabled = calendarUsagePolicy(for: event).isVisible
             return range.start < interval.end
                 && range.end > interval.start
-                && calendarUsagePolicy(for: $0).isVisible
-                && selectedCalendarSet.includes(role: calendarRole(for: $0))
+                && (isTargetTemporarilyRevealed
+                    || (isGloballyEnabled
+                        && (isCalendarSetFilterTemporarilyBypassed
+                            || selectedCalendarSetIncludes(event))))
         }.sorted { lhs, rhs in
             let lhsRange = CalendarEventDateFormatting.effectiveDateRange(
                 for: lhs,
@@ -444,6 +462,33 @@ final class AppState: ObservableObject {
             }
             return lhs.id < rhs.id
         }
+    }
+
+    private func selectedCalendarSetIncludes(_ event: DisplayEvent) -> Bool {
+        switch selectedCalendarSet {
+        case .all:
+            true
+        case let .role(role):
+            calendarRole(for: event) == role
+        case let .saved(setID):
+            calendarSetMembershipIndex[setID]?.contains(
+                event.calendarIdentifier
+            ) == true
+        }
+    }
+
+    private func isNormallyVisibleInSelectedCalendarSet(
+        _ event: DisplayEvent
+    ) -> Bool {
+        calendarUsagePolicy(for: event).isVisible
+            && selectedCalendarSetIncludes(event)
+    }
+
+    private func revealTemporarilyIfNeeded(_ event: DisplayEvent) {
+        isCalendarSetFilterTemporarilyBypassed = false
+        temporarilyRevealedEventID = isNormallyVisibleInSelectedCalendarSet(event)
+            ? nil
+            : event.id
     }
 
     var blockingEvents: [DisplayEvent] {
@@ -588,12 +633,383 @@ final class AppState: ObservableObject {
         refreshTaskCenter()
     }
 
-    func selectCalendarSet(_ filter: CalendarSetFilter) {
-        guard localDataOperationState == .idle else { return }
-        guard selectedCalendarSet != filter else { return }
+    var selectedCalendarSetTitle: String {
+        calendarSetTitle(for: selectedCalendarSet)
+    }
+
+    func calendarSetTitle(for filter: CalendarSetFilter) -> String {
+        switch filter {
+        case .all:
+            "All Calendars"
+        case let .role(role):
+            role.title
+        case let .saved(setID):
+            savedCalendarSet(id: setID)?.name ?? "Unavailable Set"
+        }
+    }
+
+    func savedCalendarSet(id: String) -> SavedCalendarSetSnapshot? {
+        savedCalendarSets.first { $0.id == id }
+    }
+
+    func calendarSet(
+        _ set: SavedCalendarSetSnapshot,
+        includes source: CalendarSource
+    ) -> Bool {
+        set.calendarIdentifiers.contains(source.id)
+    }
+
+    func unavailableMemberships(
+        in set: SavedCalendarSetSnapshot
+    ) -> [CalendarSetMembership] {
+        guard canDetermineCalendarSetMembershipAvailability else { return [] }
+        let availableIdentifiers = Set(calendarSources.map(\.id))
+        return set.memberships.filter {
+            !availableIdentifiers.contains($0.calendarIdentifier)
+        }
+    }
+
+    var canDetermineCalendarSetMembershipAvailability: Bool {
+        guard calendarAuthorizationState.canReadEvents else { return false }
+        switch calendarContentState {
+        case .empty, .loaded:
+            return true
+        case .disconnected, .loading, .permissionDenied, .failed:
+            return false
+        }
+    }
+
+    var calendarSetTemporaryDisplayMessage: String? {
+        if isCalendarSetFilterTemporarilyBypassed {
+            return "All enabled calendars are temporarily visible while you choose a replacement event. Your active Calendar Set selection is unchanged."
+        }
+        if temporarilyRevealedEventID != nil {
+            return "This event is temporarily visible outside \(selectedCalendarSetTitle). Your active Calendar Set selection is unchanged."
+        }
+        return nil
+    }
+
+    func endTemporaryCalendarSetDisplay() {
+        if isCalendarSetFilterTemporarilyBypassed,
+           pendingRelinkContextID != nil {
+            cancelRelinkSelection()
+        } else {
+            _ = selectCalendarSet(selectedCalendarSet)
+        }
+    }
+
+    var calendarWorkspaceEmptyMessage: String {
+        guard !isCalendarSetFilterTemporarilyBypassed,
+              temporarilyRevealedEventID == nil else {
+            return "No events in this period"
+        }
+        switch selectedCalendarSet {
+        case .all:
+            if !calendarSources.isEmpty,
+               calendarSources.allSatisfy({
+                   !calendarUsagePolicy(for: $0).isVisible
+               }) {
+                return "All calendars are disabled in KaosCal"
+            }
+        case let .role(role):
+            let matchingCalendars = calendarSources.filter {
+                calendarRole(for: $0) == role
+            }
+            if matchingCalendars.isEmpty {
+                return "No calendars use the \(role.title) role"
+            }
+            if matchingCalendars.allSatisfy({
+                !calendarUsagePolicy(for: $0).isVisible
+            }) {
+                return "All \(role.title) calendars are disabled in KaosCal"
+            }
+        case let .saved(setID):
+            guard let set = savedCalendarSet(id: setID) else {
+                return "The selected Calendar Set is unavailable"
+            }
+            if set.memberships.isEmpty {
+                return "\(set.name) has no calendars"
+            }
+            let availableByID = Dictionary(
+                uniqueKeysWithValues: calendarSources.map { ($0.id, $0) }
+            )
+            let availableMembers = set.memberships.compactMap {
+                availableByID[$0.calendarIdentifier]
+            }
+            if availableMembers.isEmpty {
+                return "Calendars in \(set.name) are currently unavailable"
+            }
+            if availableMembers.allSatisfy({
+                !calendarUsagePolicy(for: $0).isVisible
+            }) {
+                return "All calendars in \(set.name) are disabled in KaosCal"
+            }
+        }
+        return "No events in this period"
+    }
+
+    var calendarWorkspaceEmptySymbolName: String {
+        calendarWorkspaceEmptyMessage == "No events in this period"
+            ? "calendar.badge.minus"
+            : "calendar.badge.exclamationmark"
+    }
+
+    @discardableResult
+    func selectCalendarSet(_ filter: CalendarSetFilter) -> Bool {
+        guard localDataOperationState == .idle else { return false }
+        let normalizedFilter: CalendarSetFilter
+        if case let .saved(setID) = filter {
+            guard let normalized = CalendarSetFilter(
+                savedSetIdentifier: setID
+            ), savedCalendarSet(id: normalized.savedSetIdentifier ?? "") != nil else {
+                localOperationError = "The selected Calendar Set is no longer available."
+                return false
+            }
+            normalizedFilter = normalized
+        } else {
+            normalizedFilter = filter
+        }
+
+        let selectionChanged = selectedCalendarSet != normalizedFilter
+        guard selectionChanged
+                || temporarilyRevealedEventID != nil
+                || isCalendarSetFilterTemporarilyBypassed else {
+            return true
+        }
         flushPendingEventNotes()
-        selectedCalendarSet = filter
+        localOperationError = nil
+        if selectionChanged {
+            guard let repository = editableCalendarSetRepository() else {
+                return false
+            }
+            do {
+                try repository.saveSelection(normalizedFilter)
+            } catch {
+                localOperationError = Self.message(for: error)
+                return false
+            }
+        }
+        selectedCalendarSet = normalizedFilter
+        temporarilyRevealedEventID = nil
+        isCalendarSetFilterTemporarilyBypassed = false
         clearSelectionOutsideVisiblePeriod()
+        return true
+    }
+
+    @discardableResult
+    func createCalendarSet(
+        name: String,
+        calendarIdentifiers: Set<String>
+    ) -> SavedCalendarSetSnapshot? {
+        guard let repository = editableCalendarSetRepository() else {
+            return nil
+        }
+        do {
+            let created = try repository.create(
+                name: name,
+                calendars: calendarSources.filter {
+                    calendarIdentifiers.contains($0.id)
+                }
+            )
+            loadCalendarSets()
+            return savedCalendarSet(id: created.id) ?? created
+        } catch {
+            localOperationError = Self.message(for: error)
+            return nil
+        }
+    }
+
+    @discardableResult
+    func renameCalendarSet(id: String, name: String) -> Bool {
+        guard let repository = editableCalendarSetRepository() else {
+            return false
+        }
+        do {
+            _ = try repository.rename(id: id, name: name)
+            loadCalendarSets()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func deleteCalendarSet(id: String) -> Bool {
+        guard let repository = editableCalendarSetRepository() else {
+            return false
+        }
+        let affectsSelection = selectedCalendarSet == .saved(id)
+        if affectsSelection {
+            flushPendingEventNotes()
+        }
+        do {
+            guard try repository.delete(id: id) else {
+                localOperationError = "The Calendar Set is no longer available."
+                return false
+            }
+            loadCalendarSets()
+            if affectsSelection {
+                temporarilyRevealedEventID = nil
+                isCalendarSetFilterTemporarilyBypassed = false
+                clearSelectionOutsideVisiblePeriod()
+            }
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func setCalendarSetMembership(
+        _ isIncluded: Bool,
+        source: CalendarSource,
+        setID: String
+    ) -> Bool {
+        guard let repository = editableCalendarSetRepository() else {
+            return false
+        }
+        let affectsSelection = selectedCalendarSet == .saved(setID)
+        if affectsSelection && !isIncluded {
+            flushPendingEventNotes()
+        }
+        do {
+            if isIncluded {
+                _ = try repository.add(source, to: setID)
+            } else if let membership = savedCalendarSet(id: setID)?
+                .memberships.first(where: {
+                    $0.calendarIdentifier == source.id
+                }) {
+                _ = try repository.removeMembership(id: membership.id)
+            }
+            loadCalendarSets()
+            if affectsSelection {
+                clearSelectionOutsideVisiblePeriod()
+            }
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func setCalendarSetMemberships(
+        _ isIncluded: Bool,
+        sources: [CalendarSource],
+        setID: String
+    ) -> Bool {
+        guard let repository = editableCalendarSetRepository() else {
+            return false
+        }
+        let affectsSelection = selectedCalendarSet == .saved(setID)
+        if affectsSelection && !isIncluded {
+            flushPendingEventNotes()
+        }
+        do {
+            _ = try repository.updateAvailableMemberships(
+                setID: setID,
+                availableCalendarIDs: Set(sources.map(\.id)),
+                selectedSources: isIncluded ? sources : []
+            )
+            loadCalendarSets()
+            if affectsSelection {
+                clearSelectionOutsideVisiblePeriod()
+            }
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func removeCalendarSetMembership(
+        _ membership: CalendarSetMembership
+    ) -> Bool {
+        guard let repository = editableCalendarSetRepository() else {
+            return false
+        }
+        let affectsSelection = selectedCalendarSet
+            == .saved(membership.calendarSetID)
+        if affectsSelection {
+            flushPendingEventNotes()
+        }
+        do {
+            guard try repository.removeMembership(id: membership.id) else {
+                localOperationError = "The Calendar Set membership is no longer available."
+                return false
+            }
+            loadCalendarSets()
+            if affectsSelection {
+                clearSelectionOutsideVisiblePeriod()
+            }
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func rebindCalendarSetMembership(
+        _ membership: CalendarSetMembership,
+        to source: CalendarSource
+    ) -> Bool {
+        guard let repository = editableCalendarSetRepository() else {
+            return false
+        }
+        let affectsSelection = selectedCalendarSet
+            == .saved(membership.calendarSetID)
+        if affectsSelection {
+            flushPendingEventNotes()
+        }
+        do {
+            _ = try repository.rebindMembership(
+                id: membership.id,
+                expectedCalendarIdentifier: membership.calendarIdentifier,
+                to: source
+            )
+            loadCalendarSets()
+            if affectsSelection {
+                clearSelectionOutsideVisiblePeriod()
+            }
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    @discardableResult
+    func reorderCalendarSets(_ ids: [String]) -> Bool {
+        guard let repository = editableCalendarSetRepository() else {
+            return false
+        }
+        do {
+            try repository.reorder(ids: ids)
+            loadCalendarSets()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            return false
+        }
+    }
+
+    private func editableCalendarSetRepository() -> CalendarSetRepository? {
+        localOperationError = nil
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return nil
+        }
+        guard let repository = contextStore?.calendarSets else {
+            localOperationError = "Local Calendar Set storage is unavailable. No calendar data was changed."
+            return nil
+        }
+        return repository
     }
 
     func calendarDescriptor(for source: CalendarSource) -> CalendarDescriptor {
@@ -797,7 +1213,7 @@ final class AppState: ObservableObject {
 
     func selectDuplicateCandidate(_ candidate: CalendarDuplicateCandidate) {
         guard localDataOperationState == .idle else { return }
-        selectedCalendarSet = .all
+        revealTemporarilyIfNeeded(candidate.event)
         let range = CalendarEventDateFormatting.effectiveDateRange(
             for: candidate.event,
             calendar: calendar
@@ -812,6 +1228,9 @@ final class AppState: ObservableObject {
         guard localDataOperationState == .idle else { return }
         let event = id.flatMap { requestedID in
             events.first { $0.id == requestedID }
+        }
+        if event == nil, pendingRelinkContextID == nil {
+            temporarilyRevealedEventID = nil
         }
         let isChangingEvent = activeBriefEvent?.id != event?.id
 
@@ -830,6 +1249,10 @@ final class AppState: ObservableObject {
 
     func userSelectEvent(_ id: String?) {
         guard localDataOperationState == .idle else { return }
+        if pendingRelinkContextID == nil,
+           temporarilyRevealedEventID != id {
+            temporarilyRevealedEventID = nil
+        }
         selectEvent(id)
         guard let contextID = pendingRelinkContextID,
               let event = id.flatMap({ requestedID in
@@ -845,12 +1268,15 @@ final class AppState: ObservableObject {
                 throw ContextStoreError.missingContext(contextID)
             }
             pendingRelinkContextID = nil
+            isCalendarSetFilterTemporarilyBypassed = false
+            temporarilyRevealedEventID = event.id
             linkedEventRecoverySession = LinkedEventRecoverySession(
                 brief: brief,
                 stage: .confirmRelink(event)
             )
         } catch {
             pendingRelinkContextID = nil
+            isCalendarSetFilterTemporarilyBypassed = false
             localOperationError = Self.message(for: error)
         }
     }
@@ -1546,13 +1972,17 @@ final class AppState: ObservableObject {
 
     func dismissLinkedEventRecovery() {
         linkedEventRecoverySession = nil
+        isCalendarSetFilterTemporarilyBypassed = false
+        temporarilyRevealedEventID = nil
+        clearSelectionOutsideVisiblePeriod()
     }
 
     func beginSelectingRelinkCandidate() {
         guard localDataOperationState == .idle else { return }
         guard let session = linkedEventRecoverySession else { return }
         pendingRelinkContextID = session.brief.context.id
-        selectedCalendarSet = .all
+        temporarilyRevealedEventID = nil
+        isCalendarSetFilterTemporarilyBypassed = true
         focusedDate = calendar.startOfDay(
             for: session.brief.link.effectiveDateRange(
                 calendar: calendar
@@ -1564,6 +1994,9 @@ final class AppState: ObservableObject {
 
     func cancelRelinkSelection() {
         pendingRelinkContextID = nil
+        isCalendarSetFilterTemporarilyBypassed = false
+        temporarilyRevealedEventID = nil
+        clearSelectionOutsideVisiblePeriod()
     }
 
     func chooseLinkedEventCandidate(_ event: DisplayEvent) {
@@ -1777,7 +2210,6 @@ final class AppState: ObservableObject {
         _ event: DisplayEvent,
         contextID: String
     ) async {
-        selectedCalendarSet = .all
         let range = CalendarEventDateFormatting.effectiveDateRange(
             for: event,
             calendar: calendar
@@ -1809,6 +2241,7 @@ final class AppState: ObservableObject {
             localOperationError = "The dedicated lookup found the event, but the calendar view has not received it yet. The link remains active; try opening it again after sync finishes."
             return
         }
+        revealTemporarilyIfNeeded(resolvedEvent)
         focusedDate = calendar.startOfDay(
             for: CalendarEventDateFormatting.effectiveDateRange(
                 for: resolvedEvent,
@@ -2806,6 +3239,39 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func loadCalendarSets() {
+        guard let contextStore else {
+            savedCalendarSets = []
+            calendarSetMembershipIndex = [:]
+            selectedCalendarSet = .all
+            return
+        }
+        do {
+            let snapshots = try contextStore.calendarSets.fetchAll()
+            let selection = try contextStore.calendarSets.fetchSelection()
+            savedCalendarSets = snapshots
+            calendarSetMembershipIndex = Dictionary(
+                uniqueKeysWithValues: snapshots.map {
+                    ($0.id, $0.calendarIdentifiers)
+                }
+            )
+            if case let .saved(setID) = selection,
+               !calendarSetMembershipIndex.keys.contains(setID) {
+                selectedCalendarSet = .all
+                try contextStore.calendarSets.saveSelection(.all)
+            } else {
+                selectedCalendarSet = selection
+            }
+        } catch {
+            // Preserve a previously loaded saved selection but fail closed by
+            // leaving its membership index empty if initial loading failed.
+            if savedCalendarSets.isEmpty {
+                calendarSetMembershipIndex = [:]
+            }
+            localOperationError = Self.message(for: error)
+        }
+    }
+
     func refreshTaskCenter() {
         guard localDataOperationState == .idle else { return }
         guard let contextStore else {
@@ -3188,11 +3654,13 @@ final class AppState: ObservableObject {
         recoveryBriefs = []
         localOperationError = nil
         localDataQuarantineMessage = nil
-        selectedCalendarSet = .all
+        temporarilyRevealedEventID = nil
+        isCalendarSetFilterTemporarilyBypassed = false
         localContextStoreState = .ready
 
         loadCalendarRolePreferences()
         loadCalendarUsagePreferences()
+        loadCalendarSets()
         observeLocalContexts(events)
         activeBriefEvent = selectedEvent
         if activeBriefEvent == nil {
@@ -3315,6 +3783,12 @@ final class AppState: ObservableObject {
         let exactWrittenEvent = events.first { $0.id == event.id }
         let writtenEvent = exactWrittenEvent ?? events.first { candidate in
             Self.isPostWriteFallback(candidate, matching: event)
+        }
+        if let writtenEvent {
+            revealTemporarilyIfNeeded(writtenEvent)
+        } else {
+            isCalendarSetFilterTemporarilyBypassed = false
+            temporarilyRevealedEventID = nil
         }
         selectEvent(writtenEvent?.id)
     }

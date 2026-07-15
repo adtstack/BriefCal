@@ -1,7 +1,7 @@
 # V1 Scope
 
 > 상태: Accepted
-> 마지막 갱신: 2026-07-12
+> 마지막 갱신: 2026-07-15
 > 우선순위: 이 문서는 이전 문서와 충돌할 때 최신 ADR을 따라 해석한다.
 
 ## 한 줄 제품 정의
@@ -36,7 +36,7 @@ DB 128 MiB, archive 129 MiB 상한과 strict classic-ZIP 계약을 적용한다.
 미래 schema downgrade는 v1 범위가 아니다.
 
 Import/reset은 active DB를 바꾸기 전에 `Backups`에 recovery ZIP을 남기며 같은 live
-SQLite writer에서 restore/reset한다. reset은 여섯 user-data table만 비우고 migration
+SQLite writer에서 restore/reset한다. reset은 현재 user-data table row를 비우고 migration
 history는 유지한다. ZIP은 linked event metadata와 change snapshot의 original-notes
 snapshot을 포함할 수 있는 plaintext다. KaosCal은 계정 credential/token이나 attendee
 전체 목록을 전용 필드로 수집하지 않고 전체 EventKit event store도 export하지 않지만,
@@ -46,8 +46,9 @@ snapshot을 포함할 수 있는 plaintext다. KaosCal은 계정 credential/toke
 Phase 10은 손상 live DB가 bootstrap에 실패하면 strict same-schema backup을 먼저 검사하고
 기존 SQLite 파일군을 `Recovery`에 보존한 뒤 복원 DB를 재오픈하는 경로를 추가했다.
 실제 production 손상/rollback fault live gate, schedule backup과 자동
-retention/pruning은 후속 범위다. custom saved calendar set, color/name
-override와 Icon Composer variant도 배포 polish로 남아 있다. 상세 계약은
+retention/pruning은 후속 범위다. custom saved calendar set은 이후 v9 local 확장으로
+구현됐고, cloud/device sync·자동 전환과 color/name override, Icon Composer variant는
+배포 polish로 남아 있다. 상세 계약은
 [backup-restore.md](backup-restore.md)와
 [ADR-015](adr/ADR-015-backup-import-reset-safety.md)를 따른다. 자동 회귀와 signed
 Release의 정확한 checkpoint는 phase plan과 implementation log에 분리 기록한다.
@@ -88,15 +89,16 @@ Task Center는 프로젝트 관리 도구가 아니다.
 - 복잡한 반복 규칙을 KaosCal이 안전하게 표현할 수 없을 때의 강제 수정
 - detached occurrence의 `이번 이후`, 강한 context reconciliation 계획이 없는 linked future-series write
 - 반복 series·detached occurrence·delete의 일반 Undo와 앱 재실행 뒤 Undo
-- 임의 이름 saved Calendar Set, v1의 calendar별 visibility·role color/name override
+- 임의 이름 saved Calendar Set, v1의 calendar별 visibility·role color/name override(동결된 v1 범위의 제외 항목)
 - possible duplicate의 자동 merge·hide·delete 또는 EventKit 원본 변경
 - backup record-level merge, schedule backup, 자동 retention/pruning
 - schema가 다른 backup migration/downgrade, 임의 SQLite 복구와 backup 없는 destructive
   bootstrap reset
 
-v1 동결 뒤 additive `v8_calendar_usage`에서 calendar별 visibility와 availability blocking은
-구현했다. 이는 frozen v1 제공 범위를 소급 변경하지 않으며 saved Set과 role color/name
-override는 계속 제외한다.
+v1 동결 뒤 additive `v8_calendar_usage`에서 calendar별 visibility와 availability blocking을,
+`v9_saved_calendar_sets`에서 사용자 saved Set·exact membership·현재 선택 persistence를
+구현했다. 이는 frozen v1 제공 범위를 소급 변경하지 않는다. saved Set cloud/device sync와
+시간·위치 기반 자동 전환, role color/name override는 계속 제외한다.
 
 ## 범위 변경 규칙
 

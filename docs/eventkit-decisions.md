@@ -200,9 +200,11 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - role은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`다. subscribed/birthdays만 `Subscription`으로 추론하고 Exchange·CalDAV·iCloud·local은 이름이나 account type으로 용도를 추측하지 않아 `Other`다.
 - 현재 source list에 calendar가 없고 exact explicit override도 없으면 저장된 event/task account type snapshot으로 역할을 추측하지 않고 `Other`로 표시한다.
 - 사용자가 바꾼 role만 additive `v3_calendar_clarity`/`calendar_preferences`에 sparse upsert한다. EventKit fetch는 row를 만들지 않고 role 변경은 `CalendarProviding` write를 호출하지 않는다.
-- Phase 8 Calendar Set은 `All`과 role별 virtual view filter다. raw fetch, local context observation, recovery lookup, Task Center DB query와 editor writable destination은 필터링하지 않는다.
+- Phase 8 당시 Calendar Set은 `All`과 role별 virtual view filter였다. 이후 role filter는 `Smart Role Filter`로 이름을 분리하고 `v9_saved_calendar_sets`의 사용자 saved Set을 추가했다. saved Set은 exact calendar identifier membership이며 global Enabled와 교집합으로 visibility만 좁힌다. raw fetch, local context observation, recovery lookup, Task Center DB query와 editor writable destination은 필터링하지 않는다.
 - duplicate candidate는 다른 calendar의 정규화 title이 같고 timed start/end가 각각 15분 이내이거나 all-day civil range가 같은 경우의 비영속 read projection이다. fetch당 한 번 candidate index를 만들고 UI는 event ID로 O(1) 조회한다. 같은 strong identity/occurrence는 제외하고 자동 merge·hide·delete·EventKit write는 제공하지 않는다.
 - role preference의 source/calendar title snapshot은 자동 identifier-churn 재연결 근거가 아니다. exact calendar identifier가 달라지면 이름 유사성만으로 role을 승계하지 않는다.
 - AppState 원본 write preflight는 UI에 표시하는 것과 같은 `CalendarWriteRestriction`을 직접 throw한다. provider의 Confirm 후 fresh permission check는 독립 방어선으로 유지한다.
 
-세부 계약은 [ADR-014](adr/ADR-014-multi-calendar-clarity.md)를 따른다. shared read-only Exchange fixture의 실제 permission reason과 긴 source/role 조합의 화면 표시는 아직 live visual gate를 통과하지 않았으며 session lock으로 막힌 화면 gate를 자동 결과로 대체하지 않는다.
+saved Set의 persistence·missing membership·명시적 rebind·selection fallback 세부 계약은
+[ADR-018](adr/ADR-018-saved-calendar-sets.md), 기존 role/restriction 계약은
+[ADR-014](adr/ADR-014-multi-calendar-clarity.md)를 따른다. shared read-only Exchange fixture의 실제 permission reason과 긴 source/role 조합의 화면 표시는 아직 live visual gate를 통과하지 않았으며 session lock으로 막힌 화면 gate를 자동 결과로 대체하지 않는다.

@@ -3,7 +3,7 @@
 > 현재 phase·최신 suite·열린 gate 요약: [Current Status](current-status.md) 참조
 > 제품 대상: macOS Calendar에 구성된 Exchange Online
 > 현재 테스트 환경: backend 종류 미확인. Outlook connector run `20260711-1512-7C4E`에서 `KAOS-TEST`(source)·`일정`(destination)이 각각 exact-name 1개, editable, distinct, same owner로 관찰됐고, signed FinalRelease/EventKit run `20260711-1626-B7D2`에서 두 calendar의 비반복 CRUD를 확인했다. Phase 7C run `20260712-025027-KST`에서는 exact signed Release의 full access와 두 calendar의 `Exchange`·writable 표시, linked 비반복 원본의 KaosCal→Calendar.app→Outlook 삭제 및 local Brief 보존을 확인했다. backend의 Exchange Online 판정 증거는 아니다.
-> 마지막 갱신: 2026-07-12
+> 마지막 갱신: 2026-07-15
 
 ## 지원 선언 기준
 
@@ -15,7 +15,7 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 | Exchange source·calendar 식별 | 서버 connector에서 두 exact-name calendar를 구분하고 FinalRelease sidebar에서 둘 다 `Exchange`로 표시 | 서버·EventKit 통과 / backend 미판정 | `KAOS-TEST`·`일정`을 distinct calendar로 확인. 이 표시만으로 Exchange Online backend라고 추론하지 않음 |
 | editable calendar 확인 | FinalRelease에서 두 calendar 모두 lock 없이 writable로 표시 | 서버·EventKit 통과 | `KAOS-TEST` 실제 create/update/delete 통과; `일정`은 이번 local run에서 mutation하지 않음 |
 | read-only 구분 | typed invitation·attendee·subscription·birthdays·provider reason과 write preflight 자동 통과 | 구현 통과 / live blocked | Viewer calendar 미준비. Exchange ACL을 추측하지 않고 EventKit provider read-only로 설명하며 실화면 gate는 대기 |
-| local role·virtual Set | Work/Personal/Family/Shared/Subscription/Other sparse local role과 role별 Day/Week/Agenda filter 자동 통과 | 로컬 구현 통과 / live UI 대기 | EventKit write 0회. source가 사라지고 explicit role도 없으면 Other; custom saved Set은 후속 범위 |
+| local role·Calendar Set | role/Smart Filter와 사용자 saved Set v9 최종 250-test 자동 통과 | 로컬 자동 통과 / Exchange·live UI 대기 | All/Smart Role Filter/saved exact-membership Set. global Enabled master mask, missing 보존·명시적 Replace; 실제 Exchange identifier/rebind와 EventKit write 0회 live 확인 필요 |
 | possible duplicate review | cross-calendar normalized title·15분 timed/same all-day range candidate index 자동 통과 | 로컬 구현 통과 / live UI 대기 | 자동 merge·hide·delete 없음. 실제 Exchange 일정의 dense card/Inspector 표시는 session lock으로 미확인 |
 | 시간 일정 조회 | 서버 fixture와 signed FinalRelease create·재실행·refetch 확인 | 서버·EventKit 통과 | local fixture가 재실행 후에도 단일 일정으로 표시되고 서버에서 `singleInstance`·recurrence null·UTC 정규화 확인 |
 | 비반복 일정 생성 | FinalRelease에서 `KAOS-TEST`에 실제 생성 | 서버·EventKit 통과 / Calendar.app 대기 | 서버에서 단일 instance와 recurrence null 확인; Calendar.app visual round-trip은 미실행 |
@@ -237,6 +237,21 @@ KaosCal은 추측으로 Exchange 기능을 지원한다고 선언하지 않는�
 - Release: `/private/tmp/KaosCalPhase8FinalRelease/Build/Products/Release/KaosCal.app`; CDHash `6c595445dadfb60588410329222557d00865c222`. strict codesign, hardened runtime, sandbox·Calendar entitlement와 full-access usage description을 통과했고 get-task-allow·XCTest를 포함하지 않는다.
 - DB gate: test 전후 direct/sandbox production DB는 불변이었다. exact Release 정상 bootstrap 전 sandbox v2 DB를 `/private/tmp/KaosCalPhase8MigrationPreflight-20260712-1406/kaoscal-pre-v3.sqlite`로 복사하고 v3를 적용했다. 이후 integrity `ok`, FK violation 0, `calendar_preferences` 0행, 기존 context/link/task/personal/change-log count·SHA3 불변과 WAL/SHM 부재, process 0을 확인했다.
 - 증거 경계: 정상 bootstrap은 기존 EventKit 일정을 읽었지만 Phase 8 write를 실행하지 않았고 새 role row도 만들지 않았다. session이 잠겨 Sidebar·Inspector·고밀도 card·VoiceOver 실화면은 확인하지 못했다. Viewer calendar도 없어 shared read-only reason은 **live blocked**다. 이 결과만으로 backend를 Exchange Online이라고 판정하지 않는다.
+
+## 2026-07-15 saved Calendar Set v9 구현 상태
+
+- synthetic All과 기존 role filter를 `Smart Role Filter`로 유지하면서 사용자 이름의 saved Set,
+  CRUD·순서·exact calendar membership·현재 선택 persistence를 추가했다.
+- Set은 global Enabled와 교집합으로 표시하고 availability blocking과 독립이다. identifier가
+  사라진 membership은 보존하며 같은 이름의 Exchange calendar에 자동 연결하지 않고 명시적
+  Replace/Remove만 허용한다.
+- review 전 전체 **248 executed / 247 succeeded / 1 intentional manual-only skip / 0 failed**,
+  데이터 집중 **84/84 succeeded**, review 후 focused **73/73**, 최종 전체
+  **250 executed / 249 passed / 1 intentional skip / 0 failures** 자동 gate를 통과했다.
+  최종 result bundle은 `/tmp/KaosCalCalendarSets-Final-20260715.xcresult`다. 이 결과는
+  fake/local store와 offscreen UI 중심이다.
+  실제 Exchange 두 calendar로 saved Set overlap·mixed role·재실행·missing rebind를 실행한
+  live run은 아직 없으므로 **로컬 자동 통과 / Exchange·live UI pending**으로 기록한다.
 
 ## 테스트 기록 형식
 

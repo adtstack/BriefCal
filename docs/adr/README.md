@@ -30,3 +30,4 @@ ADR은 제품·기술·데이터 안전성에 영향을 주는 결정을 변경 
 | [ADR-015](ADR-015-backup-import-reset-safety.md) | Accepted | 로컬 백업·Import·Reset 안전 경계 |
 | [ADR-016](ADR-016-direct-calendar-api-deferral.md) | Accepted | 직접 Calendar API 보류와 EventKit 유지 |
 | [ADR-017](ADR-017-calendar-visibility-and-availability.md) | Accepted | 캘린더 표시와 가용시간 차단의 독립 정책 |
+| [ADR-018](ADR-018-saved-calendar-sets.md) | Accepted | 이름 있는 Calendar Set과 exact membership persistence |

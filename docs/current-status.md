@@ -6,9 +6,10 @@
 
 ## 요약
 
-- **현재 위치:** v1 기능 개발은 종료·동결했다. v2 T0/T1, OAuth task provider T2/T3, T4의 EventKit 유지 결정, T5 reference-only 계층과 동결 후 calendar visibility/availability blocking까지 저장소 구현과 자동 계약 검증을 추가했다. 외부 provider·Reminders와 calendar usage 실제 UI의 fixture/live gate는 대기 중이며, 자동 테스트만으로 beta ready를 선언하지 않는다.
+- **현재 위치:** v1 기능 개발은 종료·동결했다. v2 T0/T1, OAuth task provider T2/T3, T4의 EventKit 유지 결정, T5 reference-only 계층과 동결 후 calendar visibility/availability blocking, saved Calendar Set v9 구현까지 저장소와 UI를 확장했다. review 수정 3건을 포함한 최종 250-test suite는 통과했고 실제 Exchange·실창·VoiceOver gate는 별도 대기 중이다. 자동 테스트만으로 beta ready를 선언하지 않는다.
 - **다음 기준:** v1 유지보수 예외는 [v1 동결 결정](v1-freeze.md)을 따르고, 새 동작은 [제품·시스템 스펙](specification.md)의 요구사항 ID와 [v2 실행계획](v2-execution-plan.md)을 먼저 갱신한다.
-- **최신 자동 결과:** 237 tests executed, 236 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures, 0 unexpected
+- **최신 완료 자동 결과:** 250 tests executed, 249 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
+- **중간 체크포인트:** review 전 248-test와 review 후 focused 73-test도 각각 통과했으며 최종 판정은 250-test 결과를 따른다.
 - **설계 승인 / 구현 대기:** mini month 일정 존재 표시 `CAL-007`/`UI-005`. 이번 문서 변경은 코드·자동 테스트·실창 검증 완료를 뜻하지 않는다.
 - **외부 베타 판정:** v1에서는 더 이상 추진하지 않는다. final live UI/accessibility/Exchange gate, 실제 bootstrap fault와 Developer ID/notary/license/support 입력은 알려진 제한으로 보존한다.
 - **증거 경계:** 최신 Phase 10 Release는 EventKit/Exchange write나 실제 손상 DB recovery를 실행하지 않았다. 실제 Exchange 결과는 아래의 별도 과거 live run에만 귀속한다.
@@ -25,22 +26,62 @@
 | 5 · Real event editing | 비반복 live CRUD 부분 통과 | attendee 없는 writable 단일 일정 create→restart/refetch→update→delete와 서버 residue 0 | Calendar.app 시각 round-trip, all-day, floating/zoned time, identifier churn |
 | 6 · Recurrence / safe move | 구현·자동·Release checkpoint 완료 | 명시적 scope, impact Confirm, linked safe move, change log, 좁은 session Undo | 지원 범위 내 recurrence scope/future split과 calendar move의 live 검증 |
 | 7 · Lifecycle / After Review | 7A–7C 구현, 비반복 linked delete live 통과 | lifecycle, missing/orphan/relink, linked original delete 뒤 local Brief/task 보존 | recurring `thisEvent`, 외부 삭제 지연·one-off exception, crash-window recovery, 남겨 둔 live Brief 정리 |
-| 8 · Multi-calendar clarity | role v3와 usage v8 구현·최신 자동 완료 | local role, virtual Set, typed restriction, 비파괴 duplicate review, calendar별 show/block와 account Settings | 새 v8의 실제 계정 grouping·4개 조합·availability, 긴 문구·고밀도·VoiceOver, shared read-only Exchange |
+| 8 · Multi-calendar clarity | role v3·usage v8·saved Set v9 구현과 최종 자동 완료 | local role, Smart Role Filter, 비파괴 duplicate review, calendar별 show/block, 사용자 저장 Set CRUD·순서·exact membership·선택 persistence, offscreen Settings | 실제 계정 grouping·4개 조합·saved Set CRUD/overlap/missing rebind, 긴 문구·고밀도·VoiceOver, shared read-only Exchange |
 | 9 · Backup / Settings | 구현·213-test·signed Release·운영 DB 격리·live visual 완료 | healthy current-schema export/import/reset, recovery ZIP, strict archive/schema 검사, 실제 Settings scroll·file panel·typed `RESET` activation | 실제 export 파일 작성·backup 선택 뒤 import/reset mutation, real rollback failure |
 | 10 · Paid beta polish | 구현·220-test·ad-hoc Release checkpoint 완료, 외부 beta blocked | onboarding, `⌘R`, empty state, bootstrap-only strict restore/quarantine/rollback, 운영 문서와 license placeholder | final exact Release UI/VoiceOver, 실제 손상 DB recovery, Developer ID/notary/package/clean user, 승인 EULA·support/privacy 연락처와 남은 live Exchange gate |
 
-표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 전체 suite는 아래
-2026-07-15 작업 트리 checkpoint의 237개다.
+표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 250-test suite,
+review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
 
-### 2026-07-15 작업 트리 자동 결과
+### 2026-07-15 saved Calendar Set review 수정 후 최종 전체 결과
+
+- 결과: **250 executed / 249 passed / 1 intentional manual-only skip / 0 failures**
+- result bundle: `/tmp/KaosCalCalendarSets-Final-20260715.xcresult`
+- 범위: saved Set 데이터·AppState·Settings/offscreen 회귀와 review의 normal visibility 조건부
+  reveal, post-write focus reveal, authoritative missing-state guard를 포함한 최종 작업 트리
+  전체 suite다.
+- 한계: 자동/fake/local/offscreen 결과는 실제 Exchange calendar identifier churn,
+  Settings/Sidebar 실창·keyboard·VoiceOver, 새 signed Release와 운영 DB 불변을 대신하지 않는다.
+
+### 2026-07-15 saved Calendar Set review 수정 후 집중 결과
+
+- build 성공, focused suites **73 tests / 0 failures**
+- result bundle:
+  `/tmp/KaosCalCalendarSets/Logs/Test/Test-KaosCal-2026.07.15_18-53-22-+0900.xcresult`
+- 범위에는 새 UI와 post-write focus 회귀가 포함된다. 이후 위 250-test 최종 전체 결과로
+  승격됐다.
+
+### 2026-07-15 saved Calendar Set v9 자동 결과(review 수정 전)
+
+- 결과: **248 executed / 247 succeeded / 1 intentional manual-only skip / 0 failed**,
+  action status `succeeded`
+- result bundle:
+  `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-36-07-+0900.xcresult`
+- 집중 데이터 결과: ContextStore/LocalDataBackupService **84 executed / 84 succeeded /
+  0 skipped / 0 failed**, action status `succeeded`; result bundle
+  `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-34-47-+0900.xcresult`
+- 범위: `v9_saved_calendar_sets`, Set CRUD·정렬·exact membership·missing 보존/명시적
+  rebind·selection persistence/삭제 fallback, global Enabled·blocking 독립, overlapping/
+  mixed-role/empty Set, duplicate temporary reveal, backup/reset과 Settings offscreen 회귀를
+  포함한다.
+- 집계 근거: `xcresulttool`의 metrics/testsRef에서 `testStatus`를 직접 집계했다.
+- 후속 변경: 이 실행 뒤 normal visibility 조건부 reveal, write focus reveal, missing 판정의
+  authoritative-state guard가 수정됐다. 최종 판정은 위 250-test bundle을 따른다.
+- 한계: unsigned Debug와 fake/local store 및 offscreen UI 중심 결과다. 실제 Exchange
+  calendar identifier churn, Settings/Sidebar 실창·keyboard·VoiceOver, 새 Release signing과
+  운영 DB 불변은 검증하지 않았다.
+
+### 2026-07-15 calendar usage 자동 결과(saved Set v9 이전)
 
 - 결과: **237 executed / 236 passed / 1 intentional manual-only skip / 0 failures / 0 unexpected**, `TEST SUCCEEDED`
 - result bundle: `/tmp/KaosCalCalendarUsageFullTests-20260715-1445.xcresult`
 - 범위: 기존 전체 회귀, v2 task provider/reference migration·contract, calendar visibility와
   availability blocking의 독립 설정·sparse persistence·free/cancelled/declined 제외,
   Settings offscreen bitmap과 backup/reset 회귀를 포함한다.
+- 제외: `v9_saved_calendar_sets`, saved Set CRUD·membership·selection persistence와 해당 UI는
+  이 result bundle 이후 구현이므로 이 수치로 통과 판정하지 않는다.
 - 한계: unsigned Debug와 fake/local store 중심 결과다. 실제 Exchange/provider fixture,
   Settings·Sidebar 실창/VoiceOver, Release signing과 운영 DB 불변을 새로 검증하지 않았다.
 - 관찰: `testCalendarUsageSettingsFitsAndProducesOffscreenBitmap`은 pass했지만 종료 시 임시
@@ -106,8 +147,9 @@
 
 1. 권한 거부→System Settings 복구와 shared read-only Exchange 설명
 2. Day/Week/Agenda·mini month·Inspector·Task Center의 실제 고밀도, keyboard, scroll, VoiceOver
-3. Calendar usage Settings·Sidebar의 show/block 네 조합, account bulk action,
-   free/busy/tentative/canceled/declined, 재실행·backup/reset, 고밀도·keyboard·VoiceOver
+3. Calendar usage·saved Set Settings/Sidebar의 show/block 네 조합, saved Set CRUD·순서·겹침·혼합 role,
+   exact membership·missing 보존/명시적 Replace, 재실행·backup/reset, account bulk action,
+   free/busy/tentative/canceled/declined, 고밀도·keyboard·VoiceOver
 4. Calendar.app 시각 CRUD, all-day, floating/zoned time, 반복 scope/future split, linked calendar move
 5. 외부 삭제·identifier churn·detached/one-off recurrence recovery와 Phase 7C crash window
 6. Apple Reminders, Google Tasks, Todoist, Microsoft To Do의 실제 계정 create/update/complete/delete/relink와 cleanup

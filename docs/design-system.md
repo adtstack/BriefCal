@@ -42,9 +42,9 @@ BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. �
 │ ● Personal   │    11:00  ▌ Dentist                  │ Personal     │
 │ ● Family     │    12:00                             │              │
 │              │    13:00  ▌ Lunch                    │ Before       │
-│ Role Set     │    14:00  ▌ Design Review            │ ☐ 신분증      │
+│ Calendar Sets│    14:00  ▌ Design Review            │ ☐ 신분증      │
 │ All Calendars│    15:00                             │ ☐ 보험 서류   │
-│ Work         │                                      │              │
+│ My Focus     │                                      │              │
 └──────────────┴──────────────────────────────────────┴──────────────┘
 ```
 
@@ -53,8 +53,8 @@ BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. �
 Sidebar:
 - 고정 6×7 mini month 날짜 탐색기
 - role·source·permission을 함께 보여 주는 calendar list와 role 변경 menu
-- `All Calendars`와 role별 virtual Calendar Set
-- Set은 현재 Day/Week/Agenda visibility를 좁힌다. 승인된 `UI-005`에서는 mini month 일정 존재 표시에도 같은 filter를 적용하며 EventKit fetch·Event Brief·editor destination은 제거하지 않는다.
+- synthetic `All Calendars`, 사용자 저장 Calendar Set, role별 Smart Role Filter
+- Set은 global Enabled와 교집합으로 현재 Day/Week/Agenda visibility를 좁힌다. 승인된 `UI-005`에서는 mini month 일정 존재 표시에도 같은 filter를 적용하며 EventKit fetch·Event Brief·editor destination은 제거하지 않는다.
 
 Calendar Area:
 - Day/Week/Agenda는 모두 v1 필수
@@ -101,7 +101,7 @@ Task Center:
 - all-day row: 26pt, card 22pt. lane은 내용에 맞춰 늘지만 화면 높이의 35%·최대 240pt에서 내부 세로 scroll로 전환한다.
 - 오늘 열은 약한 accent fill, 현재 시각은 red line과 dot으로 표시한다.
 - calendar rail은 EventKit calendar의 실제 sRGB color snapshot을 사용한다. 색을 가져올 수 없을 때만 Exchange 공통 blue 또는 secondary gray를 fallback으로 쓴다.
-- Phase 8의 calendar role과 role별 virtual set을 적용했다. 사용자 color override와 임의 이름 saved set은 아직 구현 범위가 아니다.
+- Phase 8의 calendar role과 Smart Role Filter, v9의 사용자 이름 saved Set을 적용했다. 사용자 color override는 아직 구현 범위가 아니다.
 
 ### Mini month 적용값과 승인된 확장
 
@@ -114,7 +114,7 @@ Task Center:
 - 모든 날짜와 월 화살표는 `Button`이고 grid는 keyboard focus section이다. 날짜 접근성 label은 요일+전체 날짜, value는 focused/today/adjacent 상태, identifier는 calendar civil key를 쓴다.
 - 일정이 하나 이상 있는 날짜는 숫자 아래에 지름 3pt 단일 event dot을 둔다. 숫자, focused fill과 today ring에는 겹치지 않는다.
 - focused date의 dot은 흰색, 일반 날짜는 accent, 인접 월 날짜는 같은 accent에 낮은 opacity를 사용한다. 일정이 없으면 dot을 그리지 않으며 일정 수가 여러 개여도 시각 표시는 하나로 유지한다.
-- dot 요약은 `calendar visibility ∩ 선택 Calendar Set`을 적용하고 availability blocking과는 독립이다. 따라서 hide+block 일정에는 dot이 없고 show+ignore 일정에는 dot이 있다. timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 모든 civil day에 표시한다.
+- dot 요약은 `global Enabled ∩ 선택 Calendar Set`을 적용하고 availability blocking과는 독립이다. 따라서 disable+block 일정에는 dot이 없고 enable+ignore 일정에는 dot이 있다. timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 모든 civil day에 표시한다.
 - 표시 중인 42일 전체 fetch coverage가 성공한 뒤 grid 단위로 dot을 공개한다. 부분 결과를 섞지 않으며 loading/failure를 `일정 없음`으로 표현하지 않는다.
 - dot은 별도 hit target이나 접근성 element가 아니다. 날짜 Button의 접근성 value에는 `일정 N개`를 포함하고, grid는 loading/unavailable 상태를 별도로 전달한다.
 
@@ -201,12 +201,15 @@ Source badge는 EventKit 계정 유형, 실제 calendar/source, 사용자가 정
 
 모든 restriction 문구는 원본은 수정하지 못하더라도 local Event Brief는 editable임을 함께 알린다. Inspector와 AppState write preflight는 같은 typed restriction과 우선순위를 사용한다. Exchange/CalDAV/iCloud 공유 ACL의 구체 원인은 EventKit이 제공하지 않으면 추측하지 않는다.
 
-## Phase 8 Calendar Set과 duplicate candidate
+## Calendar Set과 duplicate candidate
 
-- Calendar Set은 `All Calendars`와 role별 virtual filter다. 임의 이름 set·calendar별 checkbox·set 영속은 현재 계약이 아니다.
-- Set 변경 전 pending Event Brief notes를 flush하고, 새 set에서 숨겨지는 선택은 정리한다.
+- Sidebar picker는 synthetic `All Calendars`, 사용자 이름의 saved Set, role별 `Smart Role Filters`를 분리한다. `⌃1`은 All, `⌃2`~`⌃9`는 정렬된 saved Set 중 앞의 8개를 선택한다.
+- Settings의 `Calendar Sets` tab은 Set 생성·이름 변경·삭제·순서 변경과 account별 membership checkbox, `Include All`/`Remove All`, active Set 선택을 제공한다. 새 Set은 globally enabled calendar로 시작하거나 빈 Set으로 만들 수 있다.
+- saved Set은 역할과 무관한 exact calendar identifier 조합이므로 서로 겹치거나 Work/Personal 등이 섞일 수 있다. 전역 `Enabled`가 master mask이며 calendar를 disable해도 membership은 지우지 않는다. `Block` availability 정책도 membership과 독립이다.
+- 사라진 calendar membership은 unavailable row로 보존한다. 같은 이름의 calendar에 자동 연결하지 않으며 사용자가 `Replace…` 또는 `Remove`를 명시해야 한다. 권한 거부·loading·fetch failure에서는 missing으로 단정하지 않고 권한 있는 authoritative snapshot 뒤에만 unavailable row를 보여 준다.
+- Set 변경 전 pending Event Brief notes를 flush하고, 새 set에서 숨겨지는 선택은 정리한다. 현재 선택은 재실행 뒤 복원하며 active saved Set 삭제나 잘못된 selection은 `All Calendars`로 fallback한다.
 - duplicate badge는 다른 calendar의 정규화 title과 시간 범위가 보수적으로 같은 `Possible duplicate`임을 뜻한다. fetch 시 candidate index를 한 번 계산하고 각 card/Inspector는 event ID로 O(1) 조회한다. 확정 판정이 아니며 자동 merge·hide·delete하지 않는다.
-- Inspector는 candidate의 시간, match 근거, role, calendar/account, permission을 보여 준다. candidate를 열면 `All Calendars`로 전환하고 Day에서 선택하며 원본을 바꾸지 않는다.
+- Inspector는 candidate의 시간, match 근거, role, calendar/account, permission을 보여 준다. candidate·relink 결과 또는 원본 저장 뒤 focus 대상이 normal filter 밖이면 저장된 Set 선택을 바꾸지 않고 해당 일정을 임시 reveal하며, 이미 보이는 일정에는 임시 banner를 만들지 않는다.
 
 shared read-only Exchange의 실제 문구와 긴 source/role 조합, 고밀도 card의 시각 품질은 fixture 부재와 session lock 제한으로 live visual gate가 아직 미검증이다. 코드·fixture 투영을 이 gate의 통과로 해석하지 않는다.
 
@@ -222,7 +225,7 @@ Settings의 `Local Data` 화면은 backup, restore, storage, privacy와 destruct
   destructive confirmation에 함께 표시한다.
 - `Storage`는 active SQLite의 실제 path를 selectable monospaced text로 표시하고
   `Show in Finder`를 제공한다.
-- `What Is Included`는 Event Brief/task/role/change history뿐 아니라 linked
+- `What Is Included`는 Event Brief/task/role/calendar usage/saved Set·membership·selection/change history뿐 아니라 linked
   title/time/location/identifier와 original-notes change snapshot이 포함될 수 있음을
   밝힌다. 현재 UI는 complete calendar event record, account credential과 Exchange
   password를 전용 export 대상으로 삼지 않는다고 표시한다. KaosCal이 credential/token

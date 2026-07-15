@@ -831,6 +831,46 @@ final class CalendarEventEditingTests: XCTestCase {
         XCTAssertNil(state.eventEditorError)
     }
 
+    func testCreatedEventOutsideActiveSavedSetIsTemporarilyRevealed() async throws {
+        let provider = makeProvider()
+        provider.calendars = [writableLocalCalendar, writableExchangeCalendar]
+        provider.defaultNewEventCalendarIdentifier = writableExchangeCalendar.id
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        let localOnlySet = try XCTUnwrap(state.createCalendarSet(
+            name: "Local Only",
+            calendarIdentifiers: Set([writableLocalCalendar.id])
+        ))
+        XCTAssertTrue(state.selectCalendarSet(.saved(localOnlySet.id)))
+
+        state.beginCreatingEvent()
+        var draft = try XCTUnwrap(state.eventEditorSession?.initialDraft)
+        draft.title = "Created outside active Set"
+        let didCreate = await state.saveEventEditor(draft)
+
+        XCTAssertTrue(didCreate)
+        XCTAssertEqual(state.selectedCalendarSet, .saved(localOnlySet.id))
+        let createdEvent = try XCTUnwrap(state.selectedEvent)
+        XCTAssertEqual(
+            createdEvent.calendarIdentifier,
+            writableExchangeCalendar.id
+        )
+        XCTAssertEqual(state.temporarilyRevealedEventID, createdEvent.id)
+        XCTAssertTrue(state.visibleEvents.contains(where: {
+            $0.id == createdEvent.id
+        }))
+        XCTAssertNotNil(state.calendarSetTemporaryDisplayMessage)
+
+        state.endTemporaryCalendarSetDisplay()
+        XCTAssertEqual(state.selectedCalendarSet, .saved(localOnlySet.id))
+        XCTAssertNil(state.temporarilyRevealedEventID)
+        XCTAssertNil(state.selectedEventID)
+        XCTAssertFalse(state.visibleEvents.contains(where: {
+            $0.id == createdEvent.id
+        }))
+    }
+
     func testLinkedSameCalendarUpdateRebindsWithoutLosingLocalBrief() async throws {
         let original = makeEvent(id: "linked")
         let store = ContextStore(database: try AppDatabase.inMemory())

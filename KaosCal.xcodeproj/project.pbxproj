@@ -53,6 +53,7 @@
 		G10000000000000000000001 /* CalendarClarity.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000001 /* CalendarClarity.swift */; };
 		G10000000000000000000002 /* CalendarRoleRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000002 /* CalendarRoleRepository.swift */; };
 		G10000000000000000000003 /* CalendarClarityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000003 /* CalendarClarityTests.swift */; };
+		G10000000000000000000004 /* CalendarSetRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = G20000000000000000000004 /* CalendarSetRepository.swift */; };
 		H10000000000000000000001 /* LocalDataBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000001 /* LocalDataBackupService.swift */; };
 		H10000000000000000000002 /* LocalDataSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000002 /* LocalDataSettingsView.swift */; };
 		H10000000000000000000003 /* LocalDataBackupServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000003 /* LocalDataBackupServiceTests.swift */; };
@@ -118,6 +119,7 @@
 		G20000000000000000000001 /* CalendarClarity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarClarity.swift; sourceTree = "<group>"; };
 		G20000000000000000000002 /* CalendarRoleRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarRoleRepository.swift; sourceTree = "<group>"; };
 		G20000000000000000000003 /* CalendarClarityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarClarityTests.swift; sourceTree = "<group>"; };
+		G20000000000000000000004 /* CalendarSetRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarSetRepository.swift; sourceTree = "<group>"; };
 		H20000000000000000000001 /* LocalDataBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataBackupService.swift; sourceTree = "<group>"; };
 		H20000000000000000000002 /* LocalDataSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataSettingsView.swift; sourceTree = "<group>"; };
 		H20000000000000000000003 /* LocalDataBackupServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataBackupServiceTests.swift; sourceTree = "<group>"; };
@@ -265,6 +267,7 @@
 				C20000000000000000000001 /* AppDatabase.swift */,
 				H20000000000000000000001 /* LocalDataBackupService.swift */,
 				G20000000000000000000002 /* CalendarRoleRepository.swift */,
+				G20000000000000000000004 /* CalendarSetRepository.swift */,
 				C20000000000000000000002 /* DatabaseMigrations.swift */,
 				C20000000000000000000003 /* ContextModels.swift */,
 				C20000000000000000000009 /* ContextStore.swift */,
@@ -421,6 +424,7 @@
 				C10000000000000000000001 /* AppDatabase.swift in Sources */,
 				H10000000000000000000001 /* LocalDataBackupService.swift in Sources */,
 				G10000000000000000000002 /* CalendarRoleRepository.swift in Sources */,
+				G10000000000000000000004 /* CalendarSetRepository.swift in Sources */,
 				C10000000000000000000002 /* DatabaseMigrations.swift in Sources */,
 				C10000000000000000000003 /* ContextModels.swift in Sources */,
 				C10000000000000000000009 /* ContextStore.swift in Sources */,

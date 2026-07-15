@@ -17,7 +17,8 @@ final class ContextStoreTests: XCTestCase {
                 "v5_oauth_task_providers",
                 "v6_context_references",
                 "v7_microsoft_to_do_provider",
-                "v8_calendar_usage"
+                "v8_calendar_usage",
+                "v9_saved_calendar_sets"
             ]
         )
         XCTAssertTrue(try database.foreignKeysEnabled())
@@ -3592,7 +3593,8 @@ final class ContextStoreTests: XCTestCase {
                     "v5_oauth_task_providers",
                     "v6_context_references",
                     "v7_microsoft_to_do_provider",
-                    "v8_calendar_usage"
+                    "v8_calendar_usage",
+                    "v9_saved_calendar_sets"
                 ]
             )
             XCTAssertEqual(brief.context.notes, "Persistent notes")
@@ -4034,6 +4036,243 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertEqual(floatingQuery.occurrence, .floating(civilStart))
     }
 
+    func testSavedCalendarSetCRUDOrderingAndSelectionPersistence() throws {
+        let database = try AppDatabase.inMemory()
+        var current = date(2026, 7, 15, 9)
+        let IDs = IDSequence([
+            "focus-set", "focus-member", "home-set"
+        ])
+        let store = ContextStore(
+            database: database,
+            now: { current },
+            makeID: IDs.next
+        )
+        let work = makeCalendarSource(id: "calendar-work", title: "Work")
+
+        XCTAssertEqual(try store.calendarSets.fetchSelection(), .all)
+        XCTAssertThrowsError(
+            try store.calendarSets.create(name: " \n ", calendars: [])
+        ) { error in
+            XCTAssertEqual(error as? CalendarSetRepositoryError, .emptyName)
+        }
+        XCTAssertThrowsError(
+            try store.calendarSets.create(
+                name: String(repeating: "a", count: 81),
+                calendars: []
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? CalendarSetRepositoryError,
+                .nameTooLong(maximum: 80)
+            )
+        }
+        let focus = try store.calendarSets.create(
+            name: "  Focus  ",
+            calendars: [work, work]
+        )
+        XCTAssertEqual(focus.id, "focus-set")
+        XCTAssertEqual(focus.name, "Focus")
+        XCTAssertEqual(focus.memberships.map(\.id), ["focus-member"])
+        XCTAssertEqual(focus.calendarIdentifiers, [work.id])
+
+        current = date(2026, 7, 15, 10)
+        let renamed = try store.calendarSets.rename(
+            id: focus.id,
+            name: "Deep Focus"
+        )
+        XCTAssertEqual(renamed.name, "Deep Focus")
+        XCTAssertEqual(renamed.calendarSet.createdAt, focus.calendarSet.createdAt)
+        XCTAssertEqual(renamed.calendarSet.updatedAt, current)
+
+        let home = try store.calendarSets.create(name: "Home", calendars: [])
+        XCTAssertThrowsError(
+            try store.calendarSets.create(name: " home ", calendars: [])
+        ) { error in
+            XCTAssertEqual(
+                error as? CalendarSetRepositoryError,
+                .duplicateName("home")
+            )
+        }
+
+        try store.calendarSets.reorder(ids: [home.id, focus.id])
+        XCTAssertEqual(
+            try store.calendarSets.fetchAll().map(\.id),
+            [home.id, focus.id]
+        )
+        XCTAssertThrowsError(
+            try store.calendarSets.reorder(ids: [focus.id])
+        ) { error in
+            XCTAssertEqual(
+                error as? CalendarSetRepositoryError,
+                .invalidSetOrder
+            )
+        }
+        XCTAssertEqual(
+            try store.calendarSets.fetchAll().map(\.id),
+            [home.id, focus.id]
+        )
+
+        try store.calendarSets.saveSelection(.role(.personal))
+        XCTAssertEqual(
+            try store.calendarSets.fetchSelection(),
+            .role(.personal)
+        )
+        try store.calendarSets.saveSelection(.saved(home.id))
+        XCTAssertEqual(try store.calendarSets.fetchSelection(), .saved(home.id))
+        let reopenedStore = ContextStore(database: database)
+        XCTAssertEqual(
+            try reopenedStore.calendarSets.fetchAll().map(\.id),
+            [home.id, focus.id]
+        )
+        XCTAssertEqual(
+            try reopenedStore.calendarSets.fetchSelection(),
+            .saved(home.id)
+        )
+
+        XCTAssertTrue(try store.calendarSets.delete(id: home.id))
+        XCTAssertEqual(try store.calendarSets.fetchSelection(), .all)
+        XCTAssertEqual(
+            try database.read { db in
+                try CalendarSetSelectionRecord.fetchCount(db)
+            },
+            0
+        )
+        XCTAssertFalse(try store.calendarSets.delete(id: home.id))
+
+        try store.calendarSets.saveSelection(.saved(focus.id))
+        try store.calendarSets.saveSelection(.all)
+        XCTAssertEqual(try store.calendarSets.fetchSelection(), .all)
+        XCTAssertEqual(
+            try database.read { db in
+                try CalendarSetSelectionRecord.fetchCount(db)
+            },
+            0
+        )
+        XCTAssertTrue(try store.calendarSets.delete(id: focus.id))
+        XCTAssertEqual(try store.calendarSets.membershipCount(), 0)
+    }
+
+    func testSavedCalendarSetBulkUpdatePreservesMissingAndRequiresExplicitRebind() throws {
+        let database = try AppDatabase.inMemory()
+        var current = date(2026, 7, 15, 9)
+        let IDs = IDSequence([
+            "travel-set", "available-member", "missing-member", "new-member"
+        ])
+        let store = ContextStore(
+            database: database,
+            now: { current },
+            makeID: IDs.next
+        )
+        let available = makeCalendarSource(
+            id: "calendar-available",
+            title: "Available"
+        )
+        let missing = makeCalendarSource(
+            id: "calendar-missing",
+            title: "Missing",
+            sourceIdentifier: "old-source"
+        )
+        let added = makeCalendarSource(id: "calendar-added", title: "Added")
+        let replacement = makeCalendarSource(
+            id: "calendar-replacement",
+            title: "Replacement",
+            sourceIdentifier: "new-source"
+        )
+        let created = try store.calendarSets.create(
+            name: "Travel",
+            calendars: [available, missing]
+        )
+        let missingMembership = try XCTUnwrap(
+            created.memberships.first(where: {
+                $0.calendarIdentifier == missing.id
+            })
+        )
+
+        current = date(2026, 7, 15, 10)
+        let updated = try store.calendarSets.updateAvailableMemberships(
+            setID: created.id,
+            availableCalendarIDs: [available.id, added.id],
+            selectedSources: [added]
+        )
+        XCTAssertEqual(
+            updated.memberships.map(\.calendarIdentifier),
+            [missing.id, added.id]
+        )
+        XCTAssertEqual(
+            updated.memberships.first(where: {
+                $0.calendarIdentifier == missing.id
+            })?.id,
+            missingMembership.id
+        )
+
+        let rebound = try store.calendarSets.rebindMembership(
+            id: missingMembership.id,
+            expectedCalendarIdentifier: missing.id,
+            to: replacement
+        )
+        XCTAssertEqual(rebound.id, missingMembership.id)
+        XCTAssertEqual(rebound.calendarIdentifier, replacement.id)
+        XCTAssertEqual(rebound.sourceIdentifierSnapshot, "new-source")
+        XCTAssertThrowsError(try store.calendarSets.rebindMembership(
+            id: missingMembership.id,
+            expectedCalendarIdentifier: missing.id,
+            to: missing
+        )) { error in
+            XCTAssertEqual(
+                error as? CalendarSetRepositoryError,
+                .staleMembership(
+                    membershipID: missingMembership.id,
+                    expectedCalendarIdentifier: missing.id,
+                    actualCalendarIdentifier: replacement.id
+                )
+            )
+        }
+        XCTAssertThrowsError(
+            try store.calendarSets.add(replacement, to: created.id)
+        ) { error in
+            XCTAssertEqual(
+                error as? CalendarSetRepositoryError,
+                .duplicateMembership(
+                    calendarSetID: created.id,
+                    calendarIdentifier: replacement.id
+                )
+            )
+        }
+
+        let addedMembership = try XCTUnwrap(
+            try store.calendarSets.fetch(id: created.id)?.memberships.first(
+                where: { $0.calendarIdentifier == added.id }
+            )
+        )
+        XCTAssertTrue(
+            try store.calendarSets.removeMembership(id: addedMembership.id)
+        )
+        XCTAssertFalse(
+            try store.calendarSets.removeMembership(id: addedMembership.id)
+        )
+        XCTAssertEqual(
+            try store.calendarSets.fetch(id: created.id)?.calendarIdentifiers,
+            [replacement.id]
+        )
+
+        XCTAssertThrowsError(
+            try store.calendarSets.updateAvailableMemberships(
+                setID: created.id,
+                availableCalendarIDs: [available.id],
+                selectedSources: [added]
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? CalendarSetRepositoryError,
+                .selectedCalendarOutsideAvailableScope(added.id)
+            )
+        }
+        XCTAssertEqual(
+            try store.calendarSets.fetch(id: created.id)?.calendarIdentifiers,
+            [replacement.id]
+        )
+    }
+
     private struct Harness {
         let store: ContextStore
         let now: Date
@@ -4099,6 +4338,22 @@ final class ContextStoreTests: XCTestCase {
         LocalDateTimeComponents(
             date: date(year, month, day, hour, minute),
             calendar: testCalendar
+        )
+    }
+
+    private func makeCalendarSource(
+        id: String,
+        title: String,
+        sourceIdentifier: String = "source"
+    ) -> CalendarSource {
+        CalendarSource(
+            id: id,
+            title: title,
+            sourceTitle: "Exchange",
+            sourceIdentifier: sourceIdentifier,
+            accountType: .exchange,
+            isWritable: true,
+            color: nil
         )
     }
 

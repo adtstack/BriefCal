@@ -20,39 +20,7 @@ struct KaosCalApp: App {
         }
         .defaultSize(width: 1_360, height: 840)
         .commands {
-            CommandGroup(replacing: .newItem) {
-                Button("New Event") {
-                    bootstrap.appState.beginCreatingEvent()
-                }
-                .keyboardShortcut("n", modifiers: [.command])
-                .disabled(
-                    !bootstrap.appState.calendarAuthorizationState.canReadEvents
-                        || bootstrap.appState.eventEditorSession != nil
-                        || bootstrap.appState.eventEditorOperationState != .idle
-                )
-            }
-            CommandMenu("Navigate") {
-                navigationCommand("Day", section: .day, key: "1")
-                navigationCommand("Week", section: .week, key: "2")
-                navigationCommand("Agenda", section: .agenda, key: "3")
-                navigationCommand("Tasks", section: .tasks, key: "4")
-                Divider()
-                Button("Today") {
-                    bootstrap.appState.goToToday()
-                }
-                .keyboardShortcut("t", modifiers: [.command])
-                Divider()
-                Button("Reload Current View") {
-                    if bootstrap.appState.selectedSection == .tasks {
-                        bootstrap.appState.refreshTaskCenter()
-                    } else {
-                        Task {
-                            await bootstrap.appState.refreshCalendarData()
-                        }
-                    }
-                }
-                .keyboardShortcut("r", modifiers: [.command])
-            }
+            KaosCalCommands(appState: bootstrap.appState)
         }
 
         Settings {
@@ -71,13 +39,85 @@ struct KaosCalApp: App {
         }
     }
 
+}
+
+private struct KaosCalCommands: Commands {
+    @ObservedObject var appState: AppState
+
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Event") {
+                appState.beginCreatingEvent()
+            }
+            .keyboardShortcut("n", modifiers: [.command])
+            .disabled(
+                !appState.calendarAuthorizationState.canReadEvents
+                    || appState.eventEditorSession != nil
+                    || appState.eventEditorOperationState != .idle
+            )
+        }
+
+        CommandMenu("Navigate") {
+            navigationCommand("Day", section: .day, key: "1")
+            navigationCommand("Week", section: .week, key: "2")
+            navigationCommand("Agenda", section: .agenda, key: "3")
+            navigationCommand("Tasks", section: .tasks, key: "4")
+            Divider()
+            Button("Today") {
+                appState.goToToday()
+            }
+            .keyboardShortcut("t", modifiers: [.command])
+            Divider()
+            Button("Reload Current View") {
+                if appState.selectedSection == .tasks {
+                    appState.refreshTaskCenter()
+                } else {
+                    Task {
+                        await appState.refreshCalendarData()
+                    }
+                }
+            }
+            .keyboardShortcut("r", modifiers: [.command])
+        }
+
+        CommandMenu("Calendar Sets") {
+            Button("All Calendars") {
+                _ = appState.selectCalendarSet(.all)
+            }
+            .keyboardShortcut("1", modifiers: [.control])
+
+            ForEach(
+                Array(appState.savedCalendarSets.prefix(8).enumerated()),
+                id: \.element.id
+            ) { index, set in
+                Button(set.name) {
+                    _ = appState.selectCalendarSet(.saved(set.id))
+                }
+                .keyboardShortcut(
+                    KeyEquivalent(Character(String(index + 2))),
+                    modifiers: [.control]
+                )
+            }
+
+            Divider()
+
+            Menu("Smart Role Filters") {
+                ForEach(CalendarRole.allCases) { role in
+                    Button(role.title) {
+                        _ = appState.selectCalendarSet(.role(role))
+                    }
+                }
+            }
+        }
+    }
+
     private func navigationCommand(
         _ title: String,
         section: WorkspaceSection,
         key: KeyEquivalent
     ) -> some View {
         Button(title) {
-            bootstrap.appState.select(section)
+            appState.select(section)
         }
         .keyboardShortcut(key, modifiers: [.command])
     }
