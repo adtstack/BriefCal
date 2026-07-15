@@ -171,9 +171,114 @@ final class TaskProviderRepository {
         }
     }
 
+    /// Fetches cached items that are still present remotely. Linked tasks
+    /// marked missing remain available to their Event Brief recovery flow,
+    /// but must not be rendered as live Microsoft To Do tasks.
+    func fetchProviderItems(
+        provider: TaskProviderKind
+    ) throws -> [ProviderItemRecord] {
+        try database.read { db in
+            try ProviderItemRecord.fetchAll(
+                db,
+                sql: """
+                    SELECT provider_items.*
+                    FROM provider_items
+                    INNER JOIN provider_accounts
+                        ON provider_accounts.id = provider_items.account_id
+                    LEFT JOIN task_bindings
+                        ON task_bindings.provider_item_id = provider_items.id
+                    WHERE provider_accounts.provider = ?
+                      AND (
+                          task_bindings.sync_state IS NULL
+                          OR task_bindings.sync_state != ?
+                      )
+                    ORDER BY
+                        provider_items.cached_completed ASC,
+                        provider_items.cached_due_at IS NULL ASC,
+                        provider_items.cached_due_at ASC,
+                        provider_items.cached_title COLLATE NOCASE ASC
+                    """,
+                arguments: [
+                    provider.rawValue,
+                    TaskProviderSyncState.missing.rawValue
+                ]
+            )
+        }
+    }
+
     func fetchAccount(id: String) throws -> ProviderAccountRecord? {
         try database.read { db in
             try ProviderAccountRecord.fetchOne(db, key: id)
+        }
+    }
+
+    /// Stores the minimum display projection for a remote task. This is used
+    /// for Microsoft To Do tasks that are not linked to a KaosCal Event Brief.
+    @discardableResult
+    func upsertProviderItem(
+        accountID: String,
+        remote: RemoteTaskSnapshot
+    ) throws -> ProviderItemRecord {
+        let timestamp = now()
+        return try database.write { db in
+            if var existing = try ProviderItemRecord
+                .filter(
+                    Column("account_id") == accountID
+                        && Column("remote_id") == remote.id
+                )
+                .fetchOne(db) {
+                existing.remoteParentID = remote.parentID
+                existing.remoteVersion = remote.version
+                existing.cachedTitle = remote.title
+                existing.cachedNotes = ""
+                existing.cachedDueAt = remote.dueAt
+                existing.cachedCompleted = remote.isCompleted
+                existing.lastSeenAt = timestamp
+                existing.updatedAt = timestamp
+                try existing.update(db)
+                return existing
+            }
+
+            let item = ProviderItemRecord(
+                id: makeID(),
+                accountID: accountID,
+                entityType: "task",
+                remoteID: remote.id,
+                remoteParentID: remote.parentID,
+                remoteVersion: remote.version,
+                cachedTitle: remote.title,
+                cachedNotes: "",
+                cachedDueAt: remote.dueAt,
+                cachedCompleted: remote.isCompleted,
+                lastSeenAt: timestamp,
+                createdAt: timestamp,
+                updatedAt: timestamp
+            )
+            try item.insert(db)
+            return item
+        }
+    }
+
+    /// Removes an unlinked cached task after a Microsoft delta tombstone.
+    /// Bound items are retained so the Event Brief can report a missing remote
+    /// counterpart and offer recovery rather than silently losing context.
+    func deleteUnboundProviderItem(
+        accountID: String,
+        remoteID: String
+    ) throws {
+        _ = try database.write { db in
+            guard let item = try ProviderItemRecord
+                .filter(
+                    Column("account_id") == accountID
+                        && Column("remote_id") == remoteID
+                )
+                .fetchOne(db),
+                try TaskBindingRecord
+                .filter(Column("provider_item_id") == item.id)
+                .fetchOne(db) == nil else {
+                return
+            }
+            try item.delete(db)
         }
     }
 
@@ -186,25 +291,54 @@ final class TaskProviderRepository {
     ) throws -> TaskBindingRecord {
         let timestamp = now()
         return try database.write { db in
-            let item = ProviderItemRecord(
-                id: makeID(),
-                accountID: account.id,
-                entityType: "task",
-                remoteID: remote.id,
-                remoteParentID: remote.parentID,
-                remoteVersion: remote.version,
-                cachedTitle: remote.title,
-                // OAuth provider descriptions are not needed to render an
-                // event task. Keeping them out of the SQLite cache also keeps
-                // them out of local backup archives.
-                cachedNotes: "",
-                cachedDueAt: remote.dueAt,
-                cachedCompleted: remote.isCompleted,
-                lastSeenAt: timestamp,
-                createdAt: timestamp,
-                updatedAt: timestamp
-            )
-            try item.insert(db)
+            let item: ProviderItemRecord
+            if var existing = try ProviderItemRecord
+                .filter(
+                    Column("account_id") == account.id
+                        && Column("remote_id") == remote.id
+                )
+                .fetchOne(db) {
+                existing.remoteParentID = remote.parentID
+                existing.remoteVersion = remote.version
+                existing.cachedTitle = remote.title
+                existing.cachedNotes = ""
+                existing.cachedDueAt = remote.dueAt
+                existing.cachedCompleted = remote.isCompleted
+                existing.lastSeenAt = timestamp
+                existing.updatedAt = timestamp
+                try existing.update(db)
+                item = existing
+            } else {
+                item = ProviderItemRecord(
+                    id: makeID(),
+                    accountID: account.id,
+                    entityType: "task",
+                    remoteID: remote.id,
+                    remoteParentID: remote.parentID,
+                    remoteVersion: remote.version,
+                    cachedTitle: remote.title,
+                    // OAuth provider descriptions are not needed to render an
+                    // event task. Keeping them out of the SQLite cache also keeps
+                    // them out of local backup archives.
+                    cachedNotes: "",
+                    cachedDueAt: remote.dueAt,
+                    cachedCompleted: remote.isCompleted,
+                    lastSeenAt: timestamp,
+                    createdAt: timestamp,
+                    updatedAt: timestamp
+                )
+                try item.insert(db)
+            }
+            if let existingBinding = try TaskBindingRecord
+                .filter(Column("provider_item_id") == item.id)
+                .fetchOne(db) {
+                guard existingBinding.eventTaskID == eventTaskID else {
+                    throw TaskProviderError.providerFailure(
+                        "The remote task is already linked to a different KaosCal task."
+                    )
+                }
+                return existingBinding
+            }
             let binding = TaskBindingRecord(
                 id: makeID(),
                 providerItemID: item.id,

@@ -28,7 +28,12 @@ protocol TaskProviding: AnyObject {
 }
 
 @MainActor
-final class AppleRemindersProvider: TaskProviding {
+protocol TaskSnapshotListing: AnyObject {
+    func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot]
+}
+
+@MainActor
+final class AppleRemindersProvider: TaskProviding, TaskSnapshotListing {
     private let eventStore: EKEventStore
     private let notificationCenter: NotificationCenter
     private var storeChangeObserver: NSObjectProtocol?
@@ -109,6 +114,46 @@ final class AppleRemindersProvider: TaskProviding {
                 }
                 return $0.sourceTitle.localizedCaseInsensitiveCompare($1.sourceTitle)
                     == .orderedAscending
+            }
+    }
+
+    func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
+        guard authorizationState == .authorized else {
+            throw authorizationError
+        }
+        let calendars = lists
+            .filter { $0.provider == .appleReminders }
+            .compactMap { eventStore.calendar(withIdentifier: $0.id) }
+        guard !calendars.isEmpty else { return [] }
+
+        let predicate = eventStore.predicateForReminders(in: calendars)
+        let reminders = await withCheckedContinuation { continuation in
+            eventStore.fetchReminders(matching: predicate) { reminders in
+                continuation.resume(returning: reminders ?? [])
+            }
+        }
+        return reminders
+            .compactMap { reminder -> RemoteTaskSnapshot? in
+                guard let parentID = reminder.calendar?.calendarIdentifier else {
+                    return nil
+                }
+                return makeSnapshot(reminder, fallbackParentID: parentID)
+            }
+            .sorted { lhs, rhs in
+                if lhs.isCompleted != rhs.isCompleted {
+                    return !lhs.isCompleted
+                }
+                switch (lhs.dueAt, rhs.dueAt) {
+                case let (left?, right?) where left != right:
+                    return left < right
+                case (_?, nil):
+                    return true
+                case (nil, _?):
+                    return false
+                default:
+                    return lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+                        == .orderedAscending
+                }
             }
     }
 
@@ -258,9 +303,8 @@ final class AppleRemindersProvider: TaskProviding {
     }
 }
 
-/// Coordinates the provider adapter, its durable bindings, and the local task projection.
-/// The coordinator deliberately keeps personal tasks local-only in T1; only event-linked
-/// tasks are projected to the selected Reminders list for their calendar.
+/// Coordinates provider adapters, their durable task cache, and the local
+/// Event Brief projection. Personal tasks remain local-only.
 @MainActor
 final class TaskProviderCoordinator: ObservableObject {
     let provider: any TaskProviding
@@ -269,11 +313,16 @@ final class TaskProviderCoordinator: ObservableObject {
     private let now: () -> Date
     private let oauthCredentials: OAuthCredentialStoring
     private var asyncProviders = [TaskProviderKind: any AsyncTaskProviding]()
+    private var appleRemindersRefreshTask: Task<Void, Never>?
 
     @Published private(set) var authorizationState: TaskProviderAuthorizationState
     @Published private(set) var providerAuthorizationStates = [TaskProviderKind: TaskProviderAuthorizationState]()
     @Published private(set) var taskLists: [RemoteTaskList] = []
     @Published private(set) var destinations: [CalendarTaskDestinationRecord] = []
+    @Published private(set) var appleRemindersTaskState:
+        ProviderTaskListState = .unavailable
+    @Published private(set) var microsoftToDoTaskState:
+        ProviderTaskListState = .unavailable
     @Published private(set) var lastErrorMessage: String?
 
     var onLocalProjectionChange: (() -> Void)?
@@ -308,6 +357,8 @@ final class TaskProviderCoordinator: ObservableObject {
         do {
             destinations = try repository.fetchDestinations()
             guard authorizationState == .authorized else {
+                appleRemindersRefreshTask?.cancel()
+                appleRemindersTaskState = .unavailable
                 replaceTaskLists(for: provider.provider, with: [])
                 Task { [weak self] in
                     await self?.refreshOAuthProviders()
@@ -316,6 +367,7 @@ final class TaskProviderCoordinator: ObservableObject {
             }
             let lists = try provider.listTaskLists()
             replaceTaskLists(for: provider.provider, with: lists)
+            scheduleAppleRemindersTaskRefresh(lists)
             for group in Dictionary(grouping: lists, by: \.accountKey) {
                 guard let first = group.value.first else { continue }
                 _ = try repository.upsertAccount(
@@ -328,10 +380,46 @@ final class TaskProviderCoordinator: ObservableObject {
             destinations = try repository.fetchDestinations()
             lastErrorMessage = nil
         } catch {
+            appleRemindersTaskState = .failed(Self.message(for: error))
             lastErrorMessage = Self.message(for: error)
         }
         Task { [weak self] in
             await self?.refreshOAuthProviders()
+        }
+    }
+
+    private func scheduleAppleRemindersTaskRefresh(_ lists: [RemoteTaskList]) {
+        appleRemindersRefreshTask?.cancel()
+        guard let listingProvider = provider as? any TaskSnapshotListing else {
+            appleRemindersTaskState = .unavailable
+            return
+        }
+
+        appleRemindersTaskState = .loading
+        appleRemindersRefreshTask = Task { [weak self] in
+            do {
+                let snapshots = try await listingProvider.listTasks(in: lists)
+                guard !Task.isCancelled, let self else { return }
+                let listsByID = Dictionary(
+                    uniqueKeysWithValues: lists.map { ($0.id, $0) }
+                )
+                let items = snapshots.compactMap { snapshot -> ProviderTaskListItem? in
+                    guard let list = listsByID[snapshot.parentID] else { return nil }
+                    return ProviderTaskListItem(
+                        id: "\(TaskProviderKind.appleReminders.rawValue):\(snapshot.id)",
+                        provider: .appleReminders,
+                        title: snapshot.title,
+                        dueAt: snapshot.dueAt,
+                        isCompleted: snapshot.isCompleted,
+                        listTitle: list.title,
+                        accountTitle: list.sourceTitle
+                    )
+                }
+                appleRemindersTaskState = .loaded(items)
+            } catch {
+                guard !Task.isCancelled else { return }
+                self?.appleRemindersTaskState = .failed(Self.message(for: error))
+            }
         }
     }
 
@@ -403,6 +491,9 @@ final class TaskProviderCoordinator: ObservableObject {
                 ? .notDetermined
                 : .notConfigured
             replaceTaskLists(for: provider, with: [])
+            if provider == .microsoftToDo {
+                microsoftToDoTaskState = .unavailable
+            }
             destinations = try repository.fetchDestinations()
             lastErrorMessage = nil
         } catch {
@@ -932,25 +1023,60 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     private func refreshMicrosoftDeltas(in contextStore: ContextStore) async {
-        guard let microsoft = asyncProviders[.microsoftToDo] as? any MicrosoftToDoDeltaProviding,
+        guard let asyncMicrosoft = asyncProviders[.microsoftToDo],
+              asyncMicrosoft.authorizationState == .authorized,
+              let microsoft = asyncMicrosoft as? any MicrosoftToDoDeltaProviding,
               let accounts = try? repository.fetchAccounts() else {
+            microsoftToDoTaskState = .unavailable
             return
         }
+        let authorizedAccounts = accounts.filter {
+            $0.provider == .microsoftToDo
+                && $0.authorizationState == .authorized
+        }
+        guard !authorizedAccounts.isEmpty else {
+            microsoftToDoTaskState = .unavailable
+            return
+        }
+
+        let microsoftLists = taskLists.filter {
+            $0.provider == .microsoftToDo
+        }
+        guard !microsoftLists.isEmpty else {
+            refreshMicrosoftToDoTaskState()
+            return
+        }
+
+        microsoftToDoTaskState = .loading
         var projectionChanged = false
-        for account in accounts where account.provider == .microsoftToDo
-            && account.authorizationState == .authorized {
-            let lists = taskLists.filter {
-                $0.provider == .microsoftToDo && $0.accountKey == account.accountKey
+        var completedRefresh = false
+        var refreshError: String?
+        for account in authorizedAccounts {
+            let lists = microsoftLists.filter {
+                $0.accountKey == account.accountKey
             }
             for list in lists {
                 let cursorKey = "microsoft.todo.delta.\(list.id)"
+                // Earlier versions stored a cursor solely for Event Brief
+                // bindings. The first sidebar refresh must ignore that cursor
+                // once, otherwise Graph returns only recent changes and skips
+                // long-standing Microsoft-only tasks.
+                let sidebarCacheKey = "microsoft.todo.sidebar.cache.v1.\(list.id)"
+                let hasCompleteSidebarCache = (try? repository.fetchSyncCursor(
+                    accountID: account.id,
+                    key: sidebarCacheKey
+                )) != nil
                 let cursorString: String?
-                do {
-                    cursorString = try repository.fetchSyncCursor(
-                        accountID: account.id,
-                        key: cursorKey
-                    )
-                } catch {
+                if hasCompleteSidebarCache {
+                    do {
+                        cursorString = try repository.fetchSyncCursor(
+                            accountID: account.id,
+                            key: cursorKey
+                        )
+                    } catch {
+                        cursorString = nil
+                    }
+                } else {
                     cursorString = nil
                 }
                 let cursor = cursorString.flatMap(URL.init(string:))
@@ -959,6 +1085,46 @@ final class TaskProviderCoordinator: ObservableObject {
                         listID: list.id,
                         cursor: cursor
                     )
+                    for remoteID in delta.deletedTaskIDs {
+                        guard let item = try repository.fetchProviderItem(
+                            accountID: account.id,
+                            remoteID: remoteID
+                        ) else { continue }
+                        if let binding = try repository.fetchBinding(
+                            providerItemID: item.id
+                        ) {
+                            try repository.markBinding(
+                                bindingID: binding.id,
+                                state: .missing
+                            )
+                        } else {
+                            try repository.deleteUnboundProviderItem(
+                                accountID: account.id,
+                                remoteID: remoteID
+                            )
+                        }
+                    }
+                    for remote in delta.tasks {
+                        if let item = try repository.fetchProviderItem(
+                            accountID: account.id,
+                            remoteID: remote.id
+                        ), let binding = try repository.fetchBinding(
+                            providerItemID: item.id
+                        ), let eventTaskID = binding.eventTaskID {
+                            projectionChanged = applyRemote(
+                                remote,
+                                binding: binding,
+                                item: item,
+                                eventTaskID: eventTaskID,
+                                in: contextStore
+                            ) || projectionChanged
+                        } else {
+                            _ = try repository.upsertProviderItem(
+                                accountID: account.id,
+                                remote: remote
+                            )
+                        }
+                    }
                     if let nextCursor = delta.cursor {
                         try repository.saveSyncCursor(
                             accountID: account.id,
@@ -966,33 +1132,12 @@ final class TaskProviderCoordinator: ObservableObject {
                             value: nextCursor.absoluteString
                         )
                     }
-                    for remoteID in delta.deletedTaskIDs {
-                        guard let item = try repository.fetchProviderItem(
-                            accountID: account.id,
-                            remoteID: remoteID
-                        ), let binding = try repository.fetchBinding(
-                            providerItemID: item.id
-                        ) else { continue }
-                        try repository.markBinding(
-                            bindingID: binding.id,
-                            state: .missing
-                        )
-                    }
-                    for remote in delta.tasks {
-                        guard let item = try repository.fetchProviderItem(
-                            accountID: account.id,
-                            remoteID: remote.id
-                        ), let binding = try repository.fetchBinding(
-                            providerItemID: item.id
-                        ), let eventTaskID = binding.eventTaskID else { continue }
-                        projectionChanged = applyRemote(
-                            remote,
-                            binding: binding,
-                            item: item,
-                            eventTaskID: eventTaskID,
-                            in: contextStore
-                        ) || projectionChanged
-                    }
+                    try repository.saveSyncCursor(
+                        accountID: account.id,
+                        key: sidebarCacheKey,
+                        value: "complete"
+                    )
+                    completedRefresh = true
                 } catch {
                     // A rejected/expired delta URL must not be reused. The
                     // next refresh starts a full delta round; no local task is
@@ -1001,12 +1146,54 @@ final class TaskProviderCoordinator: ObservableObject {
                         accountID: account.id,
                         key: cursorKey
                     )
-                    lastErrorMessage = Self.message(for: error)
+                    let message = Self.message(for: error)
+                    refreshError = message
+                    lastErrorMessage = message
                 }
             }
         }
         if projectionChanged {
             onLocalProjectionChange?()
+        }
+        if completedRefresh {
+            refreshMicrosoftToDoTaskState()
+        } else {
+            microsoftToDoTaskState = .failed(
+                refreshError ?? "Microsoft To Do could not refresh its tasks."
+            )
+        }
+    }
+
+    private func refreshMicrosoftToDoTaskState() {
+        do {
+            let accounts = Dictionary(
+                uniqueKeysWithValues: try repository.fetchAccounts().map {
+                    ($0.id, $0)
+                }
+            )
+            let cachedItems = try repository.fetchProviderItems(
+                provider: .microsoftToDo
+            )
+            let items = cachedItems.compactMap { item -> ProviderTaskListItem? in
+                guard let account = accounts[item.accountID] else { return nil }
+                let listTitle = taskLists.first {
+                    $0.provider == .microsoftToDo
+                        && $0.accountKey == account.accountKey
+                        && $0.id == item.remoteParentID
+                }?.title ?? "Microsoft To Do"
+                return ProviderTaskListItem(
+                    id: "\(TaskProviderKind.microsoftToDo.rawValue):\(item.id)",
+                    provider: .microsoftToDo,
+                    title: item.cachedTitle,
+                    dueAt: item.cachedDueAt,
+                    isCompleted: item.cachedCompleted,
+                    listTitle: listTitle,
+                    accountTitle: account.displayName
+                )
+            }
+            microsoftToDoTaskState = .loaded(items)
+        } catch {
+            microsoftToDoTaskState = .failed(Self.message(for: error))
         }
     }
 

@@ -64,6 +64,230 @@ final class ContextStoreTests: XCTestCase {
         )
     }
 
+    func testMicrosoftToDoCacheUpsertsAndRemovesUnboundTasks() throws {
+        let database = try AppDatabase.inMemory()
+        let repository = TaskProviderRepository(
+            database: database,
+            now: { self.date(2026, 7, 15, 9) },
+            makeID: { UUID().uuidString }
+        )
+        let account = try repository.upsertAccount(
+            provider: .microsoftToDo,
+            accountKey: "tenant:object",
+            displayName: "Microsoft User",
+            authorizationState: .authorized
+        )
+        let remote = RemoteTaskSnapshot(
+            id: "remote-task",
+            parentID: "tasks-list",
+            title: "Draft release notes",
+            notes: "Remote-only task",
+            dueAt: date(2026, 7, 17, 9),
+            isCompleted: false,
+            version: "etag-1",
+            deepLink: nil
+        )
+
+        let first = try repository.upsertProviderItem(
+            accountID: account.id,
+            remote: remote
+        )
+        let updated = RemoteTaskSnapshot(
+            id: remote.id,
+            parentID: remote.parentID,
+            title: "Publish release notes",
+            notes: remote.notes,
+            dueAt: date(2026, 7, 18, 9),
+            isCompleted: true,
+            version: "etag-2",
+            deepLink: nil
+        )
+        let second = try repository.upsertProviderItem(
+            accountID: account.id,
+            remote: updated
+        )
+
+        XCTAssertEqual(first.id, second.id)
+        let cached = try repository.fetchProviderItems(provider: .microsoftToDo)
+        XCTAssertEqual(cached.count, 1)
+        let cachedItem = try XCTUnwrap(cached.first)
+        XCTAssertEqual(cachedItem.remoteID, "remote-task")
+        XCTAssertEqual(cachedItem.cachedTitle, "Publish release notes")
+        XCTAssertEqual(cachedItem.cachedDueAt, date(2026, 7, 18, 9))
+        XCTAssertTrue(cachedItem.cachedCompleted)
+
+        try repository.deleteUnboundProviderItem(
+            accountID: account.id,
+            remoteID: remote.id
+        )
+        XCTAssertTrue(
+            try repository.fetchProviderItems(provider: .microsoftToDo).isEmpty
+        )
+    }
+
+    func testLinkingMicrosoftTaskReusesExistingCachedItem() throws {
+        let harness = try makeHarness()
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "microsoft-cache-link"),
+                notes: "Microsoft task fixture"
+            )
+        )
+        let eventTask = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .before,
+            title: "Prepare briefing",
+            sortOrder: 0
+        )
+        let repository = harness.store.taskProviders
+        let account = try repository.upsertAccount(
+            provider: .microsoftToDo,
+            accountKey: "tenant:object",
+            displayName: "Microsoft User",
+            authorizationState: .authorized
+        )
+        let remote = RemoteTaskSnapshot(
+            id: "remote-task",
+            parentID: "tasks-list",
+            title: "Prepare briefing",
+            notes: "",
+            dueAt: nil,
+            isCompleted: false,
+            version: "etag-1",
+            deepLink: nil
+        )
+        let cached = try repository.upsertProviderItem(
+            accountID: account.id,
+            remote: remote
+        )
+
+        let binding = try repository.insertLinkedTask(
+            account: account,
+            remote: remote,
+            eventTaskID: eventTask.id,
+            occurrenceKey: nil,
+            syncHash: "sync-hash"
+        )
+
+        XCTAssertEqual(binding.eventTaskID, eventTask.id)
+        XCTAssertEqual(binding.providerItemID, cached.id)
+        XCTAssertEqual(
+            try repository.fetchProviderItems(provider: .microsoftToDo)
+                .map(\.id),
+            [cached.id]
+        )
+    }
+
+    @MainActor
+    func testCoordinatorProjectsAppleRemindersForTheTaskSidebar() async throws {
+        let harness = try makeHarness()
+        let provider = StubAppleTaskListingProvider(
+            lists: [
+                RemoteTaskList(
+                    provider: .appleReminders,
+                    id: "reminders-list",
+                    accountKey: "icloud-account",
+                    title: "Personal",
+                    sourceTitle: "iCloud",
+                    isWritable: true
+                )
+            ],
+            tasks: [
+                RemoteTaskSnapshot(
+                    id: "reminder-1",
+                    parentID: "reminders-list",
+                    title: "Buy milk",
+                    notes: "Stays in Reminders",
+                    dueAt: date(2026, 7, 16, 18),
+                    isCompleted: false,
+                    version: "1",
+                    deepLink: nil
+                )
+            ]
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+
+        for _ in 0..<20 {
+            if case .loaded = coordinator.appleRemindersTaskState { break }
+            await Task.yield()
+        }
+
+        guard case let .loaded(items) = coordinator.appleRemindersTaskState else {
+            return XCTFail("Expected Apple Reminders to finish loading")
+        }
+        XCTAssertEqual(
+            items,
+            [
+                ProviderTaskListItem(
+                    id: "apple_reminders:reminder-1",
+                    provider: .appleReminders,
+                    title: "Buy milk",
+                    dueAt: date(2026, 7, 16, 18),
+                    isCompleted: false,
+                    listTitle: "Personal",
+                    accountTitle: "iCloud"
+                )
+            ]
+        )
+    }
+
+    func testMicrosoftToDoSidebarQueryHidesMissingBoundTaskButKeepsRecoveryCache() throws {
+        let harness = try makeHarness()
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "microsoft-missing-link"),
+                notes: "Microsoft task fixture"
+            )
+        )
+        let eventTask = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .after,
+            title: "Follow up",
+            sortOrder: 0
+        )
+        let repository = harness.store.taskProviders
+        let account = try repository.upsertAccount(
+            provider: .microsoftToDo,
+            accountKey: "tenant:object",
+            displayName: "Microsoft User",
+            authorizationState: .authorized
+        )
+        let remote = RemoteTaskSnapshot(
+            id: "remote-task",
+            parentID: "tasks-list",
+            title: "Follow up",
+            notes: "",
+            dueAt: nil,
+            isCompleted: false,
+            version: "etag-1",
+            deepLink: nil
+        )
+        let binding = try repository.insertLinkedTask(
+            account: account,
+            remote: remote,
+            eventTaskID: eventTask.id,
+            occurrenceKey: nil,
+            syncHash: "sync-hash"
+        )
+        let cachedID = try XCTUnwrap(
+            repository.fetchProviderItem(
+                accountID: account.id,
+                remoteID: remote.id
+            )?.id
+        )
+
+        try repository.markBinding(bindingID: binding.id, state: .missing)
+
+        XCTAssertTrue(
+            try repository.fetchProviderItems(provider: .microsoftToDo).isEmpty
+        )
+        XCTAssertNotNil(try repository.fetchProviderItem(id: cachedID))
+    }
+
     func testOAuthAuthorizationRequestUsesPKCEAndProviderSpecificRedirectRules() throws {
         let configuration = OAuthProviderConfiguration(
             provider: .googleTasks,
@@ -3968,6 +4192,62 @@ private final class InMemoryOAuthCredentialStore: OAuthCredentialStoring {
 
     func deleteCredential(for provider: TaskProviderKind) throws {
         credentials[provider] = nil
+    }
+}
+
+@MainActor
+private final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotListing {
+    let provider: TaskProviderKind = .appleReminders
+    let capabilities = TaskProviderCapabilities(
+        supportsNotes: true,
+        supportsTimedDue: true,
+        supportsCompletion: true,
+        supportsDeletion: true,
+        supportsDeepLink: true
+    )
+    let authorizationState: TaskProviderAuthorizationState = .authorized
+    var storeChangeHandler: (() -> Void)?
+
+    private let lists: [RemoteTaskList]
+    private let tasks: [RemoteTaskSnapshot]
+
+    init(lists: [RemoteTaskList], tasks: [RemoteTaskSnapshot]) {
+        self.lists = lists
+        self.tasks = tasks
+    }
+
+    func requestFullAccess() async throws -> Bool { true }
+
+    func listTaskLists() throws -> [RemoteTaskList] { lists }
+
+    func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
+        let listIDs = Set(lists.map(\.id))
+        return tasks.filter { listIDs.contains($0.parentID) }
+    }
+
+    func createTask(_ draft: RemoteTaskDraft) throws -> RemoteTaskSnapshot {
+        throw TaskProviderError.providerFailure("Not implemented by the test provider.")
+    }
+
+    func updateTask(
+        _ task: RemoteTaskSnapshot,
+        with patch: RemoteTaskPatch
+    ) throws -> RemoteTaskSnapshot {
+        throw TaskProviderError.providerFailure("Not implemented by the test provider.")
+    }
+
+    func deleteTask(
+        _ task: RemoteTaskSnapshot,
+        expectedVersion: String?
+    ) throws {
+        throw TaskProviderError.providerFailure("Not implemented by the test provider.")
+    }
+
+    func lookupTask(
+        id: String,
+        parentID: String
+    ) throws -> RemoteTaskSnapshot? {
+        tasks.first { $0.id == id && $0.parentID == parentID }
     }
 }
 

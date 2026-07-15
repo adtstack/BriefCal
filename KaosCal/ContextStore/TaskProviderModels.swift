@@ -86,6 +86,31 @@ struct RemoteTaskList: Equatable, Identifiable {
     }
 }
 
+/// A task projected into the sidebar from one of KaosCal's task providers.
+/// Provider-specific bodies and notes intentionally stay out of this model.
+struct ProviderTaskListItem: Equatable, Identifiable {
+    /// A provider-scoped stable ID suitable for SwiftUI diffing.
+    let id: String
+    let provider: TaskProviderKind
+    let title: String
+    let dueAt: Date?
+    let isCompleted: Bool
+    let listTitle: String
+    let accountTitle: String
+}
+
+enum ProviderTaskListState: Equatable {
+    case unavailable
+    case loading
+    case loaded([ProviderTaskListItem])
+    case failed(String)
+
+    var items: [ProviderTaskListItem] {
+        guard case let .loaded(items) = self else { return [] }
+        return items
+    }
+}
+
 struct ProviderAccountRecord: Equatable, Identifiable {
     let id: String
     var provider: TaskProviderKind

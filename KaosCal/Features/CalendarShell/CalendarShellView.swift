@@ -9,6 +9,7 @@ struct CalendarShellView: View {
     let bootstrapDatabaseURL: URL?
     let recoverBootstrap: ((URL) -> Void)?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var rightSidebarMode: RightSidebarMode = .eventDetails
 
     init(
         appState: AppState,
@@ -49,7 +50,10 @@ struct CalendarShellView: View {
             WorkspaceView(appState: appState)
                 .navigationSplitViewColumnWidth(min: 560, ideal: 760)
         } detail: {
-            EventInspectorView(appState: appState)
+            RightSidebarView(
+                appState: appState,
+                mode: $rightSidebarMode
+            )
                 .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 420)
         }
         .navigationSplitViewStyle(.balanced)
@@ -155,6 +159,7 @@ struct CalendarShellView: View {
                 Task {
                     await appState.loadCalendarStatus()
                     appState.refreshTaskCenter()
+                    appState.taskProviderCoordinator?.refresh()
                 }
             } else {
                 appState.flushPendingEventNotes()
@@ -1539,6 +1544,383 @@ private struct AgendaEventRow: View {
     private var hasDuplicateCandidates: Bool {
         appState.hasDuplicateCandidates(for: event)
     }
+}
+
+private enum RightSidebarMode: String, CaseIterable, Identifiable {
+    case eventDetails
+    case tasks
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .eventDetails: "Details"
+        case .tasks: "Tasks"
+        }
+    }
+}
+
+private struct RightSidebarView: View {
+    @ObservedObject var appState: AppState
+    @Binding var mode: RightSidebarMode
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Right sidebar", selection: $mode) {
+                ForEach(RightSidebarMode.allCases) { item in
+                    Text(item.title).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(12)
+
+            Divider()
+
+            switch mode {
+            case .eventDetails:
+                EventInspectorView(appState: appState)
+            case .tasks:
+                if let coordinator = appState.taskProviderCoordinator {
+                    ProviderTaskSidebarView(
+                        appState: appState,
+                        coordinator: coordinator
+                    )
+                } else {
+                    ContentUnavailableView(
+                        "Task storage unavailable",
+                        systemImage: "externaldrive.badge.xmark",
+                        description: Text(
+                            "KaosCal could not open local task data in this session."
+                        )
+                    )
+                }
+            }
+        }
+        .background(.ultraThinMaterial)
+        .accessibilityIdentifier("rightSidebar.\(mode.rawValue)")
+    }
+}
+
+private enum ProviderTaskSidebarFilter: String, CaseIterable, Identifiable {
+    case open
+    case all
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .open: "Open"
+        case .all: "All"
+        }
+    }
+}
+
+private struct ProviderTaskSidebarView: View {
+    @ObservedObject var appState: AppState
+    @ObservedObject var coordinator: TaskProviderCoordinator
+    @State private var filter: ProviderTaskSidebarFilter = .open
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Picker("Task visibility", selection: $filter) {
+                ForEach(ProviderTaskSidebarFilter.allCases) { item in
+                    Text(item.title).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(14)
+
+            content
+        }
+        .task {
+            coordinator.refresh()
+        }
+        .accessibilityIdentifier("rightSidebar.tasks")
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Label("Tasks", systemImage: "checklist")
+                .font(.headline)
+            Spacer()
+            Button {
+                coordinator.refresh()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Refresh tasks")
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        let items = combinedItems
+        if !visibleItems(items).isEmpty {
+            taskList(items)
+        } else if isLoading {
+            ProgressView("Refreshing tasks…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let failureMessage {
+            failureContent(failureMessage)
+        } else if allProvidersUnavailable {
+            unavailableContent
+        } else {
+            emptyContent
+        }
+    }
+
+    private var combinedItems: [ProviderTaskListItem] {
+        coordinator.appleRemindersTaskState.items
+            + coordinator.microsoftToDoTaskState.items
+    }
+
+    private var isLoading: Bool {
+        if case .loading = coordinator.appleRemindersTaskState { return true }
+        if case .loading = coordinator.microsoftToDoTaskState { return true }
+        return false
+    }
+
+    private var allProvidersUnavailable: Bool {
+        guard case .unavailable = coordinator.appleRemindersTaskState,
+              case .unavailable = coordinator.microsoftToDoTaskState else {
+            return false
+        }
+        return true
+    }
+
+    private var failureMessage: String? {
+        var messages: [String] = []
+        if case let .failed(message) = coordinator.appleRemindersTaskState {
+            messages.append("Apple Reminders: \(message)")
+        }
+        if case let .failed(message) = coordinator.microsoftToDoTaskState {
+            messages.append("Microsoft To Do: \(message)")
+        }
+        return messages.isEmpty ? nil : messages.joined(separator: "\n")
+    }
+
+    private var unavailableContent: some View {
+        ContentUnavailableView {
+            Label(
+                "No task provider available",
+                systemImage: "checklist"
+            )
+        } description: {
+            Text(
+                "Grant Reminders access or connect Microsoft To Do in Settings."
+            )
+        }
+    }
+
+    private func failureContent(_ message: String) -> some View {
+        ContentUnavailableView {
+            Label("Couldn’t refresh tasks", systemImage: "exclamationmark.circle")
+        } description: {
+            Text(message)
+        } actions: {
+            Button("Retry") {
+                coordinator.refresh()
+            }
+        }
+    }
+
+    private var emptyContent: some View {
+        ContentUnavailableView(
+            filter == .open ? "No open tasks" : "No tasks",
+            systemImage: "checkmark.circle",
+            description: Text(
+                filter == .open
+                    ? "Completed tasks are hidden in this view."
+                    : "Create a task in Apple Reminders or Microsoft To Do, then refresh."
+            )
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func taskList(_ items: [ProviderTaskListItem]) -> some View {
+        List {
+            providerStatusRows
+            ForEach(groups(for: items)) { group in
+                Section {
+                    ForEach(group.items) { item in
+                        taskRow(item)
+                    }
+                } header: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(
+                            group.provider.title,
+                            systemImage: group.provider.settingsIcon
+                        )
+                        Text("\(group.accountTitle) · \(group.listTitle)")
+                            .font(.caption2)
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+    }
+
+    @ViewBuilder
+    private var providerStatusRows: some View {
+        switch coordinator.appleRemindersTaskState {
+        case .loading:
+            Label("Refreshing Apple Reminders…", systemImage: "arrow.clockwise")
+                .foregroundStyle(.secondary)
+        case let .failed(message):
+            Label("Apple Reminders: \(message)", systemImage: "exclamationmark.circle")
+                .foregroundStyle(.secondary)
+        case .unavailable, .loaded:
+            EmptyView()
+        }
+        switch coordinator.microsoftToDoTaskState {
+        case .loading:
+            Label("Refreshing Microsoft To Do…", systemImage: "arrow.clockwise")
+                .foregroundStyle(.secondary)
+        case let .failed(message):
+            Label("Microsoft To Do: \(message)", systemImage: "exclamationmark.circle")
+                .foregroundStyle(.secondary)
+        case .unavailable, .loaded:
+            EmptyView()
+        }
+    }
+
+    private func visibleItems(
+        _ items: [ProviderTaskListItem]
+    ) -> [ProviderTaskListItem] {
+        switch filter {
+        case .open:
+            items.filter { !$0.isCompleted }
+        case .all:
+            items
+        }
+    }
+
+    private func groups(
+        for items: [ProviderTaskListItem]
+    ) -> [ProviderTaskSidebarGroup] {
+        Dictionary(grouping: visibleItems(items)) {
+            ProviderTaskSidebarGroup.Key(
+                provider: $0.provider,
+                accountTitle: $0.accountTitle,
+                listTitle: $0.listTitle
+            )
+        }
+        .map { key, items in
+            ProviderTaskSidebarGroup(
+                provider: key.provider,
+                accountTitle: key.accountTitle,
+                listTitle: key.listTitle,
+                items: items.sorted(by: taskSort)
+            )
+        }
+        .sorted { lhs, rhs in
+            if lhs.provider != rhs.provider {
+                return providerRank(lhs.provider) < providerRank(rhs.provider)
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+                == .orderedAscending
+        }
+    }
+
+    private func providerRank(_ provider: TaskProviderKind) -> Int {
+        switch provider {
+        case .appleReminders: 0
+        case .microsoftToDo: 1
+        default: 2
+        }
+    }
+
+    private func taskSort(
+        _ lhs: ProviderTaskListItem,
+        _ rhs: ProviderTaskListItem
+    ) -> Bool {
+        if lhs.isCompleted != rhs.isCompleted {
+            return !lhs.isCompleted
+        }
+        switch (lhs.dueAt, rhs.dueAt) {
+        case let (left?, right?) where left != right:
+            return left < right
+        case (_?, nil):
+            return true
+        case (nil, _?):
+            return false
+        default:
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title)
+                == .orderedAscending
+        }
+    }
+
+    private func taskRow(_ item: ProviderTaskListItem) -> some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
+                .foregroundStyle(
+                    item.isCompleted ? KaosCalTheme.accent : Color.secondary
+                )
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.title)
+                    .strikethrough(item.isCompleted)
+                    .lineLimit(3)
+
+                if let dueAt = item.dueAt {
+                    Label(dueText(dueAt), systemImage: "calendar")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("task.\(item.id)")
+    }
+
+    private func dueText(_ date: Date) -> String {
+        if appState.calendar.isDateInToday(date) {
+            return "Today"
+        }
+        if appState.calendar.isDateInTomorrow(date) {
+            return "Tomorrow"
+        }
+        return CalendarEventDateFormatting.abbreviatedDate(
+            date,
+            calendar: appState.calendar
+        )
+    }
+}
+
+private struct ProviderTaskSidebarGroup: Identifiable {
+    struct Key: Hashable {
+        let provider: TaskProviderKind
+        let accountTitle: String
+        let listTitle: String
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.provider.rawValue == rhs.provider.rawValue
+                && lhs.accountTitle == rhs.accountTitle
+                && lhs.listTitle == rhs.listTitle
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(provider.rawValue)
+            hasher.combine(accountTitle)
+            hasher.combine(listTitle)
+        }
+    }
+
+    let provider: TaskProviderKind
+    let accountTitle: String
+    let listTitle: String
+    let items: [ProviderTaskListItem]
+
+    var title: String { "\(accountTitle) · \(listTitle)" }
+    var id: String { "\(provider.rawValue):\(accountTitle):\(listTitle)" }
 }
 
 private struct EventInspectorView: View {
