@@ -1010,6 +1010,77 @@
     `/tmp/KaosCalCalendarSets-Final-20260715.xcresult`다.
 - 결과: **구현·최종 자동/offscreen pass / 실제 Exchange·실창·keyboard·VoiceOver pending**.
 
+## 2026-07-15 — Task Provider 상태 복구와 mini month event dot 구현
+
+- 관련 요구사항: [제품·시스템 스펙](specification.md)의 `PRV-009`, `CAL-007`, `UI-005`
+- Task Provider:
+  - Task Center event task에 provider·account·list와 pending/linked/missing/conflict/
+    disconnected 상태를 투영하고 attention 설명과 Resolve 메뉴를 추가했다.
+  - missing은 provider 재확인 또는 local 기준 remote 재생성, conflict는 remote 수용 또는
+    local 기준 remote 교체, disconnected는 Task Provider Settings와 재확인을 제공한다.
+  - 권한 철회 시 해당 provider binding을 disconnected로 투영하고 재승인·exact lookup 뒤
+    linked로 복구한다. remote 수용은 local 제목·완료 상태를 명시적으로 갱신한다.
+- Mini month:
+  - 표시 grid 첫날부터 42번째 날 다음 날까지 별도 summary snapshot을 조회해 본문
+    `events`/focused date를 보존한다. reload·scene activation·store change도 현재 summary
+    interval을 갱신한다.
+  - 완전한 coverage에서만 일정이 겹치는 날짜 숫자 아래 3pt 단일 dot을 표시한다.
+    focused는 흰색, 일반은 accent, adjacent month는 낮은 opacity이며 dot 자체는 hit target이나
+    accessibility element가 아니다. 날짜 Button value가 정확한 count/loading/unavailable을
+    전달한다.
+  - `global Enabled ∩ selected Calendar Set`을 적용하고 availability blocking 값은 필터에 쓰지 않는다.
+    timed multi-day/all-day는 civil-day overlap과 배타 종료를 따른다.
+- 검증:
+  - provider conflict remote 수용, disconnect/reconnect와 mini month 42일 DST coverage,
+    본문 snapshot 독립, 자정/multi-day/all-day/filter/failure, 210×240 offscreen 회귀의
+    focused 4-test·후속 2-test가 통과했다.
+  - 최종 전체 suite는 **253 executed / 252 passed / 1 intentional
+    `ManualEventKitQATests` skip / 0 failures**, `TEST SUCCEEDED`다. result bundle은
+    `/tmp/KaosCalProviderMiniMonth-Final-R3-20260715.xcresult`다.
+  - `git diff --check`를 통과했다.
+- 결과: **implemented / live pending**. 실제 provider fixture·실창·VoiceOver, 다른 remote
+  직접 relink와 durable per-task unlink는 후속 gate다.
+
+## 2026-07-16 — Tasks 안의 Apple Reminders 직접 연결
+
+- 오른쪽 `Details`/`Tasks` segmented control과 `Tasks` 이름은 유지했다.
+- `Tasks`와 provider content에 전체 높이 constraint를 적용해 빈 상태나 짧은 목록이
+  패널 위쪽 절반에만 배치되지 않게 했다.
+- Reminders 권한이 `notDetermined`이면 `Tasks` 첫 진입에서 실제 EventKit full-access
+  요청을 실행한다. 거부 상태는 Reminders privacy System Settings로 이동하고,
+  미결정 상태에는 수동 `Connect Apple Reminders` fallback을 유지한다.
+- 권한 승인 뒤 task가 0개여도 `Apple Reminders connected`를 표시하고, 항목이 있으면
+  account/list별 실제 Reminders task projection 위에도 연결 상태를 표시한다.
+- 권한 요청 뒤 list/task projection을 검증하는 자동 테스트를 추가했다. 최종 전체는
+  **254 executed / 253 passed / 1 intentional `ManualEventKitQATests` skip / 0 failures**,
+  `TEST SUCCEEDED`이며 result bundle은
+  `/tmp/KaosCalRemindersConnection-Final-20260716.xcresult`다.
+- 결과: **implemented / live TCC·Reminders account check pending**.
+
+## 2026-07-16 — Tasks list/source 필터와 가독성 개선
+
+- `Tasks` 이름과 기존 연결 흐름은 유지하고, 수동 count 문구를 전체 폭 `All Lists` menu로
+  바꿨다. 선택지는 provider list metadata를 우선해 빈 list와 완료 task만 있는 list를
+  보존하고, 일시적 metadata 실패에는 loaded task snapshot을 fallback으로 사용한다.
+- Apple Reminders와 Microsoft To Do를 source section으로 나누고 list, account, 불러온 전체 task
+  수를 표시한다. 식별자는 표시 이름이 아닌 `(provider, accountKey, listID)` 복합값이라
+  같은 raw list ID나 이름을 공유해도 섞이지 않는다.
+- 특정 list 선택, Open/Completed/All, 제목·설명 검색, Due date/Title 정렬을 순서대로
+  조합한다. list·상태·정렬은 UI preference로 재실행 후 복원하고 검색은 초기화한다.
+  OAuth/Task load 중에는 선택을 유지하고, 이후 실제로 사라진 list만 All로 복원한다.
+- 같은 provider의 계정별 raw list/task ID 충돌도 account를 포함해 매핑하고 SwiftUI row ID를
+  provider·account·list·task 조합으로 만든다. Microsoft list 조회의 일시 실패는 마지막
+  성공 metadata를 지우지 않으며, 선택 provider의 빈/loading/error 상태를 다른 provider가
+  가리지 않게 했다.
+- `.sidebar` List와 중복 disclosure를 제거하고 system background의 ScrollView/LazyVStack,
+  명확한 section separator, 2줄 medium title, 1줄 detail, 텍스트·아이콘 overdue 표시로
+  읽기 계층을 정리했다. 연결 성공은 상단 초록 상태로 압축하고 오류·복구 안내는 유지했다.
+- 자동 검증은 stable provider/list/status/search filtering, 빈 list, rename/delete selection,
+  300×600·360×700 light-appearance bitmap을 포함한다. 최종 전체는 **257 executed / 256
+  passed / 1 intentional `ManualEventKitQATests` skip / 0 failures**, `TEST SUCCEEDED`이며
+  result bundle은 `/tmp/KaosCalTasksFilters-Final-R2-20260716.xcresult`다.
+- 결과: **implemented / real Apple·Microsoft menu, keyboard·VoiceOver live pending**.
+
 ## 다음 항목 템플릿
 
 ```markdown

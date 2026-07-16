@@ -161,6 +161,26 @@ After:
 - event source를 누르면 target range를 불러온 뒤 강한 occurrence match만 Day 화면에서 연다. 못 찾으면 task는 유지하고 오류를 표시한다.
 - loading, empty, query failed를 서로 다른 상태로 표시하며 실패에는 Retry를 제공한다.
 
+### 오른쪽 Tasks inspector
+
+- 이름은 `Tasks`로 유지하고 inspector 전체 높이를 사용한다. 상단에는 연결 상태와 refresh만
+  두고, 성공 상태를 반복하는 별도 행은 만들지 않는다.
+- 전체 폭 `All Lists` menu는 Apple Reminders와 Microsoft To Do를 source section으로
+  나누고 list·account·불러온 전체 task 수를 표시한다. 같은 표시 이름은 안정된 list ID
+  순서의 `List 1`, `List 2` 보조 표기로 구분한다.
+- list 선택은 `(provider, accountKey, listID)` identity를 사용한다. 선택한 list에서는
+  section을 반복하지 않고 해당 task만 평면 목록으로 표시한다.
+- list 아래에는 inline search, Open/Completed/All segmented control, 결과 수와 Due date/
+  Title 정렬을 이 순서로 둔다. 검색은 제목과 설명에 적용한다.
+- 행은 system content background와 separator를 사용하고 제목은 body medium 최대 2줄,
+  설명과 due는 subheadline으로 둔다. 설명은 1줄과 전체 help를 함께 제공하며 날짜 없는
+  task에 반복적인 `No date`를 쓰지 않는다.
+- overdue는 빨간색만 쓰지 않고 아이콘, `Overdue` 텍스트와 날짜를 함께 제공한다. task
+  접근성 label은 Open/Completed, 제목, 설명, due/overdue를 명시한다.
+- 300pt inspector에서도 menu·검색·상태 control이 잘리지 않고 list/source/account와 task
+  본문의 우선순위가 유지되어야 한다. 실제 keyboard·VoiceOver·Increase Contrast 판정은
+  offscreen bitmap과 분리한다.
+
 ## 원본 일정 Editor
 
 - toolbar plus와 `⌘N`은 580×700 sheet를 열고, 선택 일정 inspector의 `Edit Original Event`도 같은 editor를 사용한다.

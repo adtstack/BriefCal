@@ -601,6 +601,25 @@ enum TaskCenterItemSource: Equatable {
     case personal
 }
 
+struct TaskCenterProviderLink: Equatable {
+    let bindingID: String
+    let provider: TaskProviderKind
+    let accountKey: String
+    let accountTitle: String
+    let remoteParentID: String
+    let syncState: TaskProviderSyncState
+    let authorizationState: TaskProviderAuthorizationState
+
+    var needsAttention: Bool {
+        switch syncState {
+        case .missing, .conflict, .disconnected:
+            true
+        case .pendingCreate, .linked:
+            false
+        }
+    }
+}
+
 struct TaskCenterItem: Equatable, Identifiable {
     let id: TaskCenterItemID
     let title: String
@@ -609,6 +628,7 @@ struct TaskCenterItem: Equatable, Identifiable {
     let completedAt: Date?
     let sortOrder: Int
     let source: TaskCenterItemSource
+    let providerLink: TaskCenterProviderLink?
     let eventLinkStatus: EventLinkStatus?
     let eventLifecycleStatus: EventLifecycleStatus?
     let wasOriginalDeletedByKaosCal: Bool

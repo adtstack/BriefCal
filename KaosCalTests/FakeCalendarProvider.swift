@@ -36,6 +36,7 @@ final class FakeCalendarProvider: CalendarProviding {
     private(set) var requestCallCount = 0
     private(set) var listCallCount = 0
     private(set) var fetchCallCount = 0
+    private(set) var fetchIntervals: [DateInterval] = []
     private(set) var lookupCallCount = 0
     private(set) var createCallCount = 0
     private(set) var updateCallCount = 0
@@ -68,6 +69,7 @@ final class FakeCalendarProvider: CalendarProviding {
 
     func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] {
         fetchCallCount += 1
+        fetchIntervals.append(interval)
         lastFetchInterval = interval
         if let error { throw error }
         return eventsForInterval?(interval) ?? events

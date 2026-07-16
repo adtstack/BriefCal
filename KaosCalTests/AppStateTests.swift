@@ -1165,6 +1165,127 @@ final class Phase6AppStateTests: XCTestCase {
         XCTAssertEqual(provider.deleteCallCount, 0)
     }
 
+    func testMiniMonthSummaryUsesSeparateSnapshotAndExactVisibleSetOverlap() async throws {
+        let includedSource = makeCalendarSource(
+            id: "calendar",
+            title: "Included"
+        )
+        let outsideSetSource = makeCalendarSource(
+            id: "destination",
+            title: "Outside Set"
+        )
+        let globallyHiddenSource = makeCalendarSource(
+            id: "hidden",
+            title: "Disabled"
+        )
+        let bodyEvent = makeEvent(
+            id: "body-snapshot",
+            start: date(2026, 7, 10, 9)
+        )
+        let provider = makeProvider(events: [bodyEvent])
+        provider.calendars = [
+            includedSource,
+            outsideSetSource,
+            globallyHiddenSource
+        ]
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+
+        let selectedSet = try XCTUnwrap(state.createCalendarSet(
+            name: "Mini Month",
+            calendarIdentifiers: [includedSource.id]
+        ))
+        XCTAssertTrue(state.selectCalendarSet(.saved(selectedSet.id)))
+        XCTAssertTrue(state.setCalendarVisibility(
+            false,
+            for: globallyHiddenSource
+        ))
+        XCTAssertTrue(state.setCalendarBlocksAvailability(
+            false,
+            for: includedSource
+        ))
+        XCTAssertEqual(
+            state.miniMonthEventSummary(for: date(2026, 7, 8)),
+            .unavailable
+        )
+
+        provider.events = [
+            makeEvent(
+                id: "overnight",
+                start: date(2026, 7, 7, 23),
+                end: date(2026, 7, 8, 1)
+            ),
+            makeEvent(
+                id: "two-day-all-day",
+                start: date(2026, 7, 8),
+                end: date(2026, 7, 10),
+                isAllDay: true
+            ),
+            makeEvent(
+                id: "ends-at-midnight",
+                start: date(2026, 7, 7, 23),
+                end: date(2026, 7, 8)
+            ),
+            makeEvent(
+                id: "outside-selected-set",
+                start: date(2026, 7, 8, 12),
+                calendarIdentifier: outsideSetSource.id
+            ),
+            makeEvent(
+                id: "globally-disabled",
+                start: date(2026, 7, 8, 13),
+                calendarIdentifier: globallyHiddenSource.id
+            )
+        ]
+        let grid = MiniMonthGrid(
+            containing: date(2026, 7, 10),
+            calendar: calendar
+        )
+        let interval = try XCTUnwrap(
+            grid.coverageInterval(calendar: calendar)
+        )
+        await state.loadMiniMonthEventSummary(in: interval)
+
+        XCTAssertEqual(provider.fetchCallCount, 2)
+        XCTAssertEqual(provider.fetchIntervals.last, interval)
+        XCTAssertEqual(state.events.map(\.id), [bodyEvent.id])
+        XCTAssertEqual(
+            state.miniMonthEventSummary(for: date(2026, 7, 7)),
+            .loaded(2)
+        )
+        XCTAssertEqual(
+            state.miniMonthEventSummary(for: date(2026, 7, 8)),
+            .loaded(2)
+        )
+        XCTAssertEqual(
+            state.miniMonthEventSummary(for: date(2026, 7, 9)),
+            .loaded(1)
+        )
+        XCTAssertEqual(
+            state.miniMonthEventSummary(for: date(2026, 7, 10)),
+            .loaded(0)
+        )
+        XCTAssertEqual(
+            state.miniMonthEventSummary(for: date(2027, 7, 8)),
+            .unavailable
+        )
+
+        provider.error = FakeCalendarProviderError.failed
+        await state.loadMiniMonthEventSummary(in: interval, force: true)
+
+        XCTAssertEqual(state.events.map(\.id), [bodyEvent.id])
+        XCTAssertEqual(
+            state.miniMonthEventSummary(for: date(2026, 7, 8)),
+            .failed
+        )
+        XCTAssertEqual(
+            state.miniMonthEventSummary(for: date(2026, 7, 8))
+                .accessibilityDescription,
+            "Events unavailable"
+        )
+    }
+
     func testSavedCalendarSetSelectionRestoresAfterRelaunchAndActiveDeletionFallsBackToAll() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(
@@ -1593,6 +1714,8 @@ final class Phase6AppStateTests: XCTestCase {
         isDetached: Bool = false,
         title: String = "Phase 6 fixture",
         start requestedStart: Date? = nil,
+        end requestedEnd: Date? = nil,
+        isAllDay: Bool = false,
         identifierSeed requestedIdentifierSeed: String? = nil,
         calendarIdentifier: String = "calendar",
         availability: CalendarEventAvailability = .notSupported,
@@ -1600,7 +1723,25 @@ final class Phase6AppStateTests: XCTestCase {
         isDeclinedByCurrentUser: Bool = false
     ) -> DisplayEvent {
         let start = requestedStart ?? date(2026, 7, 10, 9)
+        let end = requestedEnd ?? start.addingTimeInterval(3_600)
         let identifierSeed = requestedIdentifierSeed ?? id
+        let timeSemantics: EventTimeSemantics
+        if isAllDay {
+            timeSemantics = .allDay(
+                start: LocalDateTimeComponents(
+                    date: start,
+                    calendar: calendar
+                ),
+                endExclusive: LocalDateTimeComponents(
+                    date: end,
+                    calendar: calendar
+                )
+            )
+        } else {
+            timeSemantics = .zoned(
+                timeZoneIdentifier: calendar.timeZone.identifier
+            )
+        }
         return DisplayEvent(
             id: id,
             eventIdentifier: "event-\(identifierSeed)",
@@ -1616,12 +1757,10 @@ final class Phase6AppStateTests: XCTestCase {
             title: title,
             location: nil,
             startDate: start,
-            endDate: start.addingTimeInterval(3_600),
-            isAllDay: false,
+            endDate: end,
+            isAllDay: isAllDay,
             timeZoneIdentifier: calendar.timeZone.identifier,
-            timeSemantics: .zoned(
-                timeZoneIdentifier: calendar.timeZone.identifier
-            ),
+            timeSemantics: timeSemantics,
             isRecurring: recurrence.isRecurring,
             occurrenceDate: recurrence.isRecurring ? start : nil,
             occurrenceLocalComponents: nil,

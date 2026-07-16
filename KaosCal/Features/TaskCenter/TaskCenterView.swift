@@ -397,6 +397,7 @@ private struct PersonalTaskComposer: View {
 }
 
 private struct TaskCenterRow: View {
+    @Environment(\.openSettings) private var openSettings
     @ObservedObject var appState: AppState
     let item: TaskCenterItem
 
@@ -406,6 +407,7 @@ private struct TaskCenterRow: View {
     @State private var showsDueEditor = false
     @State private var personalDueEnabled: Bool
     @State private var personalDueDraft: Date
+    @State private var isResolvingProvider = false
     @FocusState private var isEditing: Bool
 
     init(appState: AppState, item: TaskCenterItem) {
@@ -469,6 +471,10 @@ private struct TaskCenterRow: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                if let providerLink = item.providerLink {
+                    providerLinkView(providerLink)
+                }
             }
 
             Spacer(minLength: 8)
@@ -520,7 +526,7 @@ private struct TaskCenterRow: View {
                 _ = commitTitle()
             }
         }
-        .alert("Delete this local task?", isPresented: $confirmsDeletion) {
+        .alert(deleteConfirmationTitle, isPresented: $confirmsDeletion) {
             Button("Delete", role: .destructive) {
                 isDeleting = true
                 Task {
@@ -531,8 +537,104 @@ private struct TaskCenterRow: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The calendar event and its original data will not be changed.")
+            Text(deleteConfirmationMessage)
         }
+    }
+
+    @ViewBuilder
+    private func providerLinkView(
+        _ link: TaskCenterProviderLink
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Label(
+                    appState.taskProviderSourceTitle(for: link),
+                    systemImage: link.provider.settingsIcon
+                )
+                .foregroundStyle(.secondary)
+
+                Text("·")
+                    .foregroundStyle(.tertiary)
+
+                Label(
+                    link.needsAttention
+                        ? "Needs attention · \(link.syncState.title)"
+                        : link.syncState.title,
+                    systemImage: link.needsAttention
+                        ? "exclamationmark.triangle.fill"
+                        : link.syncState == .pendingCreate
+                            ? "arrow.triangle.2.circlepath"
+                            : "checkmark.circle.fill"
+                )
+                .foregroundStyle(link.needsAttention ? .orange : .secondary)
+
+                Spacer(minLength: 6)
+
+                if link.needsAttention {
+                    providerRecoveryMenu(link)
+                }
+            }
+            .font(.caption)
+
+            if let recoveryMessage = link.syncState.recoveryMessage {
+                Text(recoveryMessage)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityIdentifier(
+            "taskCenter.providerLink.\(link.bindingID)"
+        )
+    }
+
+    @ViewBuilder
+    private func providerRecoveryMenu(
+        _ link: TaskCenterProviderLink
+    ) -> some View {
+        Menu {
+            switch link.syncState {
+            case .missing:
+                Button("Check Provider Again") {
+                    resolveProviderLink {
+                        appState.checkTaskProviderLink(item.id)
+                    }
+                }
+                Button("Recreate Remote from Local Task") {
+                    resolveProviderLinkUsingLocal()
+                }
+            case .conflict:
+                Button("Use Remote Version") {
+                    resolveProviderLinkUsingRemote()
+                }
+                Button("Replace Remote with Local Version") {
+                    resolveProviderLinkUsingLocal()
+                }
+            case .disconnected:
+                Button("Open Task Provider Settings") {
+                    appState.selectedSettingsPane = .taskProviders
+                    openSettings()
+                }
+                Button("Check Provider Again") {
+                    resolveProviderLink {
+                        appState.checkTaskProviderLink(item.id)
+                    }
+                }
+            case .pendingCreate, .linked:
+                EmptyView()
+            }
+        } label: {
+            Label("Resolve", systemImage: "wrench.and.screwdriver")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .disabled(isResolvingProvider)
+        .accessibilityLabel(
+            "Resolve \(link.provider.title) task connection"
+        )
+        .accessibilityIdentifier(
+            "taskCenter.providerResolve.\(link.bindingID)"
+        )
     }
 
     @ViewBuilder
@@ -587,6 +689,19 @@ private struct TaskCenterRow: View {
         guard !item.isCompleted else { return false }
         if case .personal = item.source { return true }
         return false
+    }
+
+    private var deleteConfirmationTitle: String {
+        item.providerLink == nil
+            ? "Delete this local task?"
+            : "Delete this local and remote task?"
+    }
+
+    private var deleteConfirmationMessage: String {
+        if let providerLink = item.providerLink {
+            return "The linked \(providerLink.provider.title) task will be deleted first. The calendar event and its original data will not be changed."
+        }
+        return "The calendar event and its original data will not be changed."
     }
 
     private var eventLinkPrefix: String {
@@ -669,6 +784,33 @@ private struct TaskCenterRow: View {
             dueAt: personalDueEnabled ? personalDueDraft : nil
         ) {
             showsDueEditor = false
+        }
+    }
+
+    private func resolveProviderLink(
+        _ operation: () -> Bool
+    ) {
+        guard !isResolvingProvider else { return }
+        isResolvingProvider = true
+        _ = operation()
+        isResolvingProvider = false
+    }
+
+    private func resolveProviderLinkUsingRemote() {
+        guard !isResolvingProvider else { return }
+        isResolvingProvider = true
+        Task {
+            _ = await appState.useRemoteTaskProviderVersion(item.id)
+            isResolvingProvider = false
+        }
+    }
+
+    private func resolveProviderLinkUsingLocal() {
+        guard !isResolvingProvider else { return }
+        isResolvingProvider = true
+        Task {
+            _ = await appState.useLocalTaskProviderVersion(item.id)
+            isResolvingProvider = false
         }
     }
 

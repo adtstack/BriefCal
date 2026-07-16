@@ -45,9 +45,9 @@ Event Brief identity, change log와 Exchange 동기화 경계를 바꾸지 않�
 
 ## 2026-07-15 mini month projection 확장
 
-- `UI-005`가 구현되면 Calendar Set의 display projection은 Day/Week/Agenda뿐 아니라
-  mini month 일정 존재 표시에도 적용한다. 이는 `설계 승인 / 구현 대기`이며 기존
-  Phase 8 구현 완료를 뜻하지 않는다.
+- 구현된 `UI-005`에서 Calendar Set의 display projection은 Day/Week/Agenda뿐 아니라
+  mini month 일정 존재 표시에도 적용한다. 자동 계약은 통과했으며 실창·VoiceOver는
+  별도 live gate로 남긴다.
 - mini month 요약은 `global Enabled ∩ 선택 Calendar Set`만 사용하고 availability
   blocking과는 독립이다. raw fetch, Event Brief 관찰·복구, duplicate review와 editor
   destination을 줄이지 않는다는 기존 비파괴 경계는 그대로 유지한다.

@@ -164,6 +164,31 @@ TaskCenter event source click
 복구할 수 있다. orphaned link는 자동 복구하지 않고 explicit Relink 후보로만
 노출한다.
 
+오른쪽 `Tasks` inspector는 중앙 Task Center의 local projection과 별도인 읽기 전용
+provider projection이다.
+
+```text
+TaskProviderCoordinator.taskLists metadata
+  + Apple Reminders / Microsoft To Do loaded task projection
+  → (provider, accountKey, listID) list option union
+  → selected list
+  → Open / Completed / All
+  → title + details search
+  → Due date / Title sort
+  → ProviderTaskSidebarView
+```
+
+- 빈 list는 `taskLists` metadata가 보존하고, 일시적 metadata 조회 실패에는 이미 loaded된
+  item의 list/account snapshot을 fallback으로 사용한다. authorization loss나 명시적
+  disconnect만 해당 provider metadata를 제거한다.
+- provider·account·list·task를 조합한 sidebar row ID와 list identity를 사용한다. 표시
+  이름이나 raw list/task ID만 SwiftUI identity로 사용하지 않는다.
+- list/status/sort는 UI preference로 복원한다. OAuth list discovery 또는 task loading
+  동안 stale로 단정하지 않고, authoritative load 뒤 identity가 실제로 없을 때만 All로
+  정규화한다. 검색 문자열은 일시적인 입력으로 남긴다.
+- 한 provider의 연결·loading·실패가 다른 provider에서 선택한 빈 list 상태를 가리지
+  않도록 content state를 선택 provider 기준으로 판정한다.
+
 ## CalendarProvider 경계
 
 ```swift
@@ -361,8 +386,8 @@ EventKitProvider
 - `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
 - `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
 - Calendar Set은 EventKit fetch·`ContextStore.observe`·editor destination을 줄이지 않고 렌더링에 쓰는 `visibleEvents`만 필터링한다. 전역 Enabled가 모든 Set의 master mask이고 Set 변경으로 선택 일정이 숨겨지면 pending notes를 먼저 flush하고 selection을 정리한다. duplicate/relink 후보 또는 성공한 original write의 focus 대상이 normal filter 밖일 때만 저장된 Set 선택을 바꾸지 않고 해당 일정을 임시로 reveal한다.
-- Sidebar의 `MiniMonthGrid`는 Foundation calendar로 month start, first-weekday offset과 42개 civil day만 계산한다. SwiftUI `MiniMonthView`는 월 탐색을 local state로 유지하고 날짜 선택만 `AppState.selectMiniMonthDate`로 보내 기존 selection 정리·range fetch 경계를 재사용한다. 현재 구현은 incomplete fetch를 일정 없음으로 오인하지 않도록 event dot을 만들지 않는다.
-- 승인된 `CAL-007`/`UI-005` 확장은 grid의 42일 범위를 완전히 조회하되 기존 loaded interval과 합치거나 별도 cache를 사용해 본문 visible snapshot을 보존한다. 본문 `visibleInterval`에 제한된 `visibleEvents`를 그대로 재사용하지 않고, interval-scoped projection에서 raw event에 `global Enabled ∩ 선택 Set`을 적용한다. `CalendarEventDateFormatting.effectiveDateRange`의 배타 종료와 표시 calendar의 civil-day overlap으로 `[civil key: count]` index를 셀 렌더링 전에 한 번 계산한 뒤 단일 dot과 접근성 count를 공개한다. 부분 coverage와 오래된 browse 응답에서는 grid 전체 요약을 공개하지 않는다.
+- Sidebar의 `MiniMonthGrid`는 Foundation calendar로 month start, first-weekday offset, 42개 civil day와 전체 coverage interval을 계산한다. SwiftUI `MiniMonthView`는 월 탐색을 local state로 유지하고 날짜 선택만 `AppState.selectMiniMonthDate`로 보내 기존 selection 정리·range fetch 경계를 재사용한다.
+- 구현된 `CAL-007`/`UI-005`는 grid의 42일 범위를 별도 summary snapshot으로 조회해 본문 event snapshot을 보존한다. 본문 `visibleInterval`에 제한된 `visibleEvents`를 재사용하지 않고 raw event에 `global Enabled ∩ 선택 Set`을 적용한다. `CalendarEventDateFormatting.effectiveDateRange`의 배타 종료와 표시 calendar의 civil-day overlap으로 count를 계산하고, 완전한 coverage에서만 단일 dot과 날짜 Button의 접근성 count를 공개한다. loading·failure·오래된 browse 응답은 `일정 없음`으로 투영하지 않는다.
 - UI용 `DisplayEventIdentity`는 SwiftUI 선택 안정성을 위한 값이다. all-day/floating 반복은 local occurrence anchor를 써 시스템 시간대 변경에도 같은 civil occurrence ID를 유지한다. 영속 resolver와 같은 ID 또는 같은 우선순위를 보장하지 않는다.
 
 세부 배치 결정은 [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md)을 따른다.

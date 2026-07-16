@@ -64,6 +64,48 @@ enum CalendarContentState: Equatable {
     case failed(String)
 }
 
+enum MiniMonthEventSummaryState: Equatable {
+    case unavailable
+    case loading(DateInterval)
+    case loaded(DateInterval)
+    case failed(DateInterval, String)
+
+    var interval: DateInterval? {
+        switch self {
+        case .unavailable:
+            nil
+        case let .loading(interval), let .loaded(interval),
+             let .failed(interval, _):
+            interval
+        }
+    }
+}
+
+enum MiniMonthDayEventSummary: Equatable {
+    case unavailable
+    case loading
+    case loaded(Int)
+    case failed
+
+    var eventCount: Int? {
+        guard case let .loaded(count) = self else { return nil }
+        return count
+    }
+
+    var accessibilityDescription: String {
+        switch self {
+        case .unavailable:
+            "Event summary unavailable"
+        case .loading:
+            "Events loading"
+        case let .loaded(count):
+            count == 1 ? "1 event" : "\(count) events"
+        case .failed:
+            "Events unavailable"
+        }
+    }
+}
+
 enum LocalContextStoreState: Equatable {
     case unavailable
     case ready
@@ -284,6 +326,8 @@ final class AppState: ObservableObject {
     @Published private(set) var temporarilyRevealedEventID: String?
     @Published private(set) var isCalendarSetFilterTemporarilyBypassed = false
     @Published private(set) var events: [DisplayEvent] = []
+    @Published private(set) var miniMonthEventSummaryState:
+        MiniMonthEventSummaryState = .unavailable
     @Published private(set) var localContextStoreState: LocalContextStoreState
     @Published private(set) var localDataOperationState: LocalDataOperationState = .idle
     @Published private(set) var localDataOperationMessage: String?
@@ -326,6 +370,8 @@ final class AppState: ObservableObject {
     private var duplicateCandidateIndex:
         [String: [CalendarDuplicateCandidate]] = [:]
     private var calendarSetMembershipIndex: [String: Set<String>] = [:]
+    private var miniMonthSummaryEvents: [DisplayEvent] = []
+    private var miniMonthSummaryRequestGeneration = 0
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
@@ -482,6 +528,97 @@ final class AppState: ObservableObject {
     ) -> Bool {
         calendarUsagePolicy(for: event).isVisible
             && selectedCalendarSetIncludes(event)
+    }
+
+    func miniMonthEventSummary(
+        for date: Date
+    ) -> MiniMonthDayEventSummary {
+        let dayStart = calendar.startOfDay(for: date)
+        guard let dayEnd = calendar.date(
+            byAdding: .day,
+            value: 1,
+            to: dayStart
+        ) else {
+            return .unavailable
+        }
+        let dayInterval = DateInterval(start: dayStart, end: dayEnd)
+        switch miniMonthEventSummaryState {
+        case .unavailable:
+            return .unavailable
+        case let .loading(interval):
+            return Self.interval(interval, covers: dayInterval)
+                ? .loading
+                : .unavailable
+        case let .failed(interval, _):
+            return Self.interval(interval, covers: dayInterval)
+                ? .failed
+                : .unavailable
+        case let .loaded(interval):
+            guard Self.interval(interval, covers: dayInterval) else {
+                return .unavailable
+            }
+            let count = miniMonthSummaryEvents.reduce(into: 0) {
+                count, event in
+                guard isNormallyVisibleInSelectedCalendarSet(event) else {
+                    return
+                }
+                let range = CalendarEventDateFormatting.effectiveDateRange(
+                    for: event,
+                    calendar: calendar
+                )
+                if range.start < dayInterval.end,
+                   range.end > dayInterval.start {
+                    count += 1
+                }
+            }
+            return .loaded(count)
+        }
+    }
+
+    func loadMiniMonthEventSummary(
+        in interval: DateInterval,
+        force: Bool = false
+    ) async {
+        guard localDataOperationState == .idle else { return }
+        calendarAuthorizationState = calendarProvider.authorizationState
+        guard calendarAuthorizationState.canReadEvents else {
+            clearMiniMonthEventSummary()
+            return
+        }
+        if !force,
+           case let .loaded(loadedInterval) = miniMonthEventSummaryState,
+           loadedInterval == interval {
+            return
+        }
+
+        miniMonthSummaryRequestGeneration += 1
+        let requestGeneration = miniMonthSummaryRequestGeneration
+        miniMonthSummaryEvents = []
+        miniMonthEventSummaryState = .loading(interval)
+        do {
+            let fetchedEvents = try calendarProvider.fetchEvents(in: interval)
+            guard requestGeneration == miniMonthSummaryRequestGeneration else {
+                return
+            }
+            miniMonthSummaryEvents = fetchedEvents
+            miniMonthEventSummaryState = .loaded(interval)
+        } catch {
+            guard requestGeneration == miniMonthSummaryRequestGeneration else {
+                return
+            }
+            miniMonthSummaryEvents = []
+            miniMonthEventSummaryState = .failed(
+                interval,
+                Self.message(for: error)
+            )
+        }
+    }
+
+    private static func interval(
+        _ outer: DateInterval,
+        covers inner: DateInterval
+    ) -> Bool {
+        outer.start <= inner.start && outer.end >= inner.end
     }
 
     private func revealTemporarilyIfNeeded(_ event: DisplayEvent) {
@@ -1703,6 +1840,113 @@ final class AppState: ObservableObject {
             selectTaskFilter(.upcoming)
         }
         return didCreate
+    }
+
+    func taskProviderSourceTitle(
+        for link: TaskCenterProviderLink
+    ) -> String {
+        let listTitle = taskProviderCoordinator?.taskLists.first {
+            $0.provider == link.provider
+                && $0.accountKey == link.accountKey
+                && $0.id == link.remoteParentID
+        }?.title
+        var parts = [link.provider.title]
+        if let listTitle, !listTitle.isEmpty {
+            parts.append(listTitle)
+        }
+        if !link.accountTitle.isEmpty,
+           listTitle?.localizedCaseInsensitiveCompare(link.accountTitle)
+            != .orderedSame {
+            parts.append(link.accountTitle)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    @discardableResult
+    func checkTaskProviderLink(_ id: TaskCenterItemID) -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
+        guard case .eventTask = id,
+              let contextStore,
+              let taskProviderCoordinator else {
+            localOperationError = "This task does not have an available provider connection."
+            return false
+        }
+        localOperationError = nil
+        taskProviderCoordinator.refresh()
+        taskProviderCoordinator.refreshLinkedTasks(in: contextStore)
+        refreshTaskCenter()
+        return true
+    }
+
+    /// Explicitly sends the current local title/completion state through the
+    /// durable binding. For a missing binding this recreates the
+    /// remote task; for a conflict it is the user-selected local version.
+    @discardableResult
+    func useLocalTaskProviderVersion(
+        _ id: TaskCenterItemID
+    ) async -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
+        guard case let .eventTask(taskID, _) = id,
+              let contextStore,
+              let taskProviderCoordinator else {
+            localOperationError = "The linked local task is no longer available."
+            return false
+        }
+        localOperationError = nil
+        do {
+            try await taskProviderCoordinator.acceptLocalTaskVersion(
+                eventTaskID: taskID,
+                in: contextStore
+            )
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            refreshTaskCenter()
+            return false
+        }
+    }
+
+    @discardableResult
+    func useRemoteTaskProviderVersion(
+        _ id: TaskCenterItemID
+    ) async -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
+        guard case let .eventTask(taskID, _) = id,
+              let contextStore,
+              let taskProviderCoordinator else {
+            localOperationError = "This task does not have an available provider connection."
+            return false
+        }
+        localOperationError = nil
+        do {
+            try await taskProviderCoordinator.acceptRemoteTaskVersion(
+                eventTaskID: taskID,
+                in: contextStore
+            )
+            loadSelectedEventBrief()
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            refreshTaskCenter()
+            return false
+        }
     }
 
     func setTaskCenterItemCompleted(
@@ -3081,13 +3325,31 @@ final class AppState: ObservableObject {
             clearCalendarData()
             calendarContentState = .disconnected
         case .fullAccess:
+            let miniMonthInterval = miniMonthEventSummaryState.interval
             await refreshCalendarData()
+            if let miniMonthInterval {
+                await loadMiniMonthEventSummary(
+                    in: miniMonthInterval,
+                    force: true
+                )
+            }
         case .denied, .restricted, .writeOnly:
             clearCalendarData()
             calendarContentState = .permissionDenied
         case .unknown:
             clearCalendarData()
             calendarContentState = .failed("Unknown calendar permission state")
+        }
+    }
+
+    func reloadCalendarData() async {
+        let miniMonthInterval = miniMonthEventSummaryState.interval
+        await refreshCalendarData()
+        if let miniMonthInterval {
+            await loadMiniMonthEventSummary(
+                in: miniMonthInterval,
+                force: true
+            )
         }
     }
 
@@ -3191,7 +3453,14 @@ final class AppState: ObservableObject {
                 return
             }
             guard let self else { return }
+            let miniMonthInterval = self.miniMonthEventSummaryState.interval
             await self.refreshCalendarData(in: self.loadedEventInterval)
+            if let miniMonthInterval {
+                await self.loadMiniMonthEventSummary(
+                    in: miniMonthInterval,
+                    force: true
+                )
+            }
         }
     }
 
@@ -3808,6 +4077,13 @@ final class AppState: ObservableObject {
         events = []
         duplicateCandidateIndex = [:]
         loadedEventInterval = nil
+        clearMiniMonthEventSummary()
+    }
+
+    private func clearMiniMonthEventSummary() {
+        miniMonthSummaryRequestGeneration += 1
+        miniMonthSummaryEvents = []
+        miniMonthEventSummaryState = .unavailable
     }
 
     private func initialFetchInterval() -> DateInterval {

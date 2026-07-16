@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import GRDB
+import SwiftUI
 import XCTest
 @testable import KaosCal
 
@@ -191,15 +193,35 @@ final class ContextStoreTests: XCTestCase {
                     title: "Personal",
                     sourceTitle: "iCloud",
                     isWritable: true
+                ),
+                RemoteTaskList(
+                    provider: .appleReminders,
+                    id: "reminders-list",
+                    accountKey: "exchange-account",
+                    title: "Work",
+                    sourceTitle: "Exchange",
+                    isWritable: true
                 )
             ],
             tasks: [
                 RemoteTaskSnapshot(
                     id: "reminder-1",
                     parentID: "reminders-list",
+                    parentAccountKey: "icloud-account",
                     title: "Buy milk",
                     notes: "Stays in Reminders",
                     dueAt: date(2026, 7, 16, 18),
+                    isCompleted: false,
+                    version: "1",
+                    deepLink: nil
+                ),
+                RemoteTaskSnapshot(
+                    id: "reminder-1",
+                    parentID: "reminders-list",
+                    parentAccountKey: "exchange-account",
+                    title: "Review notes",
+                    notes: "Same provider and raw IDs",
+                    dueAt: nil,
                     isCompleted: false,
                     version: "1",
                     deepLink: nil
@@ -220,19 +242,570 @@ final class ContextStoreTests: XCTestCase {
         guard case let .loaded(items) = coordinator.appleRemindersTaskState else {
             return XCTFail("Expected Apple Reminders to finish loading")
         }
+        XCTAssertEqual(items.map(\.title), ["Buy milk", "Review notes"])
+        XCTAssertEqual(items.map(\.accountKey), ["icloud-account", "exchange-account"])
+        XCTAssertEqual(items.first?.details, "Stays in Reminders")
+        XCTAssertEqual(Set(items.map(\.id)).count, 2)
         XCTAssertEqual(
-            items,
-            [
-                ProviderTaskListItem(
-                    id: "apple_reminders:reminder-1",
+            items.first?.id,
+            TaskProviderCoordinator.sidebarTaskItemID(
+                provider: .appleReminders,
+                accountKey: "icloud-account",
+                listID: "reminders-list",
+                taskID: "reminder-1"
+            )
+        )
+
+        provider.listTaskListsError = .providerFailure("Temporary list error")
+        coordinator.refresh()
+        for _ in 0..<20 {
+            if !coordinator.isRefreshingOAuthTaskLists { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(coordinator.taskLists.count, 2)
+        XCTAssertTrue(
+            coordinator.taskListRefreshFailures.contains(.appleReminders)
+        )
+
+        provider.listTaskListsError = nil
+        coordinator.refresh()
+        for _ in 0..<20 {
+            if case .loaded = coordinator.appleRemindersTaskState,
+               !coordinator.isRefreshingOAuthTaskLists {
+                break
+            }
+            await Task.yield()
+        }
+        XCTAssertFalse(
+            coordinator.taskListRefreshFailures.contains(.appleReminders)
+        )
+    }
+
+    @MainActor
+    func testCoordinatorConnectsAppleRemindersFromTaskSidebarAccessRequest() async throws {
+        let harness = try makeHarness()
+        let provider = StubAppleTaskListingProvider(
+            lists: [
+                RemoteTaskList(
                     provider: .appleReminders,
-                    title: "Buy milk",
-                    dueAt: date(2026, 7, 16, 18),
-                    isCompleted: false,
-                    listTitle: "Personal",
-                    accountTitle: "iCloud"
+                    id: "connected-list",
+                    accountKey: "icloud-account",
+                    title: "Reminders",
+                    sourceTitle: "iCloud",
+                    isWritable: true
                 )
-            ]
+            ],
+            tasks: [
+                RemoteTaskSnapshot(
+                    id: "connected-reminder",
+                    parentID: "connected-list",
+                    title: "Visible after access",
+                    notes: "",
+                    dueAt: nil,
+                    isCompleted: false,
+                    version: "1",
+                    deepLink: nil
+                )
+            ],
+            authorizationState: .notDetermined
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+
+        XCTAssertEqual(
+            coordinator.authorizationState(for: .appleReminders),
+            .notDetermined
+        )
+        XCTAssertEqual(coordinator.appleRemindersTaskState, .unavailable)
+
+        await coordinator.requestAccess()
+        for _ in 0..<20 {
+            if case .loaded = coordinator.appleRemindersTaskState { break }
+            await Task.yield()
+        }
+
+        XCTAssertEqual(provider.requestAccessCount, 1)
+        XCTAssertEqual(
+            coordinator.authorizationState(for: .appleReminders),
+            .authorized
+        )
+        guard case let .loaded(items) = coordinator.appleRemindersTaskState else {
+            return XCTFail("Expected Reminders to load after access was granted")
+        }
+        XCTAssertEqual(items.map(\.title), ["Visible after access"])
+    }
+
+    func testProviderTaskSidebarSortsByDueDateOrTitleAndKeepsCompletedLast() {
+        func item(
+            _ id: String,
+            title: String,
+            dueAt: Date?,
+            isCompleted: Bool = false
+        ) -> ProviderTaskListItem {
+            ProviderTaskListItem(
+                id: id,
+                provider: .appleReminders,
+                accountKey: "icloud",
+                listID: "work",
+                title: title,
+                details: "Detail for \(title)",
+                dueAt: dueAt,
+                isCompleted: isCompleted,
+                listTitle: "Work",
+                accountTitle: "iCloud"
+            )
+        }
+
+        let items = [
+            item("undated", title: "Beta", dueAt: nil),
+            item("later", title: "Zulu", dueAt: date(2026, 7, 10, 9)),
+            item("earlier", title: "Alpha", dueAt: date(2026, 7, 9, 9)),
+            item(
+                "completed",
+                title: "Aardvark",
+                dueAt: date(2026, 7, 8, 9),
+                isCompleted: true
+            )
+        ]
+
+        XCTAssertEqual(
+            items.sorted {
+                ProviderTaskSidebarOrdering.precedes(
+                    $0,
+                    $1,
+                    by: .dueDate
+                )
+            }.map(\.id),
+            ["earlier", "later", "undated", "completed"]
+        )
+        XCTAssertEqual(
+            items.sorted {
+                ProviderTaskSidebarOrdering.precedes($0, $1, by: .title)
+            }.map(\.id),
+            ["earlier", "undated", "later", "completed"]
+        )
+    }
+
+    func testProviderTaskSidebarFiltersByStableProviderListStatusAndSearch() {
+        let appleList = ProviderTaskSidebarListIdentity(
+            provider: .appleReminders,
+            accountKey: "icloud",
+            listID: "shared-list-id"
+        )
+        let microsoftList = ProviderTaskSidebarListIdentity(
+            provider: .microsoftToDo,
+            accountKey: "tenant:object",
+            listID: "shared-list-id"
+        )
+        let emptyList = ProviderTaskSidebarListIdentity(
+            provider: .appleReminders,
+            accountKey: "icloud",
+            listID: "empty-list"
+        )
+        let lists = [
+            RemoteTaskList(
+                provider: .appleReminders,
+                id: appleList.listID,
+                accountKey: appleList.accountKey,
+                title: "Work",
+                sourceTitle: "iCloud",
+                isWritable: true
+            ),
+            RemoteTaskList(
+                provider: .microsoftToDo,
+                id: microsoftList.listID,
+                accountKey: microsoftList.accountKey,
+                title: "Work",
+                sourceTitle: "Contoso",
+                isWritable: true
+            ),
+            RemoteTaskList(
+                provider: .appleReminders,
+                id: emptyList.listID,
+                accountKey: emptyList.accountKey,
+                title: "Empty",
+                sourceTitle: "iCloud",
+                isWritable: true
+            ),
+            RemoteTaskList(
+                provider: .googleTasks,
+                id: "not-in-sidebar",
+                accountKey: "google",
+                title: "Excluded",
+                sourceTitle: "Google",
+                isWritable: true
+            )
+        ]
+        func item(
+            id: String,
+            list: ProviderTaskSidebarListIdentity,
+            title: String,
+            details: String?,
+            completed: Bool
+        ) -> ProviderTaskListItem {
+            ProviderTaskListItem(
+                id: id,
+                provider: list.provider,
+                accountKey: list.accountKey,
+                listID: list.listID,
+                title: title,
+                details: details,
+                dueAt: nil,
+                isCompleted: completed,
+                listTitle: "Work",
+                accountTitle: list.provider == .appleReminders
+                    ? "iCloud"
+                    : "Contoso"
+            )
+        }
+        let items = [
+            item(
+                id: "apple-open",
+                list: appleList,
+                title: "Budget review",
+                details: "Q3 forecast",
+                completed: false
+            ),
+            item(
+                id: "apple-completed",
+                list: appleList,
+                title: "Archive receipts",
+                details: nil,
+                completed: true
+            ),
+            item(
+                id: "microsoft-open",
+                list: microsoftList,
+                title: "Prepare launch",
+                details: "Release checklist",
+                completed: false
+            )
+        ]
+
+        let options = ProviderTaskSidebarFiltering.listOptions(from: lists)
+        XCTAssertEqual(options.count, 3)
+        XCTAssertTrue(options.contains { $0.identity == emptyList })
+        XCTAssertFalse(options.contains { $0.provider == .googleTasks })
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.items(
+                items,
+                list: appleList,
+                status: .open,
+                query: ""
+            ).map(\.id),
+            ["apple-open"]
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.items(
+                items,
+                list: appleList,
+                status: .completed,
+                query: ""
+            ).map(\.id),
+            ["apple-completed"]
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.items(
+                items,
+                list: nil,
+                status: .all,
+                query: "forecast"
+            ).map(\.id),
+            ["apple-open"]
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.items(
+                items,
+                list: microsoftList,
+                status: .open,
+                query: ""
+            ).map(\.id),
+            ["microsoft-open"]
+        )
+        XCTAssertTrue(
+            ProviderTaskSidebarFiltering.items(
+                items,
+                list: emptyList,
+                status: .all,
+                query: ""
+            ).isEmpty
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.normalizedSelection(
+                microsoftList,
+                available: options,
+                isLoading: false
+            ),
+            microsoftList
+        )
+        let fallbackOptions = ProviderTaskSidebarFiltering.listOptions(
+            from: [],
+            fallbackItems: items
+        )
+        XCTAssertEqual(Set(fallbackOptions.map(\.identity)), [appleList, microsoftList])
+        let authoritativeAppleOnly = ProviderTaskSidebarFiltering.listOptions(
+            from: lists.filter { $0.provider == .appleReminders },
+            fallbackItems: items,
+            fallbackProviders: [.appleReminders]
+        )
+        XCTAssertFalse(
+            authoritativeAppleOnly.contains { $0.identity == microsoftList }
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.availableItems(
+                items,
+                lists: lists.filter { $0.provider == .appleReminders },
+                fallbackProviders: [.appleReminders]
+            ).map(\.id),
+            ["apple-open", "apple-completed"]
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.availableItems(
+                items,
+                lists: lists.filter { $0.provider == .appleReminders },
+                fallbackProviders: [.appleReminders, .microsoftToDo]
+            ).map(\.id),
+            ["apple-open", "apple-completed", "microsoft-open"]
+        )
+
+        let renamedLists = lists.map { list in
+            guard list.provider == microsoftList.provider,
+                  list.accountKey == microsoftList.accountKey,
+                  list.id == microsoftList.listID else {
+                return list
+            }
+            return RemoteTaskList(
+                provider: list.provider,
+                id: list.id,
+                accountKey: list.accountKey,
+                title: "Renamed Work",
+                sourceTitle: list.sourceTitle,
+                isWritable: list.isWritable
+            )
+        }
+        let renamedOptions = ProviderTaskSidebarFiltering.listOptions(
+            from: renamedLists,
+            fallbackItems: items
+        )
+        XCTAssertEqual(
+            renamedOptions.first { $0.identity == microsoftList }?.listTitle,
+            "Renamed Work"
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.normalizedSelection(
+                microsoftList,
+                available: renamedOptions,
+                isLoading: false
+            ),
+            microsoftList
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarListIdentity(
+                storageValue: microsoftList.storageValue
+            ),
+            microsoftList
+        )
+        XCTAssertEqual(
+            ProviderTaskSidebarFiltering.normalizedSelection(
+                microsoftList,
+                available: [],
+                isLoading: true
+            ),
+            microsoftList
+        )
+        XCTAssertNil(
+            ProviderTaskSidebarFiltering.normalizedSelection(
+                microsoftList,
+                available: [],
+                isLoading: false
+            )
+        )
+    }
+
+    @MainActor
+    func testProviderTaskSidebarGroupedDetailsFitsAndProducesOffscreenBitmap() async throws {
+        let harness = try makeHarness()
+        let lists = [
+            RemoteTaskList(
+                provider: .appleReminders,
+                id: "family-list",
+                accountKey: "icloud",
+                title: "Family",
+                sourceTitle: "iCloud",
+                isWritable: true
+            ),
+            RemoteTaskList(
+                provider: .appleReminders,
+                id: "shopping-list",
+                accountKey: "icloud",
+                title: "Shopping",
+                sourceTitle: "iCloud",
+                isWritable: true
+            ),
+            RemoteTaskList(
+                provider: .appleReminders,
+                id: "work-list",
+                accountKey: "exchange",
+                title: "Work",
+                sourceTitle: "Exchange",
+                isWritable: true
+            )
+        ]
+        let tasks = [
+            RemoteTaskSnapshot(
+                id: "family-1",
+                parentID: "family-list",
+                title: "Book the weekend appointment",
+                notes: "Confirm the available morning time with everyone.",
+                dueAt: date(2026, 7, 16, 9),
+                isCompleted: false,
+                version: "1",
+                deepLink: nil
+            ),
+            RemoteTaskSnapshot(
+                id: "family-2",
+                parentID: "family-list",
+                title: "Share the travel plan",
+                notes: "",
+                dueAt: nil,
+                isCompleted: false,
+                version: "1",
+                deepLink: nil
+            ),
+            RemoteTaskSnapshot(
+                id: "shopping-1",
+                parentID: "shopping-list",
+                title: "Coffee beans",
+                notes: "Medium roast, whole bean",
+                dueAt: date(2026, 7, 17, 9),
+                isCompleted: false,
+                version: "1",
+                deepLink: nil
+            ),
+            RemoteTaskSnapshot(
+                id: "work-1",
+                parentID: "work-list",
+                title: "Review release notes",
+                notes: "Check migration and accessibility sections before publishing.",
+                dueAt: date(2026, 7, 18, 9),
+                isCompleted: false,
+                version: "1",
+                deepLink: nil
+            )
+        ]
+        let provider = StubAppleTaskListingProvider(lists: lists, tasks: tasks)
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        for _ in 0..<20 {
+            if case .loaded = coordinator.appleRemindersTaskState { break }
+            await Task.yield()
+        }
+        guard case .loaded = coordinator.appleRemindersTaskState else {
+            return XCTFail("Expected Reminders fixture to finish loading")
+        }
+
+        var calendar = testCalendar
+        calendar.locale = Locale(identifier: "en_US")
+        let calendarProvider = FakeCalendarProvider(
+            authorizationState: .fullAccess
+        )
+        let state = AppState(
+            calendar: calendar,
+            now: { self.date(2026, 7, 16, 8) },
+            calendarProvider: calendarProvider,
+            contextStore: harness.store,
+            taskProviderCoordinator: coordinator,
+            localContextStoreState: .ready
+        )
+        let preferenceSuiteName = "KaosCalTests.TasksSidebar.\(UUID().uuidString)"
+        let preferences = try XCTUnwrap(
+            UserDefaults(suiteName: preferenceSuiteName)
+        )
+        defer {
+            preferences.removePersistentDomain(forName: preferenceSuiteName)
+        }
+        func render(
+            width: CGFloat,
+            height: CGFloat,
+            name: String
+        ) async throws {
+            let hostingView = NSHostingView(rootView:
+                ProviderTaskSidebarView(
+                    appState: state,
+                    coordinator: coordinator,
+                    preferences: preferences
+                )
+                .frame(width: width, height: height)
+                .background(Color(nsColor: .windowBackgroundColor))
+                .environment(\.colorScheme, .light)
+            )
+            hostingView.frame = NSRect(
+                x: 0,
+                y: 0,
+                width: width,
+                height: height
+            )
+            hostingView.wantsLayer = true
+            let window = NSWindow(
+                contentRect: hostingView.frame,
+                styleMask: [.borderless],
+                backing: .buffered,
+                defer: false
+            )
+            window.appearance = NSAppearance(named: .aqua)
+            window.backgroundColor = .windowBackgroundColor
+            window.contentView = hostingView
+            hostingView.layoutSubtreeIfNeeded()
+            await Task.yield()
+            hostingView.layoutSubtreeIfNeeded()
+            hostingView.displayIfNeeded()
+
+            let representation = try XCTUnwrap(
+                hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
+            )
+            hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+            let pngData = try XCTUnwrap(
+                representation.representation(using: .png, properties: [:])
+            )
+            XCTAssertGreaterThanOrEqual(
+                representation.pixelsWide,
+                Int(width)
+            )
+            XCTAssertGreaterThanOrEqual(
+                representation.pixelsHigh,
+                Int(height)
+            )
+            XCTAssertGreaterThan(pngData.count, 8_000)
+            let attachment = XCTAttachment(
+                data: pngData,
+                uniformTypeIdentifier: "public.png"
+            )
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            if width == 360,
+               let snapshotPath = ProcessInfo.processInfo.environment[
+                "KAOSCAL_TASKS_SIDEBAR_SNAPSHOT_PATH"
+               ] {
+                try pngData.write(to: URL(fileURLWithPath: snapshotPath))
+            }
+        }
+
+        try await render(
+            width: 360,
+            height: 700,
+            name: "KaosCal Tasks Sidebar 360"
+        )
+        try await render(
+            width: 300,
+            height: 600,
+            name: "KaosCal Tasks Sidebar 300"
         )
     }
 
@@ -287,6 +860,172 @@ final class ContextStoreTests: XCTestCase {
             try repository.fetchProviderItems(provider: .microsoftToDo).isEmpty
         )
         XCTAssertNotNil(try repository.fetchProviderItem(id: cachedID))
+    }
+
+    @MainActor
+    func testTaskCenterProjectsProviderConflictAndExplicitRecoveryChoices() async throws {
+        let harness = try makeHarness()
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "provider-recovery"),
+                notes: "Keep local context"
+            )
+        )
+        let eventTask = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .before,
+            title: "Local task title",
+            sortOrder: 0
+        )
+        let remote = RemoteTaskSnapshot(
+            id: "remote-recovery",
+            parentID: "reminders-list",
+            title: "Remote task title",
+            notes: "Remote body stays outside KaosCal",
+            dueAt: nil,
+            isCompleted: true,
+            version: "remote-v2",
+            deepLink: nil
+        )
+        let provider = StubAppleTaskListingProvider(
+            lists: [
+                RemoteTaskList(
+                    provider: .appleReminders,
+                    id: remote.parentID,
+                    accountKey: "icloud-account",
+                    title: "Work Reminders",
+                    sourceTitle: "iCloud",
+                    isWritable: true
+                )
+            ],
+            tasks: [remote]
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        let account = try XCTUnwrap(
+            harness.store.taskProviders.fetchAccounts().first {
+                $0.provider == .appleReminders
+                    && $0.accountKey == "icloud-account"
+            }
+        )
+        let binding = try harness.store.taskProviders.insertLinkedTask(
+            account: account,
+            remote: remote,
+            eventTaskID: eventTask.id,
+            occurrenceKey: nil,
+            syncHash: "stale-local-hash"
+        )
+        try harness.store.taskProviders.markBinding(
+            bindingID: binding.id,
+            state: .conflict
+        )
+
+        let conflictedItem = try XCTUnwrap(
+            harness.store.taskCenter.fetch(
+                list: .today,
+                now: date(2026, 7, 10, 8),
+                calendar: testCalendar
+            ).first { $0.id == .eventTask(
+                taskID: eventTask.id,
+                contextID: context.id
+            ) }
+        )
+        XCTAssertEqual(
+            conflictedItem.providerLink,
+            TaskCenterProviderLink(
+                bindingID: binding.id,
+                provider: .appleReminders,
+                accountKey: "icloud-account",
+                accountTitle: "iCloud",
+                remoteParentID: "reminders-list",
+                syncState: .conflict,
+                authorizationState: .authorized
+            )
+        )
+
+        try await coordinator.acceptRemoteTaskVersion(
+            eventTaskID: eventTask.id,
+            in: harness.store
+        )
+        let acceptedTask = try XCTUnwrap(
+            harness.store.eventTasks.fetch(id: eventTask.id)
+        )
+        XCTAssertEqual(acceptedTask.title, "Remote task title")
+        XCTAssertTrue(acceptedTask.isCompleted)
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchBinding(
+                eventTaskID: eventTask.id
+            )?.syncState,
+            .linked
+        )
+
+        provider.authorizationState = .denied
+        coordinator.refresh()
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchBinding(
+                eventTaskID: eventTask.id
+            )?.syncState,
+            .disconnected
+        )
+
+        provider.authorizationState = .authorized
+        coordinator.refresh()
+        coordinator.refreshLinkedTasks(in: harness.store)
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchBinding(
+                eventTaskID: eventTask.id
+            )?.syncState,
+            .linked
+        )
+
+        let refreshedTask = try XCTUnwrap(
+            harness.store.eventTasks.fetch(id: eventTask.id)
+        )
+        _ = try harness.store.updateEventTask(
+            contextID: refreshedTask.contextID,
+            taskID: refreshedTask.id,
+            section: refreshedTask.section,
+            title: "Local version wins",
+            sortOrder: refreshedTask.sortOrder,
+            due: refreshedTask.due
+        )
+        _ = try harness.store.setEventTaskCompleted(
+            contextID: refreshedTask.contextID,
+            taskID: refreshedTask.id,
+            isCompleted: false
+        )
+        let linkedBinding = try XCTUnwrap(
+            harness.store.taskProviders.fetchBinding(
+                eventTaskID: eventTask.id
+            )
+        )
+        try harness.store.taskProviders.markBinding(
+            bindingID: linkedBinding.id,
+            state: .conflict
+        )
+
+        try await coordinator.acceptLocalTaskVersion(
+            eventTaskID: eventTask.id,
+            in: harness.store
+        )
+        XCTAssertEqual(
+            provider.snapshots.first(where: { $0.id == remote.id })?.title,
+            "Local version wins"
+        )
+        XCTAssertEqual(
+            provider.snapshots.first(where: { $0.id == remote.id })?.isCompleted,
+            false
+        )
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchBinding(
+                eventTaskID: eventTask.id
+            )?.syncState,
+            .linked
+        )
+
     }
 
     func testOAuthAuthorizationRequestUsesPKCEAndProviderSpecificRedirectRules() throws {
@@ -4460,20 +5199,39 @@ private final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotLis
         supportsDeletion: true,
         supportsDeepLink: true
     )
-    let authorizationState: TaskProviderAuthorizationState = .authorized
+    var authorizationState: TaskProviderAuthorizationState = .authorized
     var storeChangeHandler: (() -> Void)?
+    var requestAccessCount = 0
+    var grantsAccessOnRequest = true
+    var listTaskListsError: TaskProviderError?
 
     private let lists: [RemoteTaskList]
-    private let tasks: [RemoteTaskSnapshot]
+    private var tasks: [RemoteTaskSnapshot]
 
-    init(lists: [RemoteTaskList], tasks: [RemoteTaskSnapshot]) {
+    var snapshots: [RemoteTaskSnapshot] { tasks }
+
+    init(
+        lists: [RemoteTaskList],
+        tasks: [RemoteTaskSnapshot],
+        authorizationState: TaskProviderAuthorizationState = .authorized
+    ) {
         self.lists = lists
         self.tasks = tasks
+        self.authorizationState = authorizationState
     }
 
-    func requestFullAccess() async throws -> Bool { true }
+    func requestFullAccess() async throws -> Bool {
+        requestAccessCount += 1
+        if grantsAccessOnRequest {
+            authorizationState = .authorized
+        }
+        return grantsAccessOnRequest
+    }
 
-    func listTaskLists() throws -> [RemoteTaskList] { lists }
+    func listTaskLists() throws -> [RemoteTaskList] {
+        if let listTaskListsError { throw listTaskListsError }
+        return lists
+    }
 
     func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
         let listIDs = Set(lists.map(\.id))
@@ -4481,14 +5239,49 @@ private final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotLis
     }
 
     func createTask(_ draft: RemoteTaskDraft) throws -> RemoteTaskSnapshot {
-        throw TaskProviderError.providerFailure("Not implemented by the test provider.")
+        let created = RemoteTaskSnapshot(
+            id: "created-\(tasks.count + 1)",
+            parentID: draft.parentID,
+            title: draft.title,
+            notes: draft.notes,
+            dueAt: draft.dueAt,
+            isCompleted: false,
+            version: "created-v1",
+            deepLink: draft.deepLink
+        )
+        tasks.append(created)
+        return created
     }
 
     func updateTask(
         _ task: RemoteTaskSnapshot,
         with patch: RemoteTaskPatch
     ) throws -> RemoteTaskSnapshot {
-        throw TaskProviderError.providerFailure("Not implemented by the test provider.")
+        guard let index = tasks.firstIndex(where: {
+            $0.id == task.id && $0.parentID == task.parentID
+        }) else {
+            throw TaskProviderError.taskNotFound
+        }
+        let dueAt: Date?
+        switch patch.dueAt {
+        case .none:
+            dueAt = task.dueAt
+        case let .some(value):
+            dueAt = value
+        }
+        let updated = RemoteTaskSnapshot(
+            id: task.id,
+            parentID: task.parentID,
+            parentAccountKey: task.parentAccountKey,
+            title: patch.title ?? task.title,
+            notes: patch.notes ?? task.notes,
+            dueAt: dueAt,
+            isCompleted: patch.isCompleted ?? task.isCompleted,
+            version: "\(task.version ?? "version")-updated",
+            deepLink: task.deepLink
+        )
+        tasks[index] = updated
+        return updated
     }
 
     func deleteTask(

@@ -24,6 +24,22 @@ final class TaskCenterRepository {
                     ($0.contextID, $0)
                 }
             )
+            let providerItems = Dictionary(
+                uniqueKeysWithValues: try ProviderItemRecord.fetchAll(db).map {
+                    ($0.id, $0)
+                }
+            )
+            let providerAccounts = Dictionary(
+                uniqueKeysWithValues: try ProviderAccountRecord.fetchAll(db).map {
+                    ($0.id, $0)
+                }
+            )
+            let providerBindings = Dictionary(
+                uniqueKeysWithValues: try TaskBindingRecord.fetchAll(db)
+                    .compactMap { binding in
+                        binding.eventTaskID.map { ($0, binding) }
+                    }
+            )
             let originalDeletionContextIDs = Set(try String.fetchAll(
                 db,
                 sql: """
@@ -76,6 +92,22 @@ final class TaskCenterRepository {
                     let eventRange = link.effectiveDateRange(
                         calendar: calendar
                     )
+                    let providerLink: TaskCenterProviderLink?
+                    if let binding = providerBindings[task.id],
+                       let item = providerItems[binding.providerItemID],
+                       let account = providerAccounts[item.accountID] {
+                        providerLink = TaskCenterProviderLink(
+                            bindingID: binding.id,
+                            provider: account.provider,
+                            accountKey: account.accountKey,
+                            accountTitle: account.displayName,
+                            remoteParentID: item.remoteParentID,
+                            syncState: binding.syncState,
+                            authorizationState: account.authorizationState
+                        )
+                    } else {
+                        providerLink = nil
+                    }
                     return TaskCenterItem(
                         id: .eventTask(
                             taskID: task.id,
@@ -100,6 +132,7 @@ final class TaskCenterRepository {
                             eventEnd: eventRange.end,
                             isAllDay: link.isAllDay
                         ),
+                        providerLink: providerLink,
                         eventLinkStatus: link.linkStatus,
                         eventLifecycleStatus: context.lifecycleStatus,
                         wasOriginalDeletedByKaosCal:
@@ -121,6 +154,7 @@ final class TaskCenterRepository {
                             completedAt: task.completedAt,
                             sortOrder: task.sortOrder,
                             source: .personal,
+                            providerLink: nil,
                             eventLinkStatus: nil,
                             eventLifecycleStatus: nil,
                             wasOriginalDeletedByKaosCal: false

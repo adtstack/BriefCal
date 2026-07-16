@@ -18,6 +18,18 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
   strong event identity와 local-first persistence를 추가했다.
 - **Phase 4 — Event Brief and Task Center:** Before/During/After task, notes autosave,
   personal task, Today/Upcoming/Completed projection과 inline editing을 추가했다.
+- **Task Provider recovery:** Task Center에 provider·계정·list와 linked/pending/attention
+  상태를 표시하고 missing 재확인·재생성, conflict local/remote 선택, disconnected 설정
+  복구 동작을 추가했다.
+- **Apple Reminders connection:** 오른쪽 `Tasks`를 전체 높이로 표시하고 처음 열 때
+  Reminders 권한을 문맥에 맞게 요청한다. 거부 상태에서는 System Settings 복구 동작을,
+  연결 뒤에는 항상 보이는 연결 상태와 실제 Reminders 목록·task 조회를 제공한다.
+- **Tasks list filtering and readability:** `All Lists`를 클릭해 Apple Reminders와
+  Microsoft To Do의 list를 source·account별로 고르고 해당 작업만 볼 수 있다. Open/
+  Completed/All 상태, 제목·설명 검색, due/title 정렬을 추가하고 좁은 inspector에서도
+  제목·설명·기한과 list 구분이 읽히도록 행과 section 계층을 정리했다.
+- **Mini month event dots:** 표시 중인 42개 civil day를 본문과 별도 조회해 Enabled와
+  선택 Calendar Set에 맞는 일정 존재 dot과 접근성 count를 추가했다.
 - **Phase 5 — Original event editing:** attendee가 없는 writable 단일 일정의 안전한
   create/update/delete, all-day/time-zone preview와 최신 원본 preflight를 추가했다.
 - **Phase 6 — Recurrence and safe move:** 명시적 `이번 일정`/`이번 이후` 영향 확인,

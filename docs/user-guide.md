@@ -70,6 +70,8 @@ Day, Week, Agenda 또는 Task Center이고, 오른쪽 inspector에는 선택한 
 - `⌘N` 새 일정
 - `⌘R` 현재 일정 또는 Tasks 다시 읽기
 - mini month의 날짜를 선택하거나 도구 막대의 이전·다음·Today 버튼으로 기간 이동
+- mini month의 날짜 아래 점은 현재 Enabled 캘린더와 선택한 Calendar Set에서 그날 겹치는
+  일정이 하나 이상 있음을 뜻함. 여러 일정이어도 점은 하나이며 VoiceOver는 개수를 읽음
 - `Reload events`는 일정, Tasks 화면의 `Reload tasks`는 로컬 할 일 목록을 다시 읽음
 
 ## 4. 일정과 Event Brief 사용하기
@@ -115,8 +117,31 @@ Task Center에는 일정에 연결된 작업과 일정 없이 만드는 Personal
 - `After Review`: 종료된 일정의 미완료 After 작업
 - `Completed`: 완료된 event/personal 작업
 
-Personal task와 Event Brief 작업은 Apple Reminders, Exchange Tasks 또는 KaosCal
-서버로 동기화되지 않는다.
+Personal task는 항상 KaosCal 로컬에만 저장된다. Event Brief 작업은 해당 calendar에
+Task Provider destination을 설정한 경우 Apple Reminders, Google Tasks, Todoist 또는
+Microsoft To Do의 선택 list/project로 연결될 수 있다. Task Center는 provider·계정·list와
+Linked/Syncing/Needs attention 상태를 표시한다. missing은 다시 확인하거나 local 작업으로
+remote를 재생성할 수 있고, conflict는 remote 또는 local 버전을 명시적으로 선택한다.
+
+오른쪽 inspector의 이름은 `Tasks`다. 처음 열었는데 Reminders 권한이 아직 결정되지
+않았다면 macOS 권한 창이 바로 열린다. 허용하면 기존 Apple Reminders 목록과 task가
+표시되고, task가 없어도 상단의 초록 연결 표시가 보인다. 이전에 거부했다면
+`Open System Settings`로 Reminders 권한을 허용한 뒤 Tasks의 새로고침을 사용한다.
+
+`All Lists`를 누르면 현재 읽을 수 있는 목록을 Apple Reminders와 Microsoft To Do
+source별로 나눠 보여 준다. 각 항목에는 list 이름, account와 불러온 전체 task 수가 표시된다.
+특정 list를 선택하면 다른 list의 작업은 숨기고 그 list만 평면 목록으로 표시한다.
+선택한 list가 계정에서 삭제되면 다음 authoritative reload 뒤 `All Lists`로 돌아간다.
+선택한 list, 완료 상태와 정렬은 Details로 갔다 돌아오거나 앱을 다시 열어도 복원된다.
+검색어는 다시 열 때 초기화된다.
+
+- `Open`, `Completed`, `All`: 완료 상태 필터
+- `Search tasks`: 제목과 설명을 즉시 검색
+- `Due date`, `Title`: 현재 결과의 정렬 기준
+- `All Lists`: source·account·list section으로 다시 표시
+
+Event Brief task를 Reminders에 생성·수정하려면 Settings의
+`Task Providers > Calendar Destinations`에서 해당 calendar의 destination list도 선택한다.
 
 ### 원본 삭제와 연결 복구
 

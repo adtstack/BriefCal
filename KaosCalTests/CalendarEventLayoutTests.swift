@@ -851,6 +851,42 @@ final class MiniMonthGridTests: XCTestCase {
         XCTAssertEqual(november2.timeIntervalSince(november1), 25 * 60 * 60)
     }
 
+    func testCoverageIntervalSpansExactlyFortyTwoCivilDaysAcrossDST() throws {
+        let calendar = makeCalendar(
+            timeZoneIdentifier: "America/New_York",
+            firstWeekday: 1
+        )
+        let grid = MiniMonthGrid(
+            containing: date(2026, 3, 15, calendar: calendar),
+            calendar: calendar
+        )
+        let interval = try XCTUnwrap(
+            grid.coverageInterval(calendar: calendar)
+        )
+
+        XCTAssertEqual(interval.start, grid.days.first?.date)
+        XCTAssertEqual(
+            interval.end,
+            calendar.date(
+                byAdding: .day,
+                value: 1,
+                to: grid.days.last!.date
+            )
+        )
+        XCTAssertEqual(
+            calendar.dateComponents(
+                [.day],
+                from: interval.start,
+                to: interval.end
+            ).day,
+            42
+        )
+        XCTAssertEqual(
+            interval.duration,
+            (42 * 24 * 60 * 60) - (60 * 60)
+        )
+    }
+
     func testContainingMonthUsesInjectedCalendarTimeZone() {
         let absoluteDate = Date(timeIntervalSince1970: 1_772_325_000)
         let losAngeles = makeCalendar(

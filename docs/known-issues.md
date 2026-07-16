@@ -1,6 +1,6 @@
 # Known Issues and Current Limits
 
-> 마지막 갱신: 2026-07-15
+> 마지막 갱신: 2026-07-16
 >
 > 이 문서는 현재 코드와 검증 기록에서 확인된 사용자 관점의 제한만 다룬다. 구현됐지만 live 검증이 끝나지 않은 항목과 의도적으로 지원하지 않는 항목을 구분한다.
 
@@ -11,8 +11,14 @@
 v2 Phase 1에는 Reminders 권한 요청, writable list destination, event task의 생성·수정·완료·삭제
 및 외부 변경 projection이 구현되어 있다. 그러나 현재 자동 테스트는 실제 iCloud/On My Mac
 Reminders 계정과 권한 철회를 검증하지 않았으므로 beta-ready로 판정하지 않는다. Personal task는
-이번 단계에서 의도적으로 local-only이며, Task Center의 provider source badge와 명시적 relink UI도
-후속 단계다.
+이번 단계에서 의도적으로 local-only다. Task Center의 provider/account/list badge와
+missing 재확인·local 기준 remote 재생성, conflict의 local/remote 선택, disconnected 설정 복구는
+자동 fixture에서 구현·검증됐다. 오른쪽 `Tasks` 첫 진입의 Reminders 권한 요청, 거부 시
+System Settings 복구, 전체 높이와 연결 완료 표시는 구현·자동 검증됐지만 실제 TCC prompt와
+iCloud/On My Mac 목록 표시는 아직 수동 gate다. Apple/Microsoft list 선택과 account/source
+구분, Open/Completed/All·검색·정렬은 fake provider와 300/360pt offscreen에서 검증했지만
+실계정 menu·keyboard·VoiceOver는 아직 수동 gate다. 실제 provider별 UI와 다른 remote task를 직접 고르는 relink,
+durable per-task unlink는 후속 gate다.
 
 **현재 권장:** Reminders destination을 설정하기 전 v1 local-only task 흐름을 사용하고, live
 검증 전에는 중요한 원격 task를 단독 정본으로 두지 않는다.
@@ -183,13 +189,15 @@ Brief 삭제도 원본 일정을 삭제하지 않는다.
 **주의:** 원본과 local data를 모두 지우려면 각각의 명시적 삭제 흐름을 별도로
 실행해야 한다. Reset 전 recovery ZIP 생성이 실패하면 Reset도 시작하지 않는다.
 
-### Task Center 데이터는 다른 task 서비스와 동기화되지 않는다
+### Personal task는 다른 task 서비스와 동기화되지 않는다
 
-Event task와 personal task는 KaosCal의 local DB에만 저장된다. Apple Reminders,
-Exchange Tasks, 팀 프로젝트나 다른 기기의 KaosCal과 동기화되지 않는다.
+Personal task는 KaosCal local DB에만 저장된다. Event Brief의 event task는 calendar별
+Task Provider destination이 설정된 경우에만 지원 provider로 연결된다. 이 연동은 현재
+자동 fixture를 통과했지만 실제 계정·권한 철회·충돌·cleanup live gate 전이다. Exchange
+Tasks와 다른 기기의 KaosCal로 직접 동기화하는 기능은 없다.
 
-**현재 권장:** 여러 기기나 다른 서비스에서 반드시 보여야 하는 할 일은 해당 서비스에
-별도로 기록한다.
+**현재 권장:** live gate 전에는 중요한 원격 task를 KaosCal 연결 task 하나에만 의존하지
+않는다. 여러 기기에서 보여야 하는 Personal task는 해당 서비스에 별도로 기록한다.
 
 ## 화면·수동 검증 상태
 
@@ -199,7 +207,9 @@ offscreen checkpoint만 통과했다. Phase 9의 실제 Settings scroll, Open/Sa
 typed Reset activation은 run `20260712-1616-KST`에서 통과했지만, 파일 작성·backup을
 선택한 import·reset mutation, signed Release의 failed-bootstrap file-panel 복구와 실제
 rollback fault는 실행하지 않았다. 온보딩과 recovery 화면은 offscreen bitmap까지만
-검증했으며 VoiceOver·keyboard 실제 창 검증은 남아 있다.
+검증했으며 VoiceOver·keyboard 실제 창 검증은 남아 있다. Tasks의 list/source 필터와
+읽기 계층은 300×600·360×700 fixture bitmap에서 통과했지만 실제 Apple/Microsoft 데이터의
+긴 list/account 이름, menu focus, Increase Contrast와 VoiceOver는 남아 있다.
 
 이 제한의 최신 판정과 남은 gate는 [Current Status](current-status.md), 상세 복구 계약은
 [Backup, Restore, and Local Reset](backup-restore.md), 사용자별 검증 절차는

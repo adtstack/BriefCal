@@ -107,7 +107,7 @@ final class TaskProviderRepository {
     }
 
     func deleteDestination(calendarIdentifier: String) throws {
-        try database.write { db in
+        _ = try database.write { db in
             try CalendarTaskDestinationRecord.deleteOne(
                 db,
                 key: calendarIdentifier
@@ -402,24 +402,28 @@ final class TaskProviderRepository {
         }
     }
 
+    @discardableResult
     func markBinding(
         bindingID: String,
         state: TaskProviderSyncState
-    ) throws {
+    ) throws -> Bool {
         try database.write { db in
-            try db.execute(
-                sql: """
-                    UPDATE task_bindings
-                    SET sync_state = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
-                arguments: [state.rawValue, now(), bindingID]
-            )
+            guard var binding = try TaskBindingRecord.fetchOne(
+                db,
+                key: bindingID
+            ) else {
+                return false
+            }
+            guard binding.syncState != state else { return false }
+            binding.syncState = state
+            binding.updatedAt = now()
+            try binding.update(db)
+            return true
         }
     }
 
     func removeBinding(bindingID: String) throws {
-        try database.write { db in
+        _ = try database.write { db in
             try TaskBindingRecord.deleteOne(db, key: bindingID)
         }
     }

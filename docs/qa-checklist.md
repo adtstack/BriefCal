@@ -63,7 +63,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 3. 이전/다음 월로 탐색한 뒤 본문 날짜가 그대로인지 확인한다. toolbar Today와 이미 focused인 같은 spillover 날짜로 focused month 복귀를 확인하고, 현재 월과 인접 월 날짜를 각각 선택한다.
 4. Day, Week, Agenda, Tasks와 선택 없는 상태에서 날짜를 선택한다.
 5. keyboard focus/Space·Return과 VoiceOver 날짜 label·selected/today/adjacent value를 확인한다.
-6. `UI-005` 구현 gate에서는 현재 42일 바깥의 월을 빠르게 연속 탐색해 loading→완료와 stale 응답 무시를 확인한다. 0개·단일·복수, 자정에 끝나는 일정, 자정을 넘는 timed multi-day와 all-day 일정을 월 경계와 spillover 첫·끝 셀에 배치한다. Calendar Set과 calendar visibility도 각각 바꾼다.
+6. 현재 42일 바깥의 월을 빠르게 연속 탐색해 loading→완료와 stale 응답 무시를 확인한다. 0개·단일·복수, 자정에 끝나는 일정, 자정을 넘는 timed multi-day와 all-day 일정을 월 경계와 spillover 첫·끝 셀에 배치한다. Calendar Set과 calendar visibility도 각각 바꾼다.
 
 기대 결과:
 - 월은 항상 42개의 연속 civil day/6행이며 DST 시작·종료와 윤년·연도 경계에서 누락·중복이 없다.
@@ -71,7 +71,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 같은 loaded range에서 현재 event가 새 visible period에도 남는 Week/Agenda 선택은 event selection과 fetch count를 유지한다. Day에서 다른 날짜를 고르거나 먼 날짜로 이동해 event가 새 visible period 밖이면 selection을 정리한다. 새 range fetch는 선택 날짜를 포함해 정확히 한 번 실행하며 EventKit create/update/delete는 없다.
 - focused는 fill, today는 ring, 인접 월은 낮은 강조도로 구분되고 색만으로 상태를 전달하지 않는다.
 - 긴 월 제목과 6행이 210pt에서 잘리지 않고 calendar 목록만 별도로 scroll한다.
-- 현재 구현은 완전한 42일 coverage가 없으므로 event dot을 표시하지 않는다. `CAL-007`/`UI-005` 구현 뒤에는 42일 전체 조회 성공 전 grid 전체 dot이 숨겨지고 loading/unavailable 상태가 `일정 없음`과 구분돼야 한다.
+- 42일 전체 조회 성공 전에는 grid 전체 dot이 숨겨지고 loading/unavailable 상태가 `일정 없음`과 구분된다.
 - coverage 완료 뒤 일정이 있는 날짜에는 숫자 아래 단일 dot이 표시된다. focused date는 흰색, 일반 날짜는 accent, 인접 월은 낮은 opacity이며 숫자·fill·ring과 겹치지 않는다.
 - timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 각 civil day에 dot을 만든다. 자정에 끝나는 일정은 다음 날에 표시하지 않으며 hide+block은 세지 않고 show+ignore는 센다. 선택 Set 밖의 일정도 제외한다. 여러 일정도 dot은 하나지만 VoiceOver value는 정확히 `일정 N개`를 전달한다.
 - 월 탐색과 요약 조회는 본문 focused date·현재 event snapshot을 바꾸거나 EventKit create/update/delete를 호출하지 않는다.
@@ -393,7 +393,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 일반 store refresh가 token을 즉시 지우지 않아도 external after-snapshot mismatch는 provider에서 역방향 write 전에 중단된다.
 - 반복 `thisEvent`/`futureEvents`, series split, detached occurrence, delete에는 Undo가 없다.
 
-### 13. Task Center
+### 13. Task Center와 오른쪽 Tasks
 
 절차:
 1. Before/After event task와 Personal task를 만든다.
@@ -401,6 +401,17 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 3. personal due를 미래 날짜로 바꿨다가 제거한다.
 4. event task 제목을 편집한 채 연결 일정을 연다.
 5. 자정 또는 system time zone 변경 알림 뒤 목록을 확인한다.
+6. provider destination이 있는 event task에서 linked/pending, remote 삭제 missing,
+   version conflict와 권한 철회 disconnected를 차례로 만든다. 각 Resolve 메뉴를 실행한다.
+7. 오른쪽 `Tasks`를 처음 열어 Reminders 권한 요청을 허용한다. 별도 test user에서는 먼저
+   거부한 뒤 같은 화면의 `Open System Settings`로 복구한다.
+8. `All Lists`를 열어 Apple Reminders와 Microsoft To Do의 source/account/list 구분과
+   불러온 전체 task 수를 확인한다. 서로 raw list ID가 같은 두 provider list와 같은
+   provider에서 account만 다른 같은 raw list ID도 번갈아 선택한다.
+9. 선택한 list에서 Open/Completed/All, 제목·설명 검색과 Due date/Title 정렬을 조합한다.
+   선택한 list를 provider에서 삭제한 뒤 authoritative reload도 실행한다.
+10. inspector를 300pt와 360pt 폭으로 줄여 긴 제목·설명·list/account 이름을 확인한다.
+11. list, Completed와 Title 정렬을 선택한 채 Details로 갔다 돌아오고 앱을 재실행한다.
 
 기대 결과:
 - event task와 personal task가 출처를 잃지 않고 한 목록에 표시된다.
@@ -410,7 +421,21 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - target range 밖 일정은 해당 범위를 fetch한 뒤 강한 occurrence match일 때만 열린다.
 - weak/ambiguous/not-found이면 다른 일정을 열지 않고 local task와 오류 안내를 유지한다.
 - 완료 상태와 기한이 앱 재실행 후에도 유지된다.
-- Task Center 데이터는 EventKit/Exchange에 쓰이지 않는다.
+- provider 연결 task는 provider·계정·list와 상태를 텍스트로 표시한다. missing은 재확인
+  또는 local 기준 remote 재생성, conflict는 remote/local 명시 선택, disconnected는
+  Settings 복구를 제공하며 실패를 linked로 표시하지 않는다.
+- 오른쪽 `Tasks`는 패널 전체 높이를 채운다. 미결정 권한은 첫 진입에서 요청하고, 거부는
+  System Settings 복구를 제공한다. 허용 뒤 task가 없어도 상단 연결 표시가 보인다.
+- `All Lists`는 빈 list까지 metadata 기준으로 보여 주고 provider가 다른 같은 raw list ID를
+  섞지 않는다. 선택한 list에서는 그 list 작업만 보이며 이름 변경에는 선택이 유지되고
+  삭제 뒤에는 `All Lists`로 안전하게 돌아간다.
+- 상태·검색·정렬을 함께 적용해도 결과와 count가 일치한다. 좁은 폭에서 control이 잘리지
+  않고 제목은 최대 2줄, 설명은 1줄, due·overdue는 텍스트와 아이콘으로 구분된다.
+- 선택 list·상태·정렬은 Details 왕복과 재실행 뒤 복원되고, 검색어는 초기화된다. OAuth
+  list 조회 중에는 선택이 사라지지 않으며 일시 오류에는 마지막 metadata/loaded task
+  fallback을 유지한다.
+- Personal task와 Event Brief 원문은 EventKit/Exchange calendar에 쓰이지 않는다.
+  configured event task의 provider mutation만 선택한 task provider로 전달된다.
 
 ### 14. 초대 일정
 
@@ -621,8 +646,8 @@ Saved Calendar Set v9 gate:
 - 이 자동·offscreen checkpoint 뒤 AppState review 수정 3건이 적용됐다. 수정 후 build와
   UI/post-write를 포함한 focused **73 tests / 0 failures**는 통과했으며 result bundle은
   `/tmp/KaosCalCalendarSets/Logs/Test/Test-KaosCal-2026.07.15_18-53-22-+0900.xcresult`다.
-  최종 전체는 **250 executed / 249 passed / 1 intentional manual-only skip / 0 failures**이며
-  result bundle은 `/tmp/KaosCalCalendarSets-Final-20260715.xcresult`다.
+  최신 최종 전체는 **257 executed / 256 passed / 1 intentional manual-only skip / 0 failures**이며
+  result bundle은 `/tmp/KaosCalTasksFilters-Final-R2-20260716.xcresult`다.
 - 실제 Exchange saved Set CRUD/rebind와 Settings/Sidebar 실창·keyboard·VoiceOver는 계속
   manual pending이다. 이전 237-test checkpoint는 v9 통과 근거로 사용하지 않는다.
 

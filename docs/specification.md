@@ -100,7 +100,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `CAL-004` | 기준선 | `EKEventStoreChanged`를 받으면 마지막 성공 범위를 다시 조회해야 한다. 연속 알림은 병합할 수 있으나, fetch에서 보이지 않는다는 이유만으로 원본 삭제를 확정해서는 안 된다. |
 | `CAL-005` | 기준선 | `Reload events`와 `⌘R`은 현재 EventKit snapshot을 다시 읽어야 한다. Exchange 서버 동기화를 강제한다고 표현해서는 안 된다. |
 | `CAL-006` | 기준선 | calendar source에는 calendar ID, source title, source identifier, account type, writable, color를 값 snapshot으로 제공해야 한다. 이름만으로 계정 identity를 만들면 안 된다. |
-| `CAL-007` | 설계 승인 / 구현 대기 | mini month는 표시 중인 6×7 grid의 42개 civil day 전체를 포함하는 event 조회가 성공한 뒤에만 일정 요약을 계산해야 한다. 월 탐색은 본문 focused date를 바꾸지 않으며, 추가 조회가 현재 본문 visible interval의 event snapshot을 유실하게 해서는 안 된다. 부분 조회·실패 상태를 `일정 없음`으로 표현해서는 안 된다. |
+| `CAL-007` | 구현 / live 대기 | mini month는 표시 중인 6×7 grid의 42개 civil day 전체를 포함하는 event 조회가 성공한 뒤에만 일정 요약을 계산해야 한다. 월 탐색은 본문 focused date를 바꾸지 않으며, 추가 조회가 현재 본문 visible interval의 event snapshot을 유실하게 해서는 안 된다. 부분 조회·실패 상태를 `일정 없음`으로 표현해서는 안 된다. |
 
 ### 4.2 캘린더 화면과 시간 의미
 
@@ -110,7 +110,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `UI-002` | 기준선 | Sidebar mini month는 고정 6×7 grid로 날짜를 선택하고, 선택 날짜에 맞춰 현재 calendar 화면을 이동해야 한다. |
 | `UI-003` | 기준선 | timed event는 겹침을 최소 column으로 배치하고, 짧은 event의 최소 시각 높이와 자정 경계 multi-day 분할을 보장해야 한다. |
 | `UI-004` | 기준선 | all-day/multi-day event는 배타 종료 날짜를 보존하면서 visible range에 clamp하고 재사용 가능한 lane에 배치해야 한다. |
-| `UI-005` | 설계 승인 / 구현 대기 | 완전한 `CAL-007` coverage가 있는 mini month는 일정이 하나 이상 겹치는 날짜의 숫자 아래에 단일 event dot을 표시해야 한다. dot은 숫자·focused fill·today ring과 겹치지 않아야 하며, focused date에서는 흰색, 일반 날짜에서는 accent, 인접 월에서는 낮은 opacity를 사용한다. 요약은 `global Enabled ∩ 선택 Calendar Set`을 적용하되 availability blocking과는 독립이어야 한다. timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 모든 civil day에 반영한다. dot은 별도 hit target이 아니며 일정 수와 loading/unavailable 상태는 날짜 Button 또는 grid의 접근성 값으로 전달한다. |
+| `UI-005` | 구현 / live 대기 | 완전한 `CAL-007` coverage가 있는 mini month는 일정이 하나 이상 겹치는 날짜의 숫자 아래에 단일 event dot을 표시해야 한다. dot은 숫자·focused fill·today ring과 겹치지 않아야 하며, focused date에서는 흰색, 일반 날짜에서는 accent, 인접 월에서는 낮은 opacity를 사용한다. 요약은 `global Enabled ∩ 선택 Calendar Set`을 적용하되 availability blocking과는 독립이어야 한다. timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 모든 civil day에 반영한다. dot은 별도 hit target이 아니며 일정 수와 loading/unavailable 상태는 날짜 Button 또는 grid의 접근성 값으로 전달한다. |
 | `TIME-001` | 기준선 | 시간 의미를 `allDay`, `floating`, `zoned`로 구분해야 한다. all-day는 날짜 범위, floating은 civil wall time, zoned는 시점과 zone 의미를 보존해야 한다. |
 | `TIME-002` | 기준선 | all-day 종료는 배타 날짜로 저장하고 사용자에게는 포함 종료 날짜로 표시해야 한다. 자정에 끝나는 timed event가 하루를 더 차지하면 안 된다. |
 | `TIME-003` | 기준선 | time zone 변경은 `현지 시각 유지`와 `동일 시점 유지`를 구분하고, DST gap/overlap의 존재하지 않거나 모호한 civil time을 자동 보정해서는 안 된다. |
@@ -160,6 +160,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `TASK-002` | 기준선 | Task Center는 event task와 personal task를 typed identity로 결합하고 Today, Upcoming, After Review, Completed filter를 제공해야 한다. raw 문자열 ID 충돌로 잘못된 task를 변경하면 안 된다. |
 | `TASK-003` | 기준선 | completed context는 열린 After task만 Today/Upcoming/After Review에 투영해야 한다. 이 projection은 숨긴 task row를 삭제하거나 자동 완료하면 안 된다. |
 | `TASK-004` | 기준선 | event task source를 열면 저장 link로 occurrence-aware lookup하고 strong match만 해당 event로 이동해야 한다. 일반 visible-range fetch 결과를 삭제 증거로 사용하면 안 된다. |
+| `TASK-005` | 구현 / live 대기 | 오른쪽 `Tasks`는 Apple Reminders와 Microsoft To Do의 list metadata를 source·account별로 보여 주고 `(provider, accountKey, listID)` exact identity로 선택해야 한다. 특정 list 선택 뒤 Open/Completed/All, 제목·설명 검색, due/title 정렬을 조합하며 다른 list task를 섞으면 안 된다. 빈 list는 metadata로 보존하고 일시적 metadata 오류에는 loaded task fallback을 허용한다. 선택 list·상태·정렬은 화면 왕복과 재실행에 복원하되 loading 중에는 유지하고 authoritative 삭제 뒤 All로 돌아가야 한다. 300pt 폭에서도 제목·설명·기한 계층과 완료·overdue 상태를 색만이 아닌 텍스트·아이콘·접근성 label로 전달해야 한다. |
 
 ### 4.6 Lifecycle, missing/orphan과 원본 삭제
 
@@ -347,11 +348,12 @@ linked
 | --- | --- | --- | --- |
 | `SYS-*`, `CAL-001`–`CAL-006` | [Architecture](architecture.md), [EventKit Decisions](eventkit-decisions.md) | `KaosCalApp`, `AppState`, `CalendarProvider`, `EventKitProvider` | `CalendarAccessTests`, `AppStateTests` |
 | `UI-001`–`UI-004`, `TIME-*` | [ADR-003](adr/ADR-003-all-day-time-zone-and-recurrence.md), [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md) | `CalendarTimelineView`, `CalendarEventLayout`, `CalendarEventDateFormatting` | `CalendarEventLayoutTests`, `CalendarEventEditingTests` |
-| `CAL-007`, `UI-005` | [ADR-002](adr/ADR-002-calendar-and-task-experience.md) | `MiniMonthGrid`, `MiniMonthView`, `AppState`, `CalendarEventDateFormatting` (계획) | `AppStateTests`, `CalendarEventLayoutTests`, mini month live QA (계획) |
+| `CAL-007`, `UI-005` | [ADR-002](adr/ADR-002-calendar-and-task-experience.md) | `MiniMonthGrid`, `MiniMonthView`, `AppState`, `CalendarEventDateFormatting` | `AppStateTests`, `CalendarEventLayoutTests`, mini month live QA |
 | `CFG-001`–`CFG-005` | [ADR-014](adr/ADR-014-multi-calendar-clarity.md) | `CalendarClarity`, `CalendarRoleRepository`, `AppState` | `CalendarClarityTests`, `AppStateTests` |
 | `CFG-006`–`CFG-011` | [ADR-017](adr/ADR-017-calendar-visibility-and-availability.md) | `CalendarClarity`, `CalendarRoleRepository`, Settings/Sidebar, `AppState` | `CalendarClarityTests`, `AppStateTests`, backup tests |
 | `EVT-*` | [ADR-010](adr/ADR-010-original-event-write-safety.md), [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md) | `CalendarEventEditing`, `EventKitProvider`, `EventEditorView`, `AppState` | `CalendarEventEditingTests`, `AppStateTests` |
-| `CTX-*`, `TASK-*` | [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md), [ADR-009](adr/ADR-009-event-brief-and-task-center-interactions.md) | `ContextStore`, context/task repositories, Event Brief, Task Center | `ContextStoreTests`, `LocalWorkspaceTests` |
+| `CTX-*`, `TASK-001`–`TASK-004` | [ADR-008](adr/ADR-008-local-context-store-and-event-identity.md), [ADR-009](adr/ADR-009-event-brief-and-task-center-interactions.md) | `ContextStore`, context/task repositories, Event Brief, Task Center | `ContextStoreTests`, `LocalWorkspaceTests` |
+| `TASK-005` | [Design System](design-system.md), [Architecture](architecture.md) | `TaskProviderCoordinator`, `ProviderTaskSidebarView` | `ContextStoreTests`, 300/360pt offscreen render |
 | `LCY-*` | [ADR-012](adr/ADR-012-lifecycle-after-review-and-orphan-confirmation.md) | `ContextStore`, `EventContextRepository`, `AppState` | `ContextStoreTests`, `LocalWorkspaceTests`, editing tests |
 | `PRV-*` | [v2 실행계획](v2-execution-plan.md), [T0–T4](v2/README.md), [ADR-016](adr/ADR-016-direct-calendar-api-deferral.md) | task provider models/repository/adapters/OAuth session, Settings | `ContextStoreTests`, `AppStateTests` |
 | `REF-*` | [T5](v2/phase-t5-notes-reference.md) | `ContextReferenceRepository`, Event Brief | `ContextStoreTests` |
@@ -392,7 +394,7 @@ linked
 현행 구현의 상세 최신 상태는 [Current Status](current-status.md)를 따르며, 특히 다음은
 자동 구현과 분리된 gate다.
 
-- mini month `CAL-007`/`UI-005`의 구현, 자동 회귀, offscreen·실창·VoiceOver 검증
+- mini month `CAL-007`/`UI-005` dot의 실제 창·VoiceOver와 provider 지연/오류 live 검증
 - 실제 Exchange all-day, floating/zoned, recurring `thisEvent`/future split과 calendar move
 - shared read-only Exchange와 identifier churn/detached occurrence recovery
 - Calendar visibility/blocking의 실제 Settings·Sidebar·고밀도·VoiceOver 검증

@@ -60,6 +60,29 @@ enum TaskProviderSyncState: String, Codable, CaseIterable, DatabaseValueConverti
     case missing
     case conflict
     case disconnected
+
+    var title: String {
+        switch self {
+        case .pendingCreate: "Syncing"
+        case .linked: "Linked"
+        case .missing: "Remote task missing"
+        case .conflict: "Sync conflict"
+        case .disconnected: "Provider disconnected"
+        }
+    }
+
+    var recoveryMessage: String? {
+        switch self {
+        case .pendingCreate, .linked:
+            nil
+        case .missing:
+            "The remote task could not be found. Recheck the provider, recreate it from the local task, or keep this task local-only."
+        case .conflict:
+            "The local and remote task changed independently. Choose which version to keep or keep the local task without a provider link."
+        case .disconnected:
+            "The provider account is unavailable. Reconnect it in Settings or keep this task local-only."
+        }
+    }
 }
 
 struct TaskProviderCapabilities: Equatable, Codable {
@@ -86,13 +109,16 @@ struct RemoteTaskList: Equatable, Identifiable {
     }
 }
 
-/// A task projected into the sidebar from one of KaosCal's task providers.
-/// Provider-specific bodies and notes intentionally stay out of this model.
+/// A transient task projected into the sidebar from one of KaosCal's task
+/// providers. `details` is display-only and is not persisted by this model.
 struct ProviderTaskListItem: Equatable, Identifiable {
     /// A provider-scoped stable ID suitable for SwiftUI diffing.
     let id: String
     let provider: TaskProviderKind
+    let accountKey: String
+    let listID: String
     let title: String
+    let details: String?
     let dueAt: Date?
     let isCompleted: Bool
     let listTitle: String
@@ -262,12 +288,38 @@ extension CalendarTaskDestinationRecord: Codable, FetchableRecord, PersistableRe
 struct RemoteTaskSnapshot: Equatable, Identifiable {
     let id: String
     let parentID: String
+    /// Optional account discriminator for provider UIs where a parent ID is
+    /// only unique inside an account. Durable bindings continue to use their
+    /// provider account record as the source of truth.
+    let parentAccountKey: String?
     let title: String
     let notes: String
     let dueAt: Date?
     let isCompleted: Bool
     let version: String?
     let deepLink: URL?
+
+    init(
+        id: String,
+        parentID: String,
+        parentAccountKey: String? = nil,
+        title: String,
+        notes: String,
+        dueAt: Date?,
+        isCompleted: Bool,
+        version: String?,
+        deepLink: URL?
+    ) {
+        self.id = id
+        self.parentID = parentID
+        self.parentAccountKey = parentAccountKey
+        self.title = title
+        self.notes = notes
+        self.dueAt = dueAt
+        self.isCompleted = isCompleted
+        self.version = version
+        self.deepLink = deepLink
+    }
 
     var remoteID: String { id }
 }
@@ -302,15 +354,15 @@ enum TaskProviderError: LocalizedError, Equatable {
         case .notConfigured:
             "This task provider has not been configured for this build."
         case .authorizationRequired:
-            "Reminders access has not been granted."
+            "Task provider access has not been granted."
         case .accessDenied:
-            "Reminders access was denied or restricted."
+            "Task provider access was denied or restricted."
         case .listUnavailable:
-            "The selected Reminders list is no longer available."
+            "The selected task list is no longer available."
         case .taskNotFound:
-            "The linked Reminders task is no longer available."
+            "The linked remote task is no longer available."
         case .conflict:
-            "The linked Reminders task changed outside KaosCal. Review it before retrying."
+            "The linked remote task changed outside KaosCal. Review it before retrying."
         case let .unsupported(message), let .providerFailure(message):
             message
         }
