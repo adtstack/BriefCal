@@ -1,6 +1,6 @@
 # Known Issues and Current Limits
 
-> 마지막 갱신: 2026-07-16
+> 마지막 갱신: 2026-07-17
 >
 > 이 문서는 현재 코드와 검증 기록에서 확인된 사용자 관점의 제한만 다룬다. 구현됐지만 live 검증이 끝나지 않은 항목과 의도적으로 지원하지 않는 항목을 구분한다.
 
@@ -17,8 +17,15 @@ missing 재확인·local 기준 remote 재생성, conflict의 local/remote 선�
 System Settings 복구, 전체 높이와 연결 완료 표시는 구현·자동 검증됐지만 실제 TCC prompt와
 iCloud/On My Mac 목록 표시는 아직 수동 gate다. Apple/Microsoft list 선택과 account/source
 구분, Open/Completed/All·검색·정렬은 fake provider와 300/360pt offscreen에서 검증했지만
-실계정 menu·keyboard·VoiceOver는 아직 수동 gate다. 실제 provider별 UI와 다른 remote task를 직접 고르는 relink,
-durable per-task unlink는 후속 gate다.
+실계정 menu·keyboard·VoiceOver는 아직 수동 gate다. 다른 remote task를 provider/account/list
+source와 함께 직접 고르는 relink와 원격 task를 지우지 않는 durable task별 local-only unlink는
+2026-07-17 코드에 구현됐다. 다만 새 회귀 테스트는 컴파일만 했고 실제 Apple/Google/Todoist/
+Microsoft 계정의 재실행·충돌·삭제·retry limit까지는 아직 실행 검증하지 않았다.
+
+pending create는 원격 성공과 local binding 저장 사이에 프로세스가 종료되면 원격 ID를 알 수
+없다. 자동 무한 재시도는 하지 않으며, 재실행 뒤 exact remote relink 또는 local-only 선택으로
+복구해야 한다. Microsoft task 설명은 개인정보 경계를 위해 SQLite/backup에 저장하지 않으므로
+재실행 뒤 첫 full delta가 끝나기 전에는 설명이 잠시 비어 있을 수 있다.
 
 **현재 권장:** Reminders destination을 설정하기 전 v1 local-only task 흐름을 사용하고, live
 검증 전에는 중요한 원격 task를 단독 정본으로 두지 않는다.

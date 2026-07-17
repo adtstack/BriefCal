@@ -20,10 +20,134 @@ final class ContextStoreTests: XCTestCase {
                 "v6_context_references",
                 "v7_microsoft_to_do_provider",
                 "v8_calendar_usage",
-                "v9_saved_calendar_sets"
+                "v9_saved_calendar_sets",
+                "v10_task_provider_recovery"
             ]
         )
         XCTAssertTrue(try database.foreignKeysEnabled())
+    }
+
+    func testV10MigrationAttachesLegacyDeletePendingToItsEventTask() throws {
+        let queue = try DatabaseQueue()
+        try DatabaseMigrations.migrator.migrate(
+            queue,
+            upTo: "v9_saved_calendar_sets"
+        )
+        let timestamp = "2026-07-17 09:00:00.000"
+        try queue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO event_contexts (
+                        id, title_snapshot, start_snapshot, end_snapshot,
+                        lifecycle_status, notes, created_at, updated_at
+                    ) VALUES (
+                        'context-v10', 'Fixture', ?, ?, 'scheduled', '', ?, ?
+                    )
+                    """,
+                arguments: [timestamp, timestamp, timestamp, timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO event_links (
+                        id, context_id, event_identifier,
+                        calendar_identifier, source_title,
+                        calendar_title_snapshot, title_snapshot,
+                        start_snapshot, end_snapshot, is_all_day,
+                        is_recurring, time_semantics, time_zone_identifier,
+                        occurrence_identity_key, is_detached, fingerprint,
+                        link_status, last_seen_at, created_at, updated_at
+                    ) VALUES (
+                        'link-v10', 'context-v10', 'event-v10', 'calendar-v10',
+                        'Source', 'Calendar', 'Fixture', ?, ?, 0, 0, 'zoned',
+                        'UTC', 'single:v1', 0, 'fingerprint-v10', 'active', ?, ?, ?
+                    )
+                    """,
+                arguments: [
+                    timestamp, timestamp, timestamp, timestamp, timestamp
+                ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO event_tasks (
+                        id, context_id, section, title, completed,
+                        sort_order, due_kind, created_at, updated_at
+                    ) VALUES (
+                        'task-v10', 'context-v10', 'before', 'Task',
+                        0, 0, 'none', ?, ?
+                    )
+                    """,
+                arguments: [timestamp, timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO provider_accounts (
+                        id, provider, account_key, display_name,
+                        authorization_state, created_at, updated_at
+                    ) VALUES (
+                        'account-v10', 'apple_reminders', 'icloud', 'iCloud',
+                        'authorized', ?, ?
+                    )
+                    """,
+                arguments: [timestamp, timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO provider_items (
+                        id, account_id, entity_type, remote_id,
+                        remote_parent_id, remote_version, cached_title,
+                        cached_notes, cached_completed, last_seen_at,
+                        created_at, updated_at
+                    ) VALUES (
+                        'item-v10', 'account-v10', 'task', 'remote-v10',
+                        'list-v10', 'etag-v10', 'Task', '', 0, ?, ?, ?
+                    )
+                    """,
+                arguments: [timestamp, timestamp, timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO task_bindings (
+                        id, provider_item_id, event_task_id, sync_state,
+                        last_synced_hash, remote_version, created_at, updated_at
+                    ) VALUES (
+                        'binding-v10', 'item-v10', 'task-v10', 'linked',
+                        'legacy-hash', 'etag-v10', ?, ?
+                    )
+                    """,
+                arguments: [timestamp, timestamp]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO provider_pending_operations (
+                        id, account_id, operation, remote_id,
+                        remote_parent_id, expected_version, attempt_count,
+                        last_error, created_at, updated_at
+                    ) VALUES (
+                        'pending-v10', 'account-v10', 'delete', 'remote-v10',
+                        'list-v10', 'etag-v10', 7, 'Offline', ?, ?
+                    )
+                    """,
+                arguments: [timestamp, timestamp]
+            )
+        }
+
+        let database = try AppDatabase(queue)
+        let recovered = try database.read { db in
+            try ProviderPendingOperationRecord.fetchOne(
+                db,
+                key: "pending-v10"
+            )
+        }
+        XCTAssertEqual(recovered?.eventTaskID, "task-v10")
+        XCTAssertEqual(recovered?.operation, .delete)
+        XCTAssertEqual(recovered?.attemptCount, 3)
+        XCTAssertEqual(recovered?.lastError, "Offline")
+        XCTAssertEqual(
+            try database.read { db in
+                try TaskProviderPreferenceRecord.fetchCount(db)
+            },
+            0
+        )
     }
 
     func testOAuthProvidersCanUseTheSameExternalAccountKey() throws {
@@ -942,7 +1066,10 @@ final class ContextStoreTests: XCTestCase {
                 accountTitle: "iCloud",
                 remoteParentID: "reminders-list",
                 syncState: .conflict,
-                authorizationState: .authorized
+                authorizationState: .authorized,
+                pendingOperation: nil,
+                pendingAttemptCount: 0,
+                pendingLastError: nil
             )
         )
 
@@ -1026,6 +1153,477 @@ final class ContextStoreTests: XCTestCase {
             .linked
         )
 
+    }
+
+    @MainActor
+    func testProviderSyncDetectsIndependentLocalAndRemoteChangesWithoutOverwrite() throws {
+        let harness = try makeHarness()
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "provider-conflict-state-machine"),
+                notes: "Conflict fixture"
+            )
+        )
+        let task = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .before,
+            title: "Initial title",
+            sortOrder: 0
+        )
+        let list = RemoteTaskList(
+            provider: .appleReminders,
+            id: "work-reminders",
+            accountKey: "icloud-account",
+            title: "Work",
+            sourceTitle: "iCloud",
+            isWritable: true
+        )
+        let initialRemote = RemoteTaskSnapshot(
+            id: "remote-conflict",
+            parentID: list.id,
+            parentAccountKey: list.accountKey,
+            title: task.title,
+            notes: "",
+            dueAt: date(2026, 7, 10, 9),
+            isCompleted: false,
+            version: "remote-v1",
+            deepLink: nil
+        )
+        let provider = StubAppleTaskListingProvider(
+            lists: [list],
+            tasks: [initialRemote]
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        let account = try XCTUnwrap(
+            harness.store.taskProviders.fetchAccounts().first
+        )
+        _ = try harness.store.taskProviders.insertLinkedTask(
+            account: account,
+            remote: initialRemote,
+            eventTaskID: task.id,
+            occurrenceKey: nil,
+            syncHash: "legacy-baseline"
+        )
+        let local = try harness.store.updateEventTask(
+            contextID: context.id,
+            taskID: task.id,
+            section: task.section,
+            title: "Local edit",
+            sortOrder: task.sortOrder,
+            due: task.due
+        )
+        provider.replaceSnapshot(RemoteTaskSnapshot(
+            id: initialRemote.id,
+            parentID: initialRemote.parentID,
+            parentAccountKey: initialRemote.parentAccountKey,
+            title: "Remote edit",
+            notes: "",
+            dueAt: initialRemote.dueAt,
+            isCompleted: false,
+            version: "remote-v2",
+            deepLink: nil
+        ))
+
+        coordinator.syncEventTask(
+            in: harness.store,
+            contextID: context.id,
+            task: local
+        )
+
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchBinding(
+                eventTaskID: task.id
+            )?.syncState,
+            .conflict
+        )
+        XCTAssertEqual(
+            try harness.store.eventTasks.fetch(id: task.id)?.title,
+            "Local edit"
+        )
+        XCTAssertEqual(provider.updateTaskCount, 0)
+        XCTAssertNil(
+            try harness.store.taskProviders.fetchPendingOperation(
+                eventTaskID: task.id
+            )
+        )
+    }
+
+    @MainActor
+    func testProviderSyncAppliesRemoteTitleAndDueAndDoesNotRecreateDeletion() throws {
+        let harness = try makeHarness()
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "provider-remote-apply"),
+                notes: "Remote apply fixture"
+            )
+        )
+        let task = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .before,
+            title: "Initial title",
+            sortOrder: 0
+        )
+        let list = RemoteTaskList(
+            provider: .appleReminders,
+            id: "remote-apply-list",
+            accountKey: "icloud-account",
+            title: "Tasks",
+            sourceTitle: "iCloud",
+            isWritable: true
+        )
+        let initialRemote = RemoteTaskSnapshot(
+            id: "remote-apply",
+            parentID: list.id,
+            parentAccountKey: list.accountKey,
+            title: task.title,
+            notes: "",
+            dueAt: date(2026, 7, 10, 9),
+            isCompleted: false,
+            version: "remote-v1",
+            deepLink: nil
+        )
+        let provider = StubAppleTaskListingProvider(
+            lists: [list],
+            tasks: [initialRemote]
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        let account = try XCTUnwrap(
+            harness.store.taskProviders.fetchAccounts().first
+        )
+        _ = try harness.store.taskProviders.insertLinkedTask(
+            account: account,
+            remote: initialRemote,
+            eventTaskID: task.id,
+            occurrenceKey: nil,
+            syncHash: "legacy-baseline"
+        )
+        let remoteDue = date(2026, 7, 11, 13)
+        provider.replaceSnapshot(RemoteTaskSnapshot(
+            id: initialRemote.id,
+            parentID: initialRemote.parentID,
+            parentAccountKey: initialRemote.parentAccountKey,
+            title: "Remote title",
+            notes: "",
+            dueAt: remoteDue,
+            isCompleted: true,
+            version: "remote-v2",
+            deepLink: nil
+        ))
+
+        coordinator.syncEventTask(
+            in: harness.store,
+            contextID: context.id,
+            task: task
+        )
+
+        let applied = try XCTUnwrap(
+            harness.store.eventTasks.fetch(id: task.id)
+        )
+        XCTAssertEqual(applied.title, "Remote title")
+        XCTAssertEqual(applied.due, .fixed(remoteDue))
+        XCTAssertTrue(applied.isCompleted)
+        XCTAssertEqual(provider.updateTaskCount, 0)
+
+        provider.removeSnapshot(
+            id: initialRemote.id,
+            parentID: initialRemote.parentID
+        )
+        coordinator.syncEventTask(
+            in: harness.store,
+            contextID: context.id,
+            task: applied
+        )
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchBinding(
+                eventTaskID: task.id
+            )?.syncState,
+            .missing
+        )
+        XCTAssertEqual(provider.createTaskCount, 0)
+        XCTAssertNotNil(try harness.store.eventTasks.fetch(id: task.id))
+    }
+
+    @MainActor
+    func testPendingCreateSurvivesCoordinatorRelaunchAndLocalOnlyClearsIt() throws {
+        let harness = try makeHarness()
+        let list = RemoteTaskList(
+            provider: .appleReminders,
+            id: "pending-list",
+            accountKey: "icloud-account",
+            title: "Tasks",
+            sourceTitle: "iCloud",
+            isWritable: true
+        )
+        let provider = StubAppleTaskListingProvider(
+            lists: [list],
+            tasks: []
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        coordinator.saveDestination(
+            calendarIdentifier: "calendar",
+            list: list
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "pending-create"),
+                notes: "Pending fixture"
+            )
+        )
+        let task = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .before,
+            title: "Create remotely",
+            sortOrder: 0
+        )
+        provider.createTaskError = .providerFailure("Offline fixture")
+
+        coordinator.syncEventTask(
+            in: harness.store,
+            contextID: context.id,
+            task: task
+        )
+
+        let pending = try XCTUnwrap(
+            harness.store.taskProviders.fetchPendingOperation(
+                eventTaskID: task.id
+            )
+        )
+        XCTAssertEqual(pending.operation, .create)
+        XCTAssertEqual(pending.attemptCount, 1)
+        XCTAssertEqual(provider.createTaskCount, 1)
+
+        let relaunched = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        let projected = try XCTUnwrap(
+            harness.store.taskCenter.fetch(
+                list: .today,
+                now: date(2026, 7, 10, 8),
+                calendar: testCalendar
+            ).first { $0.id == .eventTask(
+                taskID: task.id,
+                contextID: context.id
+            ) }
+        )
+        XCTAssertEqual(projected.providerLink?.pendingOperation, .create)
+        XCTAssertEqual(projected.providerLink?.pendingAttemptCount, 1)
+
+        try relaunched.keepTaskLocalOnly(eventTaskID: task.id)
+        XCTAssertTrue(
+            try harness.store.taskProviders.isLocalOnly(
+                eventTaskID: task.id
+            )
+        )
+        XCTAssertNil(
+            try harness.store.taskProviders.fetchPendingOperation(
+                eventTaskID: task.id
+            )
+        )
+        relaunched.syncEventTask(
+            in: harness.store,
+            contextID: context.id,
+            task: task
+        )
+        XCTAssertEqual(provider.createTaskCount, 1)
+    }
+
+    @MainActor
+    func testPendingDeleteSurvivesRemoteSuccessUntilLocalDeleteCommits() async throws {
+        let harness = try makeHarness()
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "pending-delete-crash-window"),
+                notes: "Delete fixture"
+            )
+        )
+        let task = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .before,
+            title: "Delete remotely",
+            sortOrder: 0
+        )
+        let list = RemoteTaskList(
+            provider: .appleReminders,
+            id: "delete-list",
+            accountKey: "icloud-account",
+            title: "Tasks",
+            sourceTitle: "iCloud",
+            isWritable: true
+        )
+        let remote = RemoteTaskSnapshot(
+            id: "delete-remote",
+            parentID: list.id,
+            parentAccountKey: list.accountKey,
+            title: task.title,
+            notes: "",
+            dueAt: date(2026, 7, 10, 9),
+            isCompleted: false,
+            version: "remote-v1",
+            deepLink: nil
+        )
+        let provider = StubAppleTaskListingProvider(
+            lists: [list],
+            tasks: [remote]
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        let account = try XCTUnwrap(
+            harness.store.taskProviders.fetchAccounts().first
+        )
+        _ = try harness.store.taskProviders.insertLinkedTask(
+            account: account,
+            remote: remote,
+            eventTaskID: task.id,
+            occurrenceKey: nil,
+            syncHash: "legacy-baseline"
+        )
+
+        try coordinator.deleteRemoteTaskIfBound(eventTaskID: task.id)
+
+        XCTAssertEqual(provider.deleteTaskCount, 1)
+        XCTAssertNil(
+            try harness.store.taskProviders.fetchBinding(
+                eventTaskID: task.id
+            )
+        )
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchPendingOperation(
+                eventTaskID: task.id
+            )?.operation,
+            .delete
+        )
+
+        let relaunched = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        let completedOperation = try await relaunched.retryPendingOperation(
+            eventTaskID: task.id,
+            in: harness.store
+        )
+        XCTAssertEqual(completedOperation, .delete)
+        XCTAssertEqual(provider.deleteTaskCount, 1)
+        XCTAssertNotNil(
+            try harness.store.taskProviders.fetchPendingOperation(
+                eventTaskID: task.id
+            )
+        )
+
+        try harness.store.deleteEventTask(
+            contextID: context.id,
+            taskID: task.id
+        )
+        XCTAssertNil(
+            try harness.store.taskProviders.fetchPendingOperation(
+                eventTaskID: task.id
+            )
+        )
+    }
+
+    @MainActor
+    func testExplicitRelinkUsesSelectedSourceAndAppliesRemoteProjection() async throws {
+        let harness = try makeHarness()
+        let list = RemoteTaskList(
+            provider: .appleReminders,
+            id: "relink-list",
+            accountKey: "icloud-work",
+            title: "Work Reminders",
+            sourceTitle: "Work iCloud",
+            isWritable: true
+        )
+        let remoteDue = date(2026, 7, 12, 15)
+        let remote = RemoteTaskSnapshot(
+            id: "selected-remote-task",
+            parentID: list.id,
+            parentAccountKey: list.accountKey,
+            title: "Selected remote title",
+            notes: "Selected task details",
+            dueAt: remoteDue,
+            isCompleted: true,
+            version: "remote-v1",
+            deepLink: nil
+        )
+        let provider = StubAppleTaskListingProvider(
+            lists: [list],
+            tasks: [remote]
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "explicit-provider-relink"),
+                notes: "Relink fixture"
+            )
+        )
+        let task = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .before,
+            title: "Local title",
+            sortOrder: 0
+        )
+        try coordinator.keepTaskLocalOnly(eventTaskID: task.id)
+
+        let candidates = try await coordinator.relinkCandidates(
+            eventTaskID: task.id
+        )
+        let candidate = try XCTUnwrap(
+            candidates.first { $0.remoteTaskID == remote.id }
+        )
+        XCTAssertEqual(candidate.accountKey, list.accountKey)
+        XCTAssertEqual(candidate.listTitle, list.title)
+
+        try await coordinator.relinkEventTask(
+            eventTaskID: task.id,
+            to: candidate,
+            in: harness.store
+        )
+
+        let linkedTask = try XCTUnwrap(
+            harness.store.eventTasks.fetch(id: task.id)
+        )
+        XCTAssertEqual(linkedTask.title, remote.title)
+        XCTAssertEqual(linkedTask.due, .fixed(remoteDue))
+        XCTAssertTrue(linkedTask.isCompleted)
+        XCTAssertFalse(
+            try harness.store.taskProviders.isLocalOnly(
+                eventTaskID: task.id
+            )
+        )
+        let binding = try XCTUnwrap(
+            harness.store.taskProviders.fetchBinding(eventTaskID: task.id)
+        )
+        let item = try XCTUnwrap(
+            harness.store.taskProviders.fetchProviderItem(
+                id: binding.providerItemID
+            )
+        )
+        let account = try XCTUnwrap(
+            harness.store.taskProviders.fetchAccount(id: item.accountID)
+        )
+        XCTAssertEqual(account.accountKey, list.accountKey)
+        XCTAssertEqual(item.remoteParentID, list.id)
+        XCTAssertEqual(item.remoteID, remote.id)
     }
 
     func testOAuthAuthorizationRequestUsesPKCEAndProviderSpecificRedirectRules() throws {
@@ -4333,7 +4931,8 @@ final class ContextStoreTests: XCTestCase {
                     "v6_context_references",
                     "v7_microsoft_to_do_provider",
                     "v8_calendar_usage",
-                    "v9_saved_calendar_sets"
+                    "v9_saved_calendar_sets",
+                    "v10_task_provider_recovery"
                 ]
             )
             XCTAssertEqual(brief.context.notes, "Persistent notes")
@@ -5204,6 +5803,12 @@ private final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotLis
     var requestAccessCount = 0
     var grantsAccessOnRequest = true
     var listTaskListsError: TaskProviderError?
+    var createTaskError: TaskProviderError?
+    var updateTaskError: TaskProviderError?
+    var deleteTaskError: TaskProviderError?
+    private(set) var createTaskCount = 0
+    private(set) var updateTaskCount = 0
+    private(set) var deleteTaskCount = 0
 
     private let lists: [RemoteTaskList]
     private var tasks: [RemoteTaskSnapshot]
@@ -5238,7 +5843,23 @@ private final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotLis
         return tasks.filter { listIDs.contains($0.parentID) }
     }
 
+    func replaceSnapshot(_ snapshot: RemoteTaskSnapshot) {
+        if let index = tasks.firstIndex(where: {
+            $0.id == snapshot.id && $0.parentID == snapshot.parentID
+        }) {
+            tasks[index] = snapshot
+        } else {
+            tasks.append(snapshot)
+        }
+    }
+
+    func removeSnapshot(id: String, parentID: String) {
+        tasks.removeAll { $0.id == id && $0.parentID == parentID }
+    }
+
     func createTask(_ draft: RemoteTaskDraft) throws -> RemoteTaskSnapshot {
+        createTaskCount += 1
+        if let createTaskError { throw createTaskError }
         let created = RemoteTaskSnapshot(
             id: "created-\(tasks.count + 1)",
             parentID: draft.parentID,
@@ -5257,6 +5878,8 @@ private final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotLis
         _ task: RemoteTaskSnapshot,
         with patch: RemoteTaskPatch
     ) throws -> RemoteTaskSnapshot {
+        updateTaskCount += 1
+        if let updateTaskError { throw updateTaskError }
         guard let index = tasks.firstIndex(where: {
             $0.id == task.id && $0.parentID == task.parentID
         }) else {
@@ -5288,7 +5911,14 @@ private final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotLis
         _ task: RemoteTaskSnapshot,
         expectedVersion: String?
     ) throws {
-        throw TaskProviderError.providerFailure("Not implemented by the test provider.")
+        deleteTaskCount += 1
+        if let deleteTaskError { throw deleteTaskError }
+        guard tasks.contains(where: {
+            $0.id == task.id && $0.parentID == task.parentID
+        }) else {
+            throw TaskProviderError.taskNotFound
+        }
+        removeSnapshot(id: task.id, parentID: task.parentID)
     }
 
     func lookupTask(

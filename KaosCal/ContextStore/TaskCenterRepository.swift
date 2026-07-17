@@ -40,6 +40,16 @@ final class TaskCenterRepository {
                         binding.eventTaskID.map { ($0, binding) }
                     }
             )
+            let pendingOperations = Dictionary(
+                uniqueKeysWithValues: try ProviderPendingOperationRecord
+                    .fetchAll(db)
+                    .map { ($0.eventTaskID, $0) }
+            )
+            let localOnlyTaskIDs = Set(
+                try TaskProviderPreferenceRecord.fetchAll(db)
+                    .filter { $0.linkMode == .localOnly }
+                    .map(\.eventTaskID)
+            )
             let originalDeletionContextIDs = Set(try String.fetchAll(
                 db,
                 sql: """
@@ -96,6 +106,7 @@ final class TaskCenterRepository {
                     if let binding = providerBindings[task.id],
                        let item = providerItems[binding.providerItemID],
                        let account = providerAccounts[item.accountID] {
+                        let pending = pendingOperations[task.id]
                         providerLink = TaskCenterProviderLink(
                             bindingID: binding.id,
                             provider: account.provider,
@@ -103,7 +114,24 @@ final class TaskCenterRepository {
                             accountTitle: account.displayName,
                             remoteParentID: item.remoteParentID,
                             syncState: binding.syncState,
-                            authorizationState: account.authorizationState
+                            authorizationState: account.authorizationState,
+                            pendingOperation: pending?.operation,
+                            pendingAttemptCount: pending?.attemptCount ?? 0,
+                            pendingLastError: pending?.lastError
+                        )
+                    } else if let pending = pendingOperations[task.id],
+                              let account = providerAccounts[pending.accountID] {
+                        providerLink = TaskCenterProviderLink(
+                            bindingID: pending.id,
+                            provider: account.provider,
+                            accountKey: account.accountKey,
+                            accountTitle: account.displayName,
+                            remoteParentID: pending.remoteParentID,
+                            syncState: .pendingCreate,
+                            authorizationState: account.authorizationState,
+                            pendingOperation: pending.operation,
+                            pendingAttemptCount: pending.attemptCount,
+                            pendingLastError: pending.lastError
                         )
                     } else {
                         providerLink = nil
@@ -133,6 +161,7 @@ final class TaskCenterRepository {
                             isAllDay: link.isAllDay
                         ),
                         providerLink: providerLink,
+                        isProviderLocalOnly: localOnlyTaskIDs.contains(task.id),
                         eventLinkStatus: link.linkStatus,
                         eventLifecycleStatus: context.lifecycleStatus,
                         wasOriginalDeletedByKaosCal:
@@ -155,6 +184,7 @@ final class TaskCenterRepository {
                             sortOrder: task.sortOrder,
                             source: .personal,
                             providerLink: nil,
+                            isProviderLocalOnly: false,
                             eventLinkStatus: nil,
                             eventLifecycleStatus: nil,
                             wasOriginalDeletedByKaosCal: false

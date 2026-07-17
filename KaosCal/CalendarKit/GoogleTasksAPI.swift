@@ -27,6 +27,26 @@ enum GoogleTasksAPI {
         )
     }
 
+    static func tasksRequest(
+        listID: String,
+        pageToken: String? = nil,
+        accessToken: String
+    ) -> URLRequest {
+        var query = [
+            URLQueryItem(name: "showCompleted", value: "true"),
+            URLQueryItem(name: "showHidden", value: "true"),
+            URLQueryItem(name: "maxResults", value: "100")
+        ]
+        if let pageToken {
+            query.append(URLQueryItem(name: "pageToken", value: pageToken))
+        }
+        return request(
+            path: "/lists/\(pathComponent(listID))/tasks",
+            query: query,
+            accessToken: accessToken
+        )
+    }
+
     static func createTaskRequest(
         listID: String,
         title: String,

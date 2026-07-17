@@ -189,6 +189,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `PRV-008` | 구현 / live 대기 | public client ID/redirect가 없는 build는 provider가 미구성임을 보여 주고 동작하지 않는 Connect 흐름을 열면 안 된다. registered callback이 필요한 provider는 그 배포 조건을 설명해야 한다. |
 | `PRV-009` | 구현 / live 대기 | remote delete는 local task를 보존한 missing, version mismatch는 conflict, auth/network 문제는 설명 가능한 pending/error로 나타내야 한다. last-write-wins로 조용히 덮어쓰거나 무한 재시도하면 안 된다. |
 | `PRV-010` | 결정 완료 | Google/Microsoft Calendar 직접 API는 구현하지 않고 Calendar 정본을 EventKit으로 유지해야 한다. task API를 calendar API 중복 수집의 근거로 사용하면 안 된다. |
+| `PRV-011` | 구현 / live 대기 | Event Brief task는 provider/account/list/task exact 후보를 사용해 기존 remote task로 명시적으로 relink할 수 있어야 한다. task별 local-only unlink는 원격 task를 삭제하지 않고 재실행 뒤 유지돼야 하며, calendar destination 변경은 기존 binding이나 unbound task를 새 destination으로 조용히 이동·복제하면 안 된다. |
 
 ### 4.8 Reference-only 계층
 
@@ -203,7 +204,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | ID | 상태 | 요구사항과 인수 기준 |
 | --- | --- | --- |
 | `DATA-001` | 기준선 | local store는 Application Support의 SQLite를 사용하고 foreign key를 항상 활성화해야 한다. hosted test는 production DB를 열면 안 된다. |
-| `DATA-002` | 기준선 | migration은 additive이며 이미 적용된 migration을 수정하면 안 된다. 현행 ledger는 `v1_context_store`부터 `v9_saved_calendar_sets`까지 순서대로 적용한다. |
+| `DATA-002` | 기준선 | migration은 additive이며 이미 적용된 migration을 수정하면 안 된다. 현행 ledger는 `v1_context_store`부터 `v10_task_provider_recovery`까지 순서대로 적용한다. |
 | `DATA-003` | 기준선 | EventKit ID 하나를 영구 identity로 간주하면 안 된다. strong IDs, calendar, recurrence/occurrence anchor, 시간 의미와 snapshot을 사용하고 weak/fingerprint 후보는 사용자 승인 전 자동 연결하면 안 된다. |
 | `DATA-004` | 기준선 | role·calendar usage preference와 saved Set membership은 exact calendar identifier에만 적용한다. identifier churn 뒤 같은 title이라는 이유로 자동 이식하면 안 되며 saved membership rebind는 사용자의 명시적 선택과 stale-ID 검증을 요구해야 한다. |
 | `BAK-001` | 기준선 | export는 store-only classic ZIP에 `kaoscal.sqlite`와 `manifest.json` 두 entry만 만들고 migration ledger, schema, byte count, SHA-256과 크기 상한을 검증 가능하게 기록해야 한다. |
@@ -283,6 +284,7 @@ linked
 | `v7_microsoft_to_do_provider` | Microsoft To Do provider 확장 |
 | `v8_calendar_usage` | visibility/blocking sparse preference |
 | `v9_saved_calendar_sets` | named Set, exact calendar membership과 persisted role/saved selection |
+| `v10_task_provider_recovery` | task별 create/update/delete pending, bounded retry와 durable local-only preference |
 
 스키마의 column, CHECK, foreign key, index와 backup manifest의 정확한 계약은
 [Data Model](data-model.md)과 migration source를 따른다. 이 표는 migration을 재정의하지 않는다.

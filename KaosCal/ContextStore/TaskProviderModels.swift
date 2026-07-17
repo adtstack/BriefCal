@@ -85,6 +85,113 @@ enum TaskProviderSyncState: String, Codable, CaseIterable, DatabaseValueConverti
     }
 }
 
+enum ProviderPendingOperationKind: String, Codable, CaseIterable, DatabaseValueConvertible {
+    case create
+    case update
+    case delete
+
+    var title: String {
+        switch self {
+        case .create: "Create pending"
+        case .update: "Update pending"
+        case .delete: "Delete pending"
+        }
+    }
+
+    var recoveryMessage: String {
+        switch self {
+        case .create:
+            "The remote task was not confirmed. Retry explicitly, link the local task to an existing remote task, or keep it local-only."
+        case .update:
+            "The remote update was not confirmed. Retry explicitly, review another remote task, or keep this task local-only."
+        case .delete:
+            "The remote delete was not confirmed. Retry explicitly or keep the local and remote tasks without a provider link."
+        }
+    }
+
+    var retryTitle: String {
+        switch self {
+        case .create: "Retry Create"
+        case .update: "Retry Update"
+        case .delete: "Retry Delete"
+        }
+    }
+}
+
+struct ProviderPendingOperationRecord: Equatable, Identifiable {
+    static let maximumAttempts = 3
+
+    let id: String
+    let accountID: String
+    let eventTaskID: String
+    var operation: ProviderPendingOperationKind
+    var remoteID: String?
+    var remoteParentID: String
+    var expectedVersion: String?
+    var attemptCount: Int
+    var lastError: String?
+    let createdAt: Date
+    var updatedAt: Date
+
+    var canRetry: Bool { attemptCount < Self.maximumAttempts }
+}
+
+extension ProviderPendingOperationRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "provider_pending_operations"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy { .deferredToDate }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy { .deferredToDate }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case accountID = "account_id"
+        case eventTaskID = "event_task_id"
+        case operation
+        case remoteID = "remote_id"
+        case remoteParentID = "remote_parent_id"
+        case expectedVersion = "expected_version"
+        case attemptCount = "attempt_count"
+        case lastError = "last_error"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+enum TaskProviderLinkMode: String, Codable, DatabaseValueConvertible {
+    case localOnly = "local_only"
+}
+
+struct TaskProviderPreferenceRecord: Equatable {
+    let eventTaskID: String
+    var linkMode: TaskProviderLinkMode
+    let createdAt: Date
+    var updatedAt: Date
+}
+
+extension TaskProviderPreferenceRecord: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "task_provider_preferences"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy { .deferredToDate }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy { .deferredToDate }
+
+    enum CodingKeys: String, CodingKey {
+        case eventTaskID = "event_task_id"
+        case linkMode = "link_mode"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
 struct TaskProviderCapabilities: Equatable, Codable {
     var supportsNotes: Bool
     var supportsTimedDue: Bool
@@ -123,6 +230,27 @@ struct ProviderTaskListItem: Equatable, Identifiable {
     let isCompleted: Bool
     let listTitle: String
     let accountTitle: String
+}
+
+/// A fresh, non-persisted remote task that the user can explicitly choose as
+/// the replacement for an Event Brief task's durable provider binding.
+struct TaskProviderLinkCandidate: Equatable, Identifiable {
+    let provider: TaskProviderKind
+    let accountKey: String
+    let accountTitle: String
+    let listID: String
+    let listTitle: String
+    let remoteTaskID: String
+    let title: String
+    let details: String?
+    let dueAt: Date?
+    let isCompleted: Bool
+
+    var id: String {
+        Data(
+            "\(provider.rawValue)\u{1F}\(accountKey)\u{1F}\(listID)\u{1F}\(remoteTaskID)".utf8
+        ).base64EncodedString()
+    }
 }
 
 enum ProviderTaskListState: Equatable {

@@ -18,6 +18,31 @@ enum TodoistAPI {
         request(path: "tasks/\(component(id))", accessToken: accessToken)
     }
 
+    static func tasksRequest(
+        parentID: String,
+        cursor: String? = nil,
+        accessToken: String
+    ) -> URLRequest {
+        var query = [URLQueryItem]()
+        if parentID.hasPrefix("section:") {
+            query.append(URLQueryItem(
+                name: "section_id",
+                value: String(parentID.dropFirst("section:".count))
+            ))
+        } else {
+            query.append(URLQueryItem(
+                name: "project_id",
+                value: parentID.hasPrefix("project:")
+                    ? String(parentID.dropFirst("project:".count))
+                    : parentID
+            ))
+        }
+        if let cursor {
+            query.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        return request(path: "tasks", query: query, accessToken: accessToken)
+    }
+
     static func createTaskRequest(parentID: String, title: String, description: String, dueAt: Date?, accessToken: String) throws -> URLRequest {
         var request = request(path: "tasks", accessToken: accessToken)
         request.httpMethod = "POST"

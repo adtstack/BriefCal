@@ -408,6 +408,7 @@ private struct TaskCenterRow: View {
     @State private var personalDueEnabled: Bool
     @State private var personalDueDraft: Date
     @State private var isResolvingProvider = false
+    @State private var showsRelinkPicker = false
     @FocusState private var isEditing: Bool
 
     init(appState: AppState, item: TaskCenterItem) {
@@ -474,6 +475,10 @@ private struct TaskCenterRow: View {
 
                 if let providerLink = item.providerLink {
                     providerLinkView(providerLink)
+                } else if item.isProviderLocalOnly {
+                    Label("Local only · provider sync disabled for this task", systemImage: "link.slash")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -492,6 +497,10 @@ private struct TaskCenterRow: View {
                 .popover(isPresented: $showsDueEditor) {
                     personalDueEditor
                 }
+            }
+
+            if isEventTask, item.providerLink?.needsAttention != true {
+                taskProviderActionMenu
             }
 
             Button {
@@ -539,6 +548,12 @@ private struct TaskCenterRow: View {
         } message: {
             Text(deleteConfirmationMessage)
         }
+        .sheet(isPresented: $showsRelinkPicker) {
+            TaskProviderRelinkPicker(
+                appState: appState,
+                itemID: item.id
+            )
+        }
     }
 
     @ViewBuilder
@@ -558,8 +573,8 @@ private struct TaskCenterRow: View {
 
                 Label(
                     link.needsAttention
-                        ? "Needs attention · \(link.syncState.title)"
-                        : link.syncState.title,
+                        ? "Needs attention · \(link.statusTitle)"
+                        : link.statusTitle,
                     systemImage: link.needsAttention
                         ? "exclamationmark.triangle.fill"
                         : link.syncState == .pendingCreate
@@ -576,7 +591,7 @@ private struct TaskCenterRow: View {
             }
             .font(.caption)
 
-            if let recoveryMessage = link.syncState.recoveryMessage {
+            if let recoveryMessage = link.recoveryMessage {
                 Text(recoveryMessage)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -593,35 +608,51 @@ private struct TaskCenterRow: View {
         _ link: TaskCenterProviderLink
     ) -> some View {
         Menu {
-            switch link.syncState {
-            case .missing:
-                Button("Check Provider Again") {
-                    resolveProviderLink {
-                        appState.checkTaskProviderLink(item.id)
+            if link.pendingOperation != nil {
+                Button(link.pendingOperation?.retryTitle ?? "Retry Sync") {
+                    retryPendingProviderOperation()
+                }
+                .disabled(!link.canRetryPendingOperation)
+            } else {
+                switch link.syncState {
+                case .missing:
+                    Button("Check Provider Again") {
+                        resolveProviderLink {
+                            appState.checkTaskProviderLink(item.id)
+                        }
                     }
-                }
-                Button("Recreate Remote from Local Task") {
-                    resolveProviderLinkUsingLocal()
-                }
-            case .conflict:
-                Button("Use Remote Version") {
-                    resolveProviderLinkUsingRemote()
-                }
-                Button("Replace Remote with Local Version") {
-                    resolveProviderLinkUsingLocal()
-                }
-            case .disconnected:
-                Button("Open Task Provider Settings") {
-                    appState.selectedSettingsPane = .taskProviders
-                    openSettings()
-                }
-                Button("Check Provider Again") {
-                    resolveProviderLink {
-                        appState.checkTaskProviderLink(item.id)
+                    Button("Recreate Remote from Local Task") {
+                        resolveProviderLinkUsingLocal()
                     }
+                case .conflict:
+                    Button("Use Remote Version") {
+                        resolveProviderLinkUsingRemote()
+                    }
+                    Button("Replace Remote with Local Version") {
+                        resolveProviderLinkUsingLocal()
+                    }
+                case .disconnected:
+                    Button("Open Task Provider Settings") {
+                        appState.selectedSettingsPane = .taskProviders
+                        openSettings()
+                    }
+                    Button("Check Provider Again") {
+                        resolveProviderLink {
+                            appState.checkTaskProviderLink(item.id)
+                        }
+                    }
+                case .pendingCreate, .linked:
+                    EmptyView()
                 }
-            case .pendingCreate, .linked:
-                EmptyView()
+            }
+            Divider()
+            Button("Link to Existing Remote Task…") {
+                showsRelinkPicker = true
+            }
+            Button("Keep Local Only") {
+                resolveProviderLink {
+                    appState.keepTaskLocalOnly(item.id)
+                }
             }
         } label: {
             Label("Resolve", systemImage: "wrench.and.screwdriver")
@@ -635,6 +666,29 @@ private struct TaskCenterRow: View {
         .accessibilityIdentifier(
             "taskCenter.providerResolve.\(link.bindingID)"
         )
+    }
+
+    private var taskProviderActionMenu: some View {
+        Menu {
+            Button("Link to Existing Remote Task…") {
+                showsRelinkPicker = true
+            }
+            if item.providerLink != nil {
+                Button("Keep Local Only") {
+                    _ = appState.keepTaskLocalOnly(item.id)
+                }
+            } else {
+                Button("Use Calendar Default Provider") {
+                    _ = appState.useCalendarDefaultTaskProvider(item.id)
+                }
+            }
+        } label: {
+            Image(systemName: item.providerLink == nil ? "link.badge.plus" : "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .foregroundStyle(.secondary)
+        .accessibilityLabel("Task provider actions")
     }
 
     @ViewBuilder
@@ -688,6 +742,11 @@ private struct TaskCenterRow: View {
     private var isEditablePersonalTask: Bool {
         guard !item.isCompleted else { return false }
         if case .personal = item.source { return true }
+        return false
+    }
+
+    private var isEventTask: Bool {
+        if case .eventTask = item.id { return true }
         return false
     }
 
@@ -814,6 +873,15 @@ private struct TaskCenterRow: View {
         }
     }
 
+    private func retryPendingProviderOperation() {
+        guard !isResolvingProvider else { return }
+        isResolvingProvider = true
+        Task {
+            _ = await appState.retryTaskProviderOperation(item.id)
+            isResolvingProvider = false
+        }
+    }
+
     private func dueText(_ date: Date) -> String {
         if case let .event(_, _, _, _, _, _, _, _, isAllDay) = item.source,
            isAllDay {
@@ -846,6 +914,151 @@ private struct TaskCenterRow: View {
             end,
             calendar: appState.calendar
         )
+    }
+}
+
+private struct TaskProviderRelinkPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var appState: AppState
+    let itemID: TaskCenterItemID
+
+    @State private var candidates = [TaskProviderLinkCandidate]()
+    @State private var searchText = ""
+    @State private var errorMessage: String?
+    @State private var isLoading = true
+    @State private var selectedCandidateID: String?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if isLoading {
+                    ProgressView("Loading provider tasks…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if let errorMessage {
+                    ContentUnavailableView {
+                        Label("Couldn’t load provider tasks", systemImage: "exclamationmark.circle")
+                    } description: {
+                        Text(errorMessage)
+                    } actions: {
+                        Button("Retry") { loadCandidates() }
+                    }
+                } else if filteredCandidates.isEmpty {
+                    ContentUnavailableView(
+                        searchText.isEmpty
+                            ? "No remote tasks available"
+                            : "No matching remote tasks",
+                        systemImage: "checklist",
+                        description: Text(
+                            searchText.isEmpty
+                                ? "Connect a provider and make sure at least one list contains a task that is not linked elsewhere."
+                                : "Try a task title, description, list, account, or provider name."
+                        )
+                    )
+                } else {
+                    List(filteredCandidates) { candidate in
+                        Button {
+                            link(to: candidate)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack {
+                                    Text(candidate.title)
+                                        .font(.body.weight(.medium))
+                                    Spacer()
+                                    if selectedCandidateID == candidate.id {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    }
+                                }
+                                if let details = candidate.details {
+                                    Text(details)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                                Label(
+                                    "\(candidate.provider.title) · \(candidate.accountTitle) · \(candidate.listTitle)",
+                                    systemImage: candidate.provider.settingsIcon
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                if let dueAt = candidate.dueAt {
+                                    Label(
+                                        CalendarEventDateFormatting.abbreviatedDateTime(
+                                            dueAt,
+                                            calendar: appState.calendar
+                                        ),
+                                        systemImage: "clock"
+                                    )
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(selectedCandidateID != nil)
+                        .accessibilityLabel(
+                            "Use \(candidate.title) from \(candidate.provider.title), \(candidate.listTitle), \(candidate.accountTitle)"
+                        )
+                    }
+                }
+            }
+            .navigationTitle("Link Existing Remote Task")
+            .searchable(text: $searchText, prompt: "Search tasks, lists, or accounts")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .frame(minWidth: 520, minHeight: 440)
+        .task { await fetchCandidates() }
+    }
+
+    private var filteredCandidates: [TaskProviderLinkCandidate] {
+        let query = searchText.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !query.isEmpty else { return candidates }
+        return candidates.filter {
+            [$0.title, $0.details ?? "", $0.provider.title,
+             $0.accountTitle, $0.listTitle]
+                .contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    private func loadCandidates() {
+        guard !isLoading else { return }
+        Task { await fetchCandidates() }
+    }
+
+    @MainActor
+    private func fetchCandidates() async {
+        isLoading = true
+        errorMessage = nil
+        do {
+            candidates = try await appState.taskProviderRelinkCandidates(
+                for: itemID
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+    }
+
+    private func link(to candidate: TaskProviderLinkCandidate) {
+        guard selectedCandidateID == nil else { return }
+        selectedCandidateID = candidate.id
+        Task {
+            if await appState.relinkTaskProvider(itemID, to: candidate) {
+                dismiss()
+            } else {
+                selectedCandidateID = nil
+                errorMessage = appState.localOperationError
+                    ?? "The remote task could not be linked."
+            }
+        }
     }
 }
 

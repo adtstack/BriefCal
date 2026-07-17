@@ -28,10 +28,10 @@ final class LocalDataBackupServiceTests: XCTestCase {
             XCTAssertEqual(result.manifest.applicationVersion, "0.9-test")
             XCTAssertEqual(
                 result.manifest.appliedMigrations,
-                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets"]
+                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets", "v10_task_provider_recovery"]
             )
-            XCTAssertEqual(result.manifest.schemaIdentifier, "v9_saved_calendar_sets")
-            XCTAssertEqual(result.manifest.schemaVersion, 9)
+            XCTAssertEqual(result.manifest.schemaIdentifier, "v10_task_provider_recovery")
+            XCTAssertEqual(result.manifest.schemaVersion, 10)
             XCTAssertEqual(result.manifest.databaseFilename, "kaoscal.sqlite")
             XCTAssertGreaterThan(result.manifest.databaseByteCount, 0)
             XCTAssertEqual(result.manifest.databaseSHA256.count, 64)
@@ -153,17 +153,18 @@ final class LocalDataBackupServiceTests: XCTestCase {
                     providerDestinations: 1,
                     providerSyncCursors: 1,
                     providerPendingOperations: 1,
+                    providerPreferences: 1,
                     contextReferences: 1
                 )
             )
-            XCTAssertEqual(result.deletedRowCounts.total, 17)
+            XCTAssertEqual(result.deletedRowCounts.total, 18)
             XCTAssertEqual(
                 try allUserTableCounts(in: database),
-                Array(repeating: 0, count: 17)
+                Array(repeating: 0, count: 18)
             )
             XCTAssertEqual(
                 try database.appliedMigrations(),
-                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets"]
+                ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets", "v10_task_provider_recovery"]
             )
 
             _ = try service.importBackup(
@@ -174,7 +175,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
             )
             XCTAssertEqual(
                 try allUserTableCounts(in: database),
-                Array(repeating: 1, count: 17)
+                Array(repeating: 1, count: 18)
             )
             let restoredStore = ContextStore(database: database)
             XCTAssertEqual(
@@ -245,7 +246,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
                         .appendingPathComponent("RECOVERY.txt").path
                 )
             )
-            XCTAssertEqual(result.manifest.schemaIdentifier, "v9_saved_calendar_sets")
+            XCTAssertEqual(result.manifest.schemaIdentifier, "v10_task_provider_recovery")
         }
     }
 
@@ -702,9 +703,9 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 }
                 XCTAssertEqual(
                     expected,
-                    ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets"]
+                    ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets", "v10_task_provider_recovery"]
                 )
-                XCTAssertEqual(found, ["10 migration ledger entries"])
+                XCTAssertEqual(found, ["11 migration ledger entries"])
             }
         }
     }
@@ -713,7 +714,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
         let database = try AppDatabase.open(at: databaseURL)
         XCTAssertEqual(
             try database.appliedMigrations(),
-            ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets"]
+            ["v1_context_store", "v2_event_change_log", "v3_calendar_clarity", "v4_task_provider", "v5_oauth_task_providers", "v6_context_references", "v7_microsoft_to_do_provider", "v8_calendar_usage", "v9_saved_calendar_sets", "v10_task_provider_recovery"]
         )
     }
 
@@ -907,14 +908,22 @@ final class LocalDataBackupServiceTests: XCTestCase {
             try db.execute(
                 sql: """
                     INSERT INTO provider_pending_operations (
-                        id, account_id, operation, remote_id, remote_parent_id,
-                        created_at, updated_at
-                    ) VALUES (?, ?, 'delete', ?, 'list', ?, ?)
+                        id, account_id, event_task_id, operation, remote_id,
+                        remote_parent_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, 'delete', ?, 'list', ?, ?)
                     """,
                 arguments: [
                     "pending-\(suffix)", "account-\(suffix)",
-                    "delete-\(suffix)", timestamp, timestamp
+                    "task-\(suffix)", "remote-\(suffix)", timestamp, timestamp
                 ]
+            )
+            try db.execute(
+                sql: """
+                    INSERT INTO task_provider_preferences (
+                        event_task_id, link_mode, created_at, updated_at
+                    ) VALUES (?, 'local_only', ?, ?)
+                    """,
+                arguments: ["task-\(suffix)", timestamp, timestamp]
             )
             try db.execute(
                 sql: """
@@ -954,6 +963,7 @@ final class LocalDataBackupServiceTests: XCTestCase {
                 "calendar_task_destinations",
                 "provider_sync_cursors",
                 "provider_pending_operations",
+                "task_provider_preferences",
                 "context_references",
             ].map { table in
                 try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \(table)") ?? 0

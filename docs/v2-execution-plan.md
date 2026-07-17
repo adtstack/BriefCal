@@ -83,6 +83,14 @@ linked
 마지막 쓰기 우선으로 덮어쓰지 않는다. pending mutation은 무한 재시도하지 않으며,
 재시도 횟수·마지막 오류·사용자 선택을 기록한다.
 
+2026-07-17 구현은 `v10_task_provider_recovery`의 task별
+`provider_pending_operations`와 `task_provider_preferences(local_only)`로 이 계약을
+구체화했다. create/update/delete는 provider 호출 전에 pending을 남기고 명시적 retry를
+3회로 제한한다. remote delete는 missing, 양쪽 projection 변경은 conflict이며, 사용자는
+provider/account/list/task exact 후보를 골라 atomic relink하거나 원격 task를 보존한 채
+task별 local-only로 전환할 수 있다. calendar destination 변경은 기존 binding을 이동하지
+않고 그 시점의 unbound task를 local-only로 고정한다.
+
 ## 4. 공통 보안·개인정보 기준
 
 - OAuth access/refresh token은 Keychain에만 저장한다.

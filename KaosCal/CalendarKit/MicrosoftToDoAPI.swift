@@ -19,8 +19,22 @@ enum MicrosoftToDoAPI {
         return request(path: "lists", accessToken: accessToken)
     }
 
-    static func tasksRequest(listID: String, accessToken: String) -> URLRequest {
-        request(path: "lists/\(component(listID))/tasks", accessToken: accessToken)
+    static func tasksRequest(
+        listID: String,
+        accessToken: String,
+        nextLink: URL? = nil
+    ) -> URLRequest {
+        if let nextLink {
+            var request = URLRequest(url: nextLink)
+            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("outlook.timezone=\"UTC\"", forHTTPHeaderField: "Prefer")
+            return request
+        }
+        return request(
+            path: "lists/\(component(listID))/tasks",
+            accessToken: accessToken
+        )
     }
 
     static func taskRequest(

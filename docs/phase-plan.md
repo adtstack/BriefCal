@@ -284,7 +284,7 @@ Definition of Done:
 - 원본 캘린더 이벤트 삭제 없이 KaosCal 데이터만 삭제 가능
 
 현재 구현 판정:
-- 정상 부팅해 현재 migration ledger(v9까지)를 완료한 file-backed DB만 Local Data 작업을 연다. pending notes를 먼저 flush하고 저장 실패, 다른 local-data operation, editor mutation/recovery가 진행 중이면 export/import/reset을 시작하지 않는다.
+- 정상 부팅해 현재 migration ledger(v10까지)를 완료한 file-backed DB만 Local Data 작업을 연다. pending notes를 먼저 flush하고 저장 실패, 다른 local-data operation, editor mutation/recovery가 진행 중이면 export/import/reset을 시작하지 않는다.
 - 수동 export는 live `DatabaseWriter`의 SQLite online snapshot을 사용한다. store-only ZIP root에는 `kaoscal.sqlite`와 `manifest.json` 두 entry만 있으며 archive format version을 DB schema와 분리하고 app/export metadata, schema와 migration 목록, DB byte count·SHA-256을 기록한다. 기기 이름은 기록하지 않는다. manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 두고 deflate/encryption/data descriptor/ZIP64/multi-disk와 재압축된 archive를 거부한다.
 - import는 archive entry/encoding, manifest format, byte count/hash, schema/migration, SQLite integrity와 foreign key를 모두 검사한다. active DB를 바꾸기 전에 Application Support `Backups`에 자동 ZIP을 남기고, 같은 writer에 hot restore한 뒤 다시 검증한다. 실패하면 active DB를 유지하거나 사전 snapshot rollback을 시도한다.
 - reset은 정확한 `RESET` 확인 뒤 사전 자동 ZIP을 만들고 provider/reference, event/task/link/context, personal task, calendar role·usage와 saved Set·membership·selection을 포함한 current user-data row를 한 transaction에서 지운다. GRDB migration history와 schema는 유지한다.

@@ -412,6 +412,16 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
    선택한 list를 provider에서 삭제한 뒤 authoritative reload도 실행한다.
 10. inspector를 300pt와 360pt 폭으로 줄여 긴 제목·설명·list/account 이름을 확인한다.
 11. list, Completed와 Title 정렬을 선택한 채 Details로 갔다 돌아오고 앱을 재실행한다.
+12. linked task의 local 제목과 remote 제목을 각각 다르게 수정한 뒤 refresh한다. 이어 remote
+    task를 삭제하고 다시 refresh한다.
+13. provider write가 실패하도록 네트워크를 끊어 pending create/update/delete를 만든 뒤 앱을
+    재실행한다. Retry를 반복해 세 번째 실패와 이후 비활성 상태를 확인한다.
+14. Resolve 또는 provider action menu에서 `Link to Existing Remote Task…`를 열고 서로 다른
+    provider/account/list의 같은 이름 task를 번갈아 선택한다. 검색과 source 문구도 확인한다.
+15. linked task에서 `Keep Local Only`를 선택하고 앱을 재실행한 뒤 local task를 수정한다.
+    원격 task는 그대로인지 확인하고 `Use Calendar Default Provider`로 다시 연결한다.
+16. calendar의 기본 destination을 다른 provider/list로 바꾼다. 기존 linked task와 변경 당시
+    unbound task를 수정하고, 변경 뒤 새로 만든 task도 수정한다.
 
 기대 결과:
 - event task와 personal task가 출처를 잃지 않고 한 목록에 표시된다.
@@ -424,6 +434,18 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - provider 연결 task는 provider·계정·list와 상태를 텍스트로 표시한다. missing은 재확인
   또는 local 기준 remote 재생성, conflict는 remote/local 명시 선택, disconnected는
   Settings 복구를 제공하며 실패를 linked로 표시하지 않는다.
+- local과 remote가 각각 바뀌면 어느 쪽도 자동 덮어쓰지 않고 conflict가 된다. remote 삭제는
+  local task를 보존한 missing이며 새 remote task를 자동 생성하지 않는다. remote-only 제목,
+  완료와 지원 가능한 due 변경은 한 local transaction으로 반영된다.
+- pending은 앱 재실행 뒤 operation·attempt count·마지막 오류를 유지한다. 명시적 Retry는 최대
+  3회이고, exact relink 또는 local-only로 빠져나갈 수 있다.
+- relink sheet는 provider/account/list/source를 함께 보여 주며 최종 exact lookup과 다른 local
+  task 소유 검사를 통과한 선택만 binding과 local projection을 원자적으로 교체한다.
+- `Keep Local Only`는 binding/pending만 제거하고 원격 task를 삭제하지 않으며 재실행 뒤에도
+  자동 sync하지 않는다. 기본 destination을 다시 쓰는 동작은 실제 enabled/authorized
+  destination이 있을 때만 local-only를 해제한다.
+- destination 변경은 기존 binding의 provider/list를 옮기지 않는다. 변경 당시 unbound task는
+  local-only로 남고 변경 뒤 새 task만 새 destination을 사용한다.
 - 오른쪽 `Tasks`는 패널 전체 높이를 채운다. 미결정 권한은 첫 진입에서 요청하고, 거부는
   System Settings 복구를 제공한다. 허용 뒤 task가 없어도 상단 연결 표시가 보인다.
 - `All Lists`는 빈 list까지 metadata 기준으로 보여 주고 provider가 다른 같은 raw list ID를

@@ -316,6 +316,8 @@ final class TaskProviderCoordinator: ObservableObject {
     private var asyncProviders = [TaskProviderKind: any AsyncTaskProviding]()
     private var appleRemindersRefreshTask: Task<Void, Never>?
     private var activeOAuthListRefreshes = Set<UUID>()
+    private var microsoftTaskDetails = [String: String]()
+    private var hydratedMicrosoftListKeys = Set<String>()
 
     @Published private(set) var authorizationState: TaskProviderAuthorizationState
     @Published private(set) var providerAuthorizationStates = [TaskProviderKind: TaskProviderAuthorizationState]()
@@ -689,6 +691,11 @@ final class TaskProviderCoordinator: ObservableObject {
     ) {
         do {
             guard let list else {
+                if destination(for: calendarIdentifier) != nil {
+                    try repository.markExistingUnboundTasksLocalOnly(
+                        calendarIdentifier: calendarIdentifier
+                    )
+                }
                 try repository.deleteDestination(calendarIdentifier: calendarIdentifier)
                 destinations = try repository.fetchDestinations()
                 return
@@ -701,6 +708,12 @@ final class TaskProviderCoordinator: ObservableObject {
             )
             let timestamp = now()
             let existing = destination(for: calendarIdentifier)
+            if existing?.providerAccountID != account.id
+                || existing?.remoteParentID != list.id {
+                try repository.markExistingUnboundTasksLocalOnly(
+                    calendarIdentifier: calendarIdentifier
+                )
+            }
             try repository.saveDestination(
                 CalendarTaskDestinationRecord(
                     calendarIdentifier: calendarIdentifier,
@@ -736,24 +749,93 @@ final class TaskProviderCoordinator: ObservableObject {
         contextID: String,
         task: EventTask
     ) {
-        guard let brief = try? contextStore.eventContexts.fetchBrief(
-            contextID: contextID
-        ),
-        let destination = destination(for: brief.link.calendarIdentifier),
-        destination.isEnabled,
-        let account = try? repository.fetchAccount(id: destination.providerAccountID),
-        account.authorizationState == .authorized else {
+        guard task.contextID == contextID,
+              let brief = try? contextStore.eventContexts.fetchBrief(
+                contextID: contextID
+              ) else {
             return
         }
+
+        let binding: TaskBindingRecord?
+        do {
+            guard try !repository.isLocalOnly(eventTaskID: task.id) else {
+                return
+            }
+            if try repository.fetchPendingOperation(
+                eventTaskID: task.id
+            ) != nil {
+                onLocalProjectionChange?()
+                return
+            }
+            binding = try repository.fetchBinding(eventTaskID: task.id)
+        } catch {
+            lastErrorMessage = Self.message(for: error)
+            return
+        }
+
+        if let binding {
+            let item: ProviderItemRecord
+            let account: ProviderAccountRecord
+            do {
+                guard let fetchedItem = try repository.fetchProviderItem(
+                    id: binding.providerItemID
+                ), let fetchedAccount = try repository.fetchAccount(
+                    id: fetchedItem.accountID
+                ) else {
+                    throw TaskProviderError.taskNotFound
+                }
+                item = fetchedItem
+                account = fetchedAccount
+            } catch {
+                lastErrorMessage = Self.message(for: error)
+                return
+            }
+            if account.provider == provider.provider {
+                syncBoundEventTask(
+                    task: task,
+                    brief: brief,
+                    binding: binding,
+                    item: item,
+                    account: account,
+                    using: provider
+                )
+            } else if let asyncProvider = asyncProviders[account.provider] {
+                Task { [weak self] in
+                    await self?.syncBoundEventTask(
+                        task: task,
+                        brief: brief,
+                        binding: binding,
+                        item: item,
+                        account: account,
+                        using: asyncProvider
+                    )
+                }
+            }
+            return
+        }
+
+        guard let destination = destination(for: brief.link.calendarIdentifier),
+              destination.isEnabled else {
+            return
+        }
+        let account: ProviderAccountRecord
+        do {
+            guard let fetched = try repository.fetchAccount(
+                id: destination.providerAccountID
+            ) else { throw TaskProviderError.taskNotFound }
+            account = fetched
+        } catch {
+            lastErrorMessage = Self.message(for: error)
+            return
+        }
+        guard account.authorizationState == .authorized else { return }
         if account.provider != provider.provider {
             guard let asyncProvider = asyncProviders[account.provider] else {
                 return
             }
             Task { [weak self] in
-                await self?.syncEventTask(
+                await self?.createRemoteTask(
                     using: asyncProvider,
-                    in: contextStore,
-                    contextID: contextID,
                     task: task,
                     account: account,
                     destination: destination,
@@ -766,160 +848,387 @@ final class TaskProviderCoordinator: ObservableObject {
             return
         }
 
-        let dueAt = remoteDueDate(
-            task.effectiveDueDate(
-            eventStart: brief.link.startSnapshot,
-            eventEnd: brief.link.endSnapshot
-            ),
-            capabilities: provider.capabilities
+        createRemoteTask(
+            using: provider,
+            task: task,
+            account: account,
+            destination: destination,
+            brief: brief
         )
-        let draft = RemoteTaskDraft(
-            parentID: destination.remoteParentID,
-            title: task.title,
-            notes: "",
-            dueAt: dueAt,
-            deepLink: URL(string: "kaoscal://task/\(task.id)")
-        )
-
-        do {
-            if let binding = try repository.fetchBinding(eventTaskID: task.id),
-               let item = try repository.fetchProviderItem(id: binding.providerItemID) {
-                let cached = snapshot(from: item)
-                guard let remote = try provider.lookupTask(
-                    id: cached.id,
-                    parentID: cached.parentID
-                ) else {
-                    try repository.removeBinding(bindingID: binding.id)
-                    let remote = try provider.createTask(draft)
-                    _ = try repository.insertLinkedTask(
-                        account: account,
-                        remote: remote,
-                        eventTaskID: task.id,
-                        occurrenceKey: brief.link.occurrenceIdentityKey,
-                        syncHash: localHash(task: task, dueAt: dueAt, remote: remote)
-                    )
-                    onLocalProjectionChange?()
-                    return
-                }
-                var patch = RemoteTaskPatch()
-                patch.title = task.title
-                patch.dueAt = .some(dueAt)
-                patch.isCompleted = task.isCompleted
-                let updated = try provider.updateTask(remote, with: patch)
-                try repository.updateLinkedTask(
-                    bindingID: binding.id,
-                    itemID: item.id,
-                    remote: updated,
-                    syncState: .linked,
-                    syncHash: localHash(task: task, dueAt: dueAt, remote: updated)
-                )
-            } else {
-                let remote = try provider.createTask(draft)
-                _ = try repository.insertLinkedTask(
-                    account: account,
-                    remote: remote,
-                    eventTaskID: task.id,
-                    occurrenceKey: brief.link.occurrenceIdentityKey,
-                    syncHash: localHash(task: task, dueAt: dueAt, remote: remote)
-                )
-            }
-            lastErrorMessage = nil
-            onLocalProjectionChange?()
-        } catch {
-            let bindingID: String?
-            if let fetchedBinding = try? repository.fetchBinding(eventTaskID: task.id) {
-                bindingID = fetchedBinding.id
-            } else {
-                bindingID = nil
-            }
-            recordSyncError(error, bindingID: bindingID)
-        }
     }
 
-    private func syncEventTask(
-        using provider: any AsyncTaskProviding,
-        in contextStore: ContextStore,
-        contextID: String,
+    private func createRemoteTask(
+        using provider: any TaskProviding,
         task: EventTask,
         account: ProviderAccountRecord,
         destination: CalendarTaskDestinationRecord,
-        brief: EventBriefSnapshot
-    ) async {
+        brief: EventBriefSnapshot,
+        pending existingPending: ProviderPendingOperationRecord? = nil
+    ) {
         let dueAt = remoteDueDate(
             task.effectiveDueDate(
-            eventStart: brief.link.startSnapshot,
-            eventEnd: brief.link.endSnapshot
+                eventStart: brief.link.startSnapshot,
+                eventEnd: brief.link.endSnapshot
             ),
             capabilities: provider.capabilities
         )
-        let draft = RemoteTaskDraft(
+        let draft = localRecoveryDraft(
+            task: task,
             parentID: destination.remoteParentID,
-            title: task.title,
-            notes: "",
-            dueAt: dueAt,
-            deepLink: URL(string: "kaoscal://task/\(task.id)")
+            dueAt: dueAt
         )
-
         do {
-            if let binding = try repository.fetchBinding(eventTaskID: task.id),
-               let item = try repository.fetchProviderItem(id: binding.providerItemID) {
-                let cached = snapshot(from: item)
-                guard let remote = try await provider.lookupTask(
-                    id: cached.id,
-                    parentID: cached.parentID
-                ) else {
-                    try repository.removeBinding(bindingID: binding.id)
-                    let remote = try await provider.createTask(draft)
-                    _ = try repository.insertLinkedTask(
-                        account: account,
-                        remote: remote,
-                        eventTaskID: task.id,
-                        occurrenceKey: brief.link.occurrenceIdentityKey,
-                        syncHash: localHash(task: task, dueAt: dueAt, remote: remote)
+            let pending = try existingPending ?? repository.preparePendingOperation(
+                accountID: account.id,
+                eventTaskID: task.id,
+                operation: .create,
+                remoteID: nil,
+                remoteParentID: destination.remoteParentID,
+                expectedVersion: nil
+            )
+            _ = try repository.beginPendingAttempt(operationID: pending.id)
+            onLocalProjectionChange?()
+            do {
+                let remote = try provider.createTask(draft)
+                _ = try repository.replaceLinkedTask(
+                    account: account,
+                    remote: remote,
+                    eventTaskID: task.id,
+                    occurrenceKey: brief.link.occurrenceIdentityKey,
+                    syncHash: projectionHash(
+                        remote,
+                        capabilities: provider.capabilities
                     )
-                    onLocalProjectionChange?()
-                    return
-                }
-                var patch = RemoteTaskPatch()
-                patch.title = task.title
-                patch.dueAt = .some(dueAt)
-                patch.isCompleted = task.isCompleted
-                let updated = try await provider.updateTask(remote, with: patch)
+                )
+                try repository.removePendingOperation(eventTaskID: task.id)
+                try repository.clearLocalOnly(eventTaskID: task.id)
+                lastErrorMessage = nil
+            } catch {
+                try? repository.recordPendingFailure(
+                    operationID: pending.id,
+                    message: Self.message(for: error)
+                )
+                recordSyncError(error, bindingID: nil)
+            }
+        } catch {
+            lastErrorMessage = Self.message(for: error)
+        }
+        onLocalProjectionChange?()
+    }
+
+    private func createRemoteTask(
+        using provider: any AsyncTaskProviding,
+        task: EventTask,
+        account: ProviderAccountRecord,
+        destination: CalendarTaskDestinationRecord,
+        brief: EventBriefSnapshot,
+        pending existingPending: ProviderPendingOperationRecord? = nil
+    ) async {
+        let dueAt = remoteDueDate(
+            task.effectiveDueDate(
+                eventStart: brief.link.startSnapshot,
+                eventEnd: brief.link.endSnapshot
+            ),
+            capabilities: provider.capabilities
+        )
+        let draft = localRecoveryDraft(
+            task: task,
+            parentID: destination.remoteParentID,
+            dueAt: dueAt
+        )
+        do {
+            let pending = try existingPending ?? repository.preparePendingOperation(
+                accountID: account.id,
+                eventTaskID: task.id,
+                operation: .create,
+                remoteID: nil,
+                remoteParentID: destination.remoteParentID,
+                expectedVersion: nil
+            )
+            _ = try repository.beginPendingAttempt(operationID: pending.id)
+            onLocalProjectionChange?()
+            do {
+                let remote = try await provider.createTask(draft)
+                _ = try repository.replaceLinkedTask(
+                    account: account,
+                    remote: remote,
+                    eventTaskID: task.id,
+                    occurrenceKey: brief.link.occurrenceIdentityKey,
+                    syncHash: projectionHash(
+                        remote,
+                        capabilities: provider.capabilities
+                    )
+                )
+                try repository.removePendingOperation(eventTaskID: task.id)
+                try repository.clearLocalOnly(eventTaskID: task.id)
+                lastErrorMessage = nil
+            } catch {
+                try? repository.recordPendingFailure(
+                    operationID: pending.id,
+                    message: Self.message(for: error)
+                )
+                recordSyncError(error, bindingID: nil)
+            }
+        } catch {
+            lastErrorMessage = Self.message(for: error)
+        }
+        onLocalProjectionChange?()
+    }
+
+    private func syncBoundEventTask(
+        task: EventTask,
+        brief: EventBriefSnapshot,
+        binding: TaskBindingRecord,
+        item: ProviderItemRecord,
+        account: ProviderAccountRecord,
+        using provider: any TaskProviding,
+        pending existingPending: ProviderPendingOperationRecord? = nil
+    ) {
+        guard authorizationState == .authorized else {
+            _ = try? repository.markBinding(
+                bindingID: binding.id,
+                state: .disconnected
+            )
+            onLocalProjectionChange?()
+            return
+        }
+
+        let localDueAt = task.effectiveDueDate(
+            eventStart: brief.link.startSnapshot,
+            eventEnd: brief.link.endSnapshot
+        )
+        let dueAt = remoteDueDate(
+            localDueAt,
+            capabilities: provider.capabilities
+        )
+        do {
+            guard binding.syncState == .linked || existingPending != nil else {
+                return
+            }
+            guard let remote = try provider.lookupTask(
+                id: item.remoteID,
+                parentID: item.remoteParentID
+            ) else {
+                try repository.removePendingOperation(eventTaskID: task.id)
+                _ = try repository.markBinding(
+                    bindingID: binding.id,
+                    state: .missing
+                )
+                onLocalProjectionChange?()
+                return
+            }
+            switch syncDecision(
+                task: task,
+                dueAt: dueAt,
+                remote: remote,
+                binding: binding,
+                item: item,
+                localDueAt: localDueAt,
+                capabilities: provider.capabilities
+            ) {
+            case .conflict:
+                try repository.removePendingOperation(eventTaskID: task.id)
+                _ = try repository.markBinding(
+                    bindingID: binding.id,
+                    state: .conflict
+                )
+            case .applyRemote:
+                try repository.removePendingOperation(eventTaskID: task.id)
+                _ = try applyRemote(
+                    remote,
+                    binding: binding,
+                    item: item,
+                    eventTaskID: task.id,
+                    capabilities: provider.capabilities,
+                    in: contextStore
+                )
+            case .unchanged:
+                try repository.updateLinkedTask(
+                    bindingID: binding.id,
+                    itemID: item.id,
+                    remote: remote,
+                    syncState: .linked,
+                    syncHash: projectionHash(
+                        remote,
+                        capabilities: provider.capabilities
+                    )
+                )
+                try repository.removePendingOperation(eventTaskID: task.id)
+            case .pushLocal:
+                let pending = try existingPending ?? repository.preparePendingOperation(
+                    accountID: account.id,
+                    eventTaskID: task.id,
+                    operation: .update,
+                    remoteID: item.remoteID,
+                    remoteParentID: item.remoteParentID,
+                    expectedVersion: binding.remoteVersion
+                )
+                _ = try repository.beginPendingAttempt(operationID: pending.id)
+                onLocalProjectionChange?()
+                let updated = try provider.updateTask(
+                    snapshot(remote, expectedVersion: binding.remoteVersion),
+                    with: localRecoveryPatch(task: task, dueAt: dueAt)
+                )
                 try repository.updateLinkedTask(
                     bindingID: binding.id,
                     itemID: item.id,
                     remote: updated,
                     syncState: .linked,
-                    syncHash: localHash(task: task, dueAt: dueAt, remote: updated)
+                    syncHash: projectionHash(
+                        updated,
+                        capabilities: provider.capabilities
+                    )
                 )
-            } else {
-                let remote = try await provider.createTask(draft)
-                _ = try repository.insertLinkedTask(
-                    account: account,
-                    remote: remote,
-                    eventTaskID: task.id,
-                    occurrenceKey: brief.link.occurrenceIdentityKey,
-                    syncHash: localHash(task: task, dueAt: dueAt, remote: remote)
-                )
+                try repository.removePendingOperation(eventTaskID: task.id)
             }
             lastErrorMessage = nil
             onLocalProjectionChange?()
         } catch {
-            let bindingID: String?
-            if let binding = try? repository.fetchBinding(eventTaskID: task.id) {
-                bindingID = binding.id
-            } else {
-                bindingID = nil
+            handlePendingSyncFailure(
+                error,
+                eventTaskID: task.id,
+                bindingID: binding.id
+            )
+        }
+    }
+
+    private func syncBoundEventTask(
+        task: EventTask,
+        brief: EventBriefSnapshot,
+        binding: TaskBindingRecord,
+        item: ProviderItemRecord,
+        account: ProviderAccountRecord,
+        using provider: any AsyncTaskProviding,
+        pending existingPending: ProviderPendingOperationRecord? = nil
+    ) async {
+        guard account.authorizationState == .authorized,
+              provider.authorizationState == .authorized else {
+            _ = try? repository.markBinding(
+                bindingID: binding.id,
+                state: .disconnected
+            )
+            onLocalProjectionChange?()
+            return
+        }
+        let localDueAt = task.effectiveDueDate(
+            eventStart: brief.link.startSnapshot,
+            eventEnd: brief.link.endSnapshot
+        )
+        let dueAt = remoteDueDate(
+            localDueAt,
+            capabilities: provider.capabilities
+        )
+        do {
+            guard binding.syncState == .linked || existingPending != nil else {
+                return
             }
-            recordSyncError(error, bindingID: bindingID)
+            guard let remote = try await provider.lookupTask(
+                id: item.remoteID,
+                parentID: item.remoteParentID
+            ) else {
+                try repository.removePendingOperation(eventTaskID: task.id)
+                _ = try repository.markBinding(
+                    bindingID: binding.id,
+                    state: .missing
+                )
+                onLocalProjectionChange?()
+                return
+            }
+            switch syncDecision(
+                task: task,
+                dueAt: dueAt,
+                remote: remote,
+                binding: binding,
+                item: item,
+                localDueAt: localDueAt,
+                capabilities: provider.capabilities
+            ) {
+            case .conflict:
+                try repository.removePendingOperation(eventTaskID: task.id)
+                _ = try repository.markBinding(
+                    bindingID: binding.id,
+                    state: .conflict
+                )
+            case .applyRemote:
+                try repository.removePendingOperation(eventTaskID: task.id)
+                _ = try applyRemote(
+                    remote,
+                    binding: binding,
+                    item: item,
+                    eventTaskID: task.id,
+                    capabilities: provider.capabilities,
+                    in: contextStore
+                )
+            case .unchanged:
+                try repository.updateLinkedTask(
+                    bindingID: binding.id,
+                    itemID: item.id,
+                    remote: remote,
+                    syncState: .linked,
+                    syncHash: projectionHash(
+                        remote,
+                        capabilities: provider.capabilities
+                    )
+                )
+                try repository.removePendingOperation(eventTaskID: task.id)
+            case .pushLocal:
+                let pending = try existingPending ?? repository.preparePendingOperation(
+                    accountID: account.id,
+                    eventTaskID: task.id,
+                    operation: .update,
+                    remoteID: item.remoteID,
+                    remoteParentID: item.remoteParentID,
+                    expectedVersion: binding.remoteVersion
+                )
+                _ = try repository.beginPendingAttempt(operationID: pending.id)
+                onLocalProjectionChange?()
+                let updated = try await provider.updateTask(
+                    snapshot(remote, expectedVersion: binding.remoteVersion),
+                    with: localRecoveryPatch(task: task, dueAt: dueAt)
+                )
+                try repository.updateLinkedTask(
+                    bindingID: binding.id,
+                    itemID: item.id,
+                    remote: updated,
+                    syncState: .linked,
+                    syncHash: projectionHash(
+                        updated,
+                        capabilities: provider.capabilities
+                    )
+                )
+                try repository.removePendingOperation(eventTaskID: task.id)
+            }
+            lastErrorMessage = nil
+            onLocalProjectionChange?()
+        } catch {
+            handlePendingSyncFailure(
+                error,
+                eventTaskID: task.id,
+                bindingID: binding.id
+            )
         }
     }
 
     /// Delete the remote task before deleting the local row so the durable binding is still available.
     func deleteRemoteTaskIfBound(eventTaskID: String) throws {
-        guard let binding = try repository.fetchBinding(eventTaskID: eventTaskID),
-              let item = try repository.fetchProviderItem(id: binding.providerItemID) else {
+        guard let binding = try repository.fetchBinding(
+            eventTaskID: eventTaskID
+        ), let item = try repository.fetchProviderItem(
+            id: binding.providerItemID
+        ), let account = try repository.fetchAccount(id: item.accountID) else {
+            if let pending = try repository.fetchPendingOperation(
+                eventTaskID: eventTaskID
+            ), pending.operation == .delete {
+                if pending.lastError != nil {
+                    try retryPendingDelete(pending, using: provider)
+                }
+            }
             return
+        }
+        guard account.provider == provider.provider else {
+            throw TaskProviderError.unsupported(
+                "This provider requires the asynchronous delete path."
+            )
         }
         guard authorizationState == .authorized else {
             throw authorizationState == .notDetermined
@@ -927,27 +1236,68 @@ final class TaskProviderCoordinator: ObservableObject {
                 : TaskProviderError.accessDenied
         }
         let cached = snapshot(from: item)
+        let pending = try repository.preparePendingOperation(
+            accountID: account.id,
+            eventTaskID: eventTaskID,
+            operation: .delete,
+            remoteID: item.remoteID,
+            remoteParentID: item.remoteParentID,
+            expectedVersion: binding.remoteVersion
+        )
+        _ = try repository.beginPendingAttempt(operationID: pending.id)
+        onLocalProjectionChange?()
         do {
             try provider.deleteTask(cached, expectedVersion: binding.remoteVersion)
             try repository.removeBinding(bindingID: binding.id)
         } catch TaskProviderError.taskNotFound {
             try repository.removeBinding(bindingID: binding.id)
-        } catch {
+        } catch TaskProviderError.conflict {
+            try? repository.recordPendingFailure(
+                operationID: pending.id,
+                message: Self.message(for: TaskProviderError.conflict)
+            )
             _ = try? repository.markBinding(
                 bindingID: binding.id,
                 state: .conflict
             )
+            throw TaskProviderError.conflict
+        } catch {
+            try? repository.recordPendingFailure(
+                operationID: pending.id,
+                message: Self.message(for: error)
+            )
+            recordSyncError(error, bindingID: binding.id)
             throw error
         }
+        onLocalProjectionChange?()
     }
 
     /// The async equivalent is required for OAuth providers. It preserves the
     /// same ordering as the Reminders path: a failed remote delete leaves the
     /// local task and binding untouched for the user to resolve.
     func deleteRemoteTaskIfBoundAsync(eventTaskID: String) async throws {
-        guard let binding = try repository.fetchBinding(eventTaskID: eventTaskID),
-              let item = try repository.fetchProviderItem(id: binding.providerItemID),
-              let account = try repository.fetchAccount(id: item.accountID) else {
+        guard let binding = try repository.fetchBinding(
+            eventTaskID: eventTaskID
+        ), let item = try repository.fetchProviderItem(
+            id: binding.providerItemID
+        ), let account = try repository.fetchAccount(id: item.accountID) else {
+            if let pending = try repository.fetchPendingOperation(
+                eventTaskID: eventTaskID
+            ), pending.operation == .delete,
+            let account = try repository.fetchAccount(id: pending.accountID) {
+                if pending.lastError == nil {
+                    return
+                } else if account.provider == provider.provider {
+                    try retryPendingDelete(pending, using: provider)
+                } else if let asyncProvider = asyncProviders[account.provider] {
+                    try await retryPendingDelete(
+                        pending,
+                        using: asyncProvider
+                    )
+                } else {
+                    throw TaskProviderError.authorizationRequired
+                }
+            }
             return
         }
         if account.provider == provider.provider {
@@ -960,6 +1310,16 @@ final class TaskProviderCoordinator: ObservableObject {
             throw TaskProviderError.authorizationRequired
         }
         let cached = snapshot(from: item)
+        let pending = try repository.preparePendingOperation(
+            accountID: account.id,
+            eventTaskID: eventTaskID,
+            operation: .delete,
+            remoteID: item.remoteID,
+            remoteParentID: item.remoteParentID,
+            expectedVersion: binding.remoteVersion
+        )
+        _ = try repository.beginPendingAttempt(operationID: pending.id)
+        onLocalProjectionChange?()
         do {
             try await asyncProvider.deleteTask(
                 cached,
@@ -968,13 +1328,129 @@ final class TaskProviderCoordinator: ObservableObject {
             try repository.removeBinding(bindingID: binding.id)
         } catch TaskProviderError.taskNotFound {
             try repository.removeBinding(bindingID: binding.id)
-        } catch {
+        } catch TaskProviderError.conflict {
+            try? repository.recordPendingFailure(
+                operationID: pending.id,
+                message: Self.message(for: TaskProviderError.conflict)
+            )
             _ = try? repository.markBinding(
                 bindingID: binding.id,
                 state: .conflict
             )
+            throw TaskProviderError.conflict
+        } catch {
+            try? repository.recordPendingFailure(
+                operationID: pending.id,
+                message: Self.message(for: error)
+            )
+            recordSyncError(error, bindingID: binding.id)
             throw error
         }
+        onLocalProjectionChange?()
+    }
+
+    /// Retries a durable delete after the original binding may already have
+    /// been removed. The pending row remains until the local EventTask delete
+    /// commits, whose foreign key cascade is the final acknowledgement.
+    private func retryPendingDelete(
+        _ pending: ProviderPendingOperationRecord,
+        using provider: any TaskProviding
+    ) throws {
+        guard let remoteID = pending.remoteID,
+              let account = try repository.fetchAccount(id: pending.accountID),
+              account.provider == provider.provider,
+              authorizationState == .authorized else {
+            throw TaskProviderError.authorizationRequired
+        }
+        _ = try repository.beginPendingAttempt(operationID: pending.id)
+        onLocalProjectionChange?()
+        do {
+            if let remote = try provider.lookupTask(
+                id: remoteID,
+                parentID: pending.remoteParentID
+            ) {
+                try provider.deleteTask(
+                    remote,
+                    expectedVersion: remote.version ?? pending.expectedVersion
+                )
+            }
+            if let binding = try repository.fetchBinding(
+                eventTaskID: pending.eventTaskID
+            ) {
+                try repository.removeBinding(bindingID: binding.id)
+            }
+            lastErrorMessage = nil
+        } catch TaskProviderError.taskNotFound {
+            if let binding = try repository.fetchBinding(
+                eventTaskID: pending.eventTaskID
+            ) {
+                try repository.removeBinding(bindingID: binding.id)
+            }
+        } catch {
+            try? repository.recordPendingFailure(
+                operationID: pending.id,
+                message: Self.message(for: error)
+            )
+            recordSyncError(
+                error,
+                bindingID: try? repository.fetchBinding(
+                    eventTaskID: pending.eventTaskID
+                )?.id
+            )
+            throw error
+        }
+        onLocalProjectionChange?()
+    }
+
+    private func retryPendingDelete(
+        _ pending: ProviderPendingOperationRecord,
+        using provider: any AsyncTaskProviding
+    ) async throws {
+        guard let remoteID = pending.remoteID,
+              let account = try repository.fetchAccount(id: pending.accountID),
+              account.provider == provider.provider,
+              account.authorizationState == .authorized,
+              provider.authorizationState == .authorized else {
+            throw TaskProviderError.authorizationRequired
+        }
+        _ = try repository.beginPendingAttempt(operationID: pending.id)
+        onLocalProjectionChange?()
+        do {
+            if let remote = try await provider.lookupTask(
+                id: remoteID,
+                parentID: pending.remoteParentID
+            ) {
+                try await provider.deleteTask(
+                    remote,
+                    expectedVersion: remote.version ?? pending.expectedVersion
+                )
+            }
+            if let binding = try repository.fetchBinding(
+                eventTaskID: pending.eventTaskID
+            ) {
+                try repository.removeBinding(bindingID: binding.id)
+            }
+            lastErrorMessage = nil
+        } catch TaskProviderError.taskNotFound {
+            if let binding = try repository.fetchBinding(
+                eventTaskID: pending.eventTaskID
+            ) {
+                try repository.removeBinding(bindingID: binding.id)
+            }
+        } catch {
+            try? repository.recordPendingFailure(
+                operationID: pending.id,
+                message: Self.message(for: error)
+            )
+            recordSyncError(
+                error,
+                bindingID: try? repository.fetchBinding(
+                    eventTaskID: pending.eventTaskID
+                )?.id
+            )
+            throw error
+        }
+        onLocalProjectionChange?()
     }
 
     /// Explicit conflict recovery that accepts the provider's current title
@@ -993,6 +1469,7 @@ final class TaskProviderCoordinator: ObservableObject {
         }
 
         let remote: RemoteTaskSnapshot?
+        let capabilities: TaskProviderCapabilities
         if account.provider == provider.provider {
             guard authorizationState == .authorized else {
                 throw authorizationState == .notDetermined
@@ -1003,6 +1480,7 @@ final class TaskProviderCoordinator: ObservableObject {
                 id: item.remoteID,
                 parentID: item.remoteParentID
             )
+            capabilities = provider.capabilities
         } else {
             guard account.authorizationState == .authorized,
                   let asyncProvider = asyncProviders[account.provider],
@@ -1013,6 +1491,7 @@ final class TaskProviderCoordinator: ObservableObject {
                 id: item.remoteID,
                 parentID: item.remoteParentID
             )
+            capabilities = asyncProvider.capabilities
         }
 
         guard let remote else {
@@ -1023,13 +1502,16 @@ final class TaskProviderCoordinator: ObservableObject {
             onLocalProjectionChange?()
             throw TaskProviderError.taskNotFound
         }
-        _ = applyRemote(
+        _ = try applyRemote(
             remote,
             binding: binding,
             item: item,
             eventTaskID: eventTaskID,
+            capabilities: capabilities,
             in: contextStore
         )
+        try repository.removePendingOperation(eventTaskID: eventTaskID)
+        try repository.clearLocalOnly(eventTaskID: eventTaskID)
         lastErrorMessage = nil
         onLocalProjectionChange?()
     }
@@ -1083,10 +1565,16 @@ final class TaskProviderCoordinator: ObservableObject {
                     using: asyncProvider
                 )
             }
+            try repository.removePendingOperation(eventTaskID: eventTaskID)
+            try repository.clearLocalOnly(eventTaskID: eventTaskID)
             lastErrorMessage = nil
             onLocalProjectionChange?()
         } catch {
-            recordSyncError(error, bindingID: binding.id)
+            handlePendingSyncFailure(
+                error,
+                eventTaskID: eventTaskID,
+                bindingID: binding.id
+            )
             throw error
         }
     }
@@ -1115,6 +1603,16 @@ final class TaskProviderCoordinator: ObservableObject {
             id: item.remoteID,
             parentID: item.remoteParentID
         ) {
+            let pending = try repository.preparePendingOperation(
+                accountID: account.id,
+                eventTaskID: task.id,
+                operation: .update,
+                remoteID: item.remoteID,
+                remoteParentID: item.remoteParentID,
+                expectedVersion: remote.version
+            )
+            _ = try repository.beginPendingAttempt(operationID: pending.id)
+            onLocalProjectionChange?()
             let updated = try provider.updateTask(
                 remote,
                 with: localRecoveryPatch(task: task, dueAt: dueAt)
@@ -1124,24 +1622,31 @@ final class TaskProviderCoordinator: ObservableObject {
                 itemID: item.id,
                 remote: updated,
                 syncState: .linked,
-                syncHash: localHash(
-                    task: task,
-                    dueAt: dueAt,
-                    remote: updated
+                syncHash: projectionHash(
+                    updated,
+                    capabilities: provider.capabilities
                 )
             )
         } else {
+            let pending = try repository.preparePendingOperation(
+                accountID: account.id,
+                eventTaskID: task.id,
+                operation: .create,
+                remoteID: nil,
+                remoteParentID: item.remoteParentID,
+                expectedVersion: nil
+            )
+            _ = try repository.beginPendingAttempt(operationID: pending.id)
+            onLocalProjectionChange?()
             let created = try provider.createTask(draft)
-            try repository.removeBinding(bindingID: binding.id)
-            _ = try repository.insertLinkedTask(
+            _ = try repository.replaceLinkedTask(
                 account: account,
                 remote: created,
                 eventTaskID: task.id,
                 occurrenceKey: brief.link.occurrenceIdentityKey,
-                syncHash: localHash(
-                    task: task,
-                    dueAt: dueAt,
-                    remote: created
+                syncHash: projectionHash(
+                    created,
+                    capabilities: provider.capabilities
                 )
             )
         }
@@ -1171,6 +1676,16 @@ final class TaskProviderCoordinator: ObservableObject {
             id: item.remoteID,
             parentID: item.remoteParentID
         ) {
+            let pending = try repository.preparePendingOperation(
+                accountID: account.id,
+                eventTaskID: task.id,
+                operation: .update,
+                remoteID: item.remoteID,
+                remoteParentID: item.remoteParentID,
+                expectedVersion: remote.version
+            )
+            _ = try repository.beginPendingAttempt(operationID: pending.id)
+            onLocalProjectionChange?()
             let updated = try await provider.updateTask(
                 remote,
                 with: localRecoveryPatch(task: task, dueAt: dueAt)
@@ -1180,24 +1695,31 @@ final class TaskProviderCoordinator: ObservableObject {
                 itemID: item.id,
                 remote: updated,
                 syncState: .linked,
-                syncHash: localHash(
-                    task: task,
-                    dueAt: dueAt,
-                    remote: updated
+                syncHash: projectionHash(
+                    updated,
+                    capabilities: provider.capabilities
                 )
             )
         } else {
+            let pending = try repository.preparePendingOperation(
+                accountID: account.id,
+                eventTaskID: task.id,
+                operation: .create,
+                remoteID: nil,
+                remoteParentID: item.remoteParentID,
+                expectedVersion: nil
+            )
+            _ = try repository.beginPendingAttempt(operationID: pending.id)
+            onLocalProjectionChange?()
             let created = try await provider.createTask(draft)
-            try repository.removeBinding(bindingID: binding.id)
-            _ = try repository.insertLinkedTask(
+            _ = try repository.replaceLinkedTask(
                 account: account,
                 remote: created,
                 eventTaskID: task.id,
                 occurrenceKey: brief.link.occurrenceIdentityKey,
-                syncHash: localHash(
-                    task: task,
-                    dueAt: dueAt,
-                    remote: created
+                syncHash: projectionHash(
+                    created,
+                    capabilities: provider.capabilities
                 )
             )
         }
@@ -1226,6 +1748,347 @@ final class TaskProviderCoordinator: ObservableObject {
         patch.dueAt = .some(dueAt)
         patch.isCompleted = task.isCompleted
         return patch
+    }
+
+    func keepTaskLocalOnly(eventTaskID: String) throws {
+        try repository.setLocalOnly(eventTaskID: eventTaskID)
+        lastErrorMessage = nil
+        onLocalProjectionChange?()
+    }
+
+    func useCalendarDefaultProvider(
+        eventTaskID: String,
+        in contextStore: ContextStore
+    ) throws {
+        guard let task = try contextStore.eventTasks.fetch(id: eventTaskID),
+              let brief = try contextStore.eventContexts.fetchBrief(
+                contextID: task.contextID
+              ) else {
+            throw TaskProviderError.taskNotFound
+        }
+        guard let destination = destination(
+            for: brief.link.calendarIdentifier
+        ), destination.isEnabled,
+        let account = try repository.fetchAccount(
+            id: destination.providerAccountID
+        ) else {
+            throw TaskProviderError.listUnavailable
+        }
+        if account.provider == provider.provider {
+            guard authorizationState == .authorized else {
+                throw TaskProviderError.authorizationRequired
+            }
+        } else {
+            guard account.authorizationState == .authorized,
+                  let asyncProvider = asyncProviders[account.provider],
+                  asyncProvider.authorizationState == .authorized else {
+                throw TaskProviderError.authorizationRequired
+            }
+        }
+        try repository.clearLocalOnly(eventTaskID: eventTaskID)
+        try repository.removePendingOperation(eventTaskID: eventTaskID)
+        syncEventTask(
+            in: contextStore,
+            contextID: task.contextID,
+            task: task
+        )
+        onLocalProjectionChange?()
+    }
+
+    func retryPendingOperation(
+        eventTaskID: String,
+        in contextStore: ContextStore
+    ) async throws -> ProviderPendingOperationKind {
+        guard let pending = try repository.fetchPendingOperation(
+            eventTaskID: eventTaskID
+        ) else {
+            throw TaskProviderError.taskNotFound
+        }
+        guard pending.canRetry else {
+            throw TaskProviderError.providerFailure(
+                "This provider operation reached its retry limit. Keep the task local-only or link it to an existing remote task."
+            )
+        }
+        guard let account = try repository.fetchAccount(
+            id: pending.accountID
+        ), let task = try contextStore.eventTasks.fetch(id: eventTaskID),
+        let brief = try contextStore.eventContexts.fetchBrief(
+            contextID: task.contextID
+        ) else { throw TaskProviderError.taskNotFound }
+
+        switch pending.operation {
+        case .create:
+            let destination = CalendarTaskDestinationRecord(
+                calendarIdentifier: brief.link.calendarIdentifier,
+                providerAccountID: account.id,
+                remoteParentID: pending.remoteParentID,
+                isEnabled: true,
+                fallbackToLocal: true,
+                createdAt: pending.createdAt,
+                updatedAt: pending.updatedAt
+            )
+            if account.provider == provider.provider {
+                guard authorizationState == .authorized else {
+                    throw TaskProviderError.authorizationRequired
+                }
+                createRemoteTask(
+                    using: provider,
+                    task: task,
+                    account: account,
+                    destination: destination,
+                    brief: brief,
+                    pending: pending
+                )
+            } else {
+                guard account.authorizationState == .authorized,
+                      let asyncProvider = asyncProviders[account.provider],
+                      asyncProvider.authorizationState == .authorized else {
+                    throw TaskProviderError.authorizationRequired
+                }
+                await createRemoteTask(
+                    using: asyncProvider,
+                    task: task,
+                    account: account,
+                    destination: destination,
+                    brief: brief,
+                    pending: pending
+                )
+            }
+        case .update:
+            guard let binding = try repository.fetchBinding(
+                eventTaskID: eventTaskID
+            ), let item = try repository.fetchProviderItem(
+                id: binding.providerItemID
+            ) else {
+                throw TaskProviderError.taskNotFound
+            }
+            if account.provider == provider.provider {
+                syncBoundEventTask(
+                    task: task,
+                    brief: brief,
+                    binding: binding,
+                    item: item,
+                    account: account,
+                    using: provider,
+                    pending: pending
+                )
+            } else {
+                guard let asyncProvider = asyncProviders[account.provider]
+                else { throw TaskProviderError.authorizationRequired }
+                await syncBoundEventTask(
+                    task: task,
+                    brief: brief,
+                    binding: binding,
+                    item: item,
+                    account: account,
+                    using: asyncProvider,
+                    pending: pending
+                )
+            }
+        case .delete:
+            if try repository.fetchBinding(eventTaskID: eventTaskID) == nil,
+               pending.lastError == nil {
+                return .delete
+            }
+            if account.provider == provider.provider {
+                try retryPendingDelete(pending, using: provider)
+            } else if let asyncProvider = asyncProviders[account.provider] {
+                try await retryPendingDelete(
+                    pending,
+                    using: asyncProvider
+                )
+            } else {
+                throw TaskProviderError.authorizationRequired
+            }
+            return .delete
+        }
+
+        if let remaining = try repository.fetchPendingOperation(
+            eventTaskID: eventTaskID
+        ) {
+            throw TaskProviderError.providerFailure(
+                remaining.lastError
+                    ?? "The provider operation is still pending."
+            )
+        }
+        return pending.operation
+    }
+
+    func relinkCandidates(
+        eventTaskID: String
+    ) async throws -> [TaskProviderLinkCandidate] {
+        var candidates = [TaskProviderLinkCandidate]()
+        var lastFailure: Error?
+
+        if authorizationState == .authorized,
+           let listingProvider = provider as? any TaskSnapshotListing {
+            let lists = taskLists.filter { $0.provider == provider.provider }
+            do {
+                let snapshots = try await listingProvider.listTasks(in: lists)
+                candidates.append(contentsOf: try makeRelinkCandidates(
+                    snapshots: snapshots,
+                    lists: lists,
+                    eventTaskID: eventTaskID
+                ))
+            } catch {
+                lastFailure = error
+            }
+        }
+
+        for kind in [
+            TaskProviderKind.googleTasks,
+            .todoist,
+            .microsoftToDo
+        ] {
+            guard let asyncProvider = asyncProviders[kind],
+                  asyncProvider.authorizationState == .authorized else {
+                continue
+            }
+            let lists = taskLists.filter { $0.provider == kind }
+            do {
+                let snapshots = try await asyncProvider.listTasks(in: lists)
+                candidates.append(contentsOf: try makeRelinkCandidates(
+                    snapshots: snapshots,
+                    lists: lists,
+                    eventTaskID: eventTaskID
+                ))
+            } catch {
+                lastFailure = error
+            }
+        }
+
+        if candidates.isEmpty, let lastFailure {
+            throw lastFailure
+        }
+        var uniqueCandidates = [String: TaskProviderLinkCandidate]()
+        for candidate in candidates {
+            uniqueCandidates[candidate.id] = candidate
+        }
+        return uniqueCandidates.values.sorted {
+            if $0.provider != $1.provider {
+                return $0.provider.title < $1.provider.title
+            }
+            if $0.accountTitle != $1.accountTitle {
+                return $0.accountTitle.localizedCaseInsensitiveCompare(
+                    $1.accountTitle
+                ) == .orderedAscending
+            }
+            if $0.listTitle != $1.listTitle {
+                return $0.listTitle.localizedCaseInsensitiveCompare(
+                    $1.listTitle
+                ) == .orderedAscending
+            }
+            return $0.title.localizedCaseInsensitiveCompare($1.title)
+                == .orderedAscending
+        }
+    }
+
+    private func makeRelinkCandidates(
+        snapshots: [RemoteTaskSnapshot],
+        lists: [RemoteTaskList],
+        eventTaskID: String
+    ) throws -> [TaskProviderLinkCandidate] {
+        let listsByParent = Dictionary(grouping: lists, by: \.id)
+        var result = [TaskProviderLinkCandidate]()
+        for snapshot in snapshots {
+            let matchingLists = listsByParent[snapshot.parentID] ?? []
+            let list: RemoteTaskList?
+            if let accountKey = snapshot.parentAccountKey {
+                list = matchingLists.first { $0.accountKey == accountKey }
+            } else {
+                list = matchingLists.count == 1 ? matchingLists[0] : nil
+            }
+            guard let list else { continue }
+            let account = try repository.upsertAccount(
+                provider: list.provider,
+                accountKey: list.accountKey,
+                displayName: list.sourceTitle,
+                authorizationState: authorizationState(for: list.provider)
+            )
+            if let item = try repository.fetchProviderItem(
+                accountID: account.id,
+                remoteID: snapshot.id
+            ), let owner = try repository.fetchBinding(providerItemID: item.id),
+               owner.eventTaskID != eventTaskID {
+                continue
+            }
+            result.append(TaskProviderLinkCandidate(
+                provider: list.provider,
+                accountKey: list.accountKey,
+                accountTitle: list.sourceTitle,
+                listID: list.id,
+                listTitle: list.title,
+                remoteTaskID: snapshot.id,
+                title: snapshot.title,
+                details: Self.sidebarDetails(snapshot.notes),
+                dueAt: snapshot.dueAt,
+                isCompleted: snapshot.isCompleted
+            ))
+        }
+        return result
+    }
+
+    func relinkEventTask(
+        eventTaskID: String,
+        to candidate: TaskProviderLinkCandidate,
+        in contextStore: ContextStore
+    ) async throws {
+        guard let task = try contextStore.eventTasks.fetch(id: eventTaskID),
+              let brief = try contextStore.eventContexts.fetchBrief(
+                contextID: task.contextID
+              ),
+              let list = taskLists.first(where: {
+                $0.provider == candidate.provider
+                    && $0.accountKey == candidate.accountKey
+                    && $0.id == candidate.listID
+              }) else {
+            throw TaskProviderError.listUnavailable
+        }
+        let account = try repository.upsertAccount(
+            provider: list.provider,
+            accountKey: list.accountKey,
+            displayName: list.sourceTitle,
+            authorizationState: authorizationState(for: list.provider)
+        )
+        let remote: RemoteTaskSnapshot?
+        let capabilities: TaskProviderCapabilities
+        if candidate.provider == provider.provider {
+            guard authorizationState == .authorized else {
+                throw TaskProviderError.authorizationRequired
+            }
+            remote = try provider.lookupTask(
+                id: candidate.remoteTaskID,
+                parentID: candidate.listID
+            )
+            capabilities = provider.capabilities
+        } else {
+            guard account.authorizationState == .authorized,
+                  let asyncProvider = asyncProviders[candidate.provider],
+                  asyncProvider.authorizationState == .authorized else {
+                throw TaskProviderError.authorizationRequired
+            }
+            remote = try await asyncProvider.lookupTask(
+                id: candidate.remoteTaskID,
+                parentID: candidate.listID
+            )
+            capabilities = asyncProvider.capabilities
+        }
+        guard let remote, remote.parentID == candidate.listID else {
+            throw TaskProviderError.taskNotFound
+        }
+        _ = try repository.replaceLinkedTask(
+            account: account,
+            remote: remote,
+            eventTaskID: eventTaskID,
+            occurrenceKey: brief.link.occurrenceIdentityKey,
+            syncHash: projectionHash(
+                remote,
+                capabilities: capabilities
+            ),
+            applyRemoteToEventTask: true
+        )
+        lastErrorMessage = nil
+        onLocalProjectionChange?()
     }
 
     func refreshLinkedTasks(in contextStore: ContextStore) {
@@ -1269,37 +2132,14 @@ final class TaskProviderCoordinator: ObservableObject {
                 )) == true) || projectionChanged
                 continue
             }
-            if binding.syncState != .linked {
-                projectionChanged = true
-            }
-            if let task = try? contextStore.eventTasks.fetch(id: eventTaskID) {
-                if task.title != remote.title {
-                    _ = try? contextStore.updateEventTask(
-                        contextID: task.contextID,
-                        taskID: task.id,
-                        section: task.section,
-                        title: remote.title,
-                        sortOrder: task.sortOrder,
-                        due: task.due
-                    )
-                    projectionChanged = true
-                }
-                if task.isCompleted != remote.isCompleted {
-                    _ = try? contextStore.setEventTaskCompleted(
-                        contextID: task.contextID,
-                        taskID: task.id,
-                        isCompleted: remote.isCompleted
-                    )
-                    projectionChanged = true
-                }
-            }
-            try? repository.updateLinkedTask(
-                bindingID: binding.id,
-                itemID: item.id,
+            projectionChanged = reconcileRemoteRefresh(
                 remote: remote,
-                syncState: .linked,
-                syncHash: remoteHash(remote)
-            )
+                binding: binding,
+                item: item,
+                eventTaskID: eventTaskID,
+                capabilities: provider.capabilities,
+                in: contextStore
+            ) || projectionChanged
         }
         }
         if projectionChanged {
@@ -1336,11 +2176,12 @@ final class TaskProviderCoordinator: ObservableObject {
                     )) || projectionChanged
                     continue
                 }
-                projectionChanged = applyRemote(
-                    remote,
+                projectionChanged = reconcileRemoteRefresh(
+                    remote: remote,
                     binding: binding,
                     item: item,
                     eventTaskID: eventTaskID,
+                    capabilities: asyncProvider.capabilities,
                     in: contextStore
                 ) || projectionChanged
             } catch TaskProviderError.authorizationRequired,
@@ -1393,17 +2234,12 @@ final class TaskProviderCoordinator: ObservableObject {
             }
             for list in lists {
                 let cursorKey = "microsoft.todo.delta.\(list.id)"
-                // Earlier versions stored a cursor solely for Event Brief
-                // bindings. The first sidebar refresh must ignore that cursor
-                // once, otherwise Graph returns only recent changes and skips
-                // long-standing Microsoft-only tasks.
-                let sidebarCacheKey = "microsoft.todo.sidebar.cache.v1.\(list.id)"
-                let hasCompleteSidebarCache = (try? repository.fetchSyncCursor(
-                    accountID: account.id,
-                    key: sidebarCacheKey
-                )) != nil
+                // Notes remain memory-only. Force one full delta per process
+                // and list so descriptions are hydrated again after relaunch;
+                // subsequent refreshes may safely resume the durable cursor.
+                let hydrationKey = "\(account.id)\u{1F}\(list.id)"
                 let cursorString: String?
-                if hasCompleteSidebarCache {
+                if hydratedMicrosoftListKeys.contains(hydrationKey) {
                     do {
                         cursorString = try repository.fetchSyncCursor(
                             accountID: account.id,
@@ -1441,17 +2277,24 @@ final class TaskProviderCoordinator: ObservableObject {
                         }
                     }
                     for remote in delta.tasks {
+                        microsoftTaskDetails[
+                            microsoftDetailsKey(
+                                accountID: account.id,
+                                remoteID: remote.id
+                            )
+                        ] = remote.notes
                         if let item = try repository.fetchProviderItem(
                             accountID: account.id,
                             remoteID: remote.id
                         ), let binding = try repository.fetchBinding(
                             providerItemID: item.id
                         ), let eventTaskID = binding.eventTaskID {
-                            projectionChanged = applyRemote(
-                                remote,
+                            projectionChanged = reconcileRemoteRefresh(
+                                remote: remote,
                                 binding: binding,
                                 item: item,
                                 eventTaskID: eventTaskID,
+                                capabilities: asyncMicrosoft.capabilities,
                                 in: contextStore
                             ) || projectionChanged
                         } else {
@@ -1468,11 +2311,7 @@ final class TaskProviderCoordinator: ObservableObject {
                             value: nextCursor.absoluteString
                         )
                     }
-                    try repository.saveSyncCursor(
-                        accountID: account.id,
-                        key: sidebarCacheKey,
-                        value: "complete"
-                    )
+                    hydratedMicrosoftListKeys.insert(hydrationKey)
                     completedRefresh = true
                 } catch {
                     // A rejected/expired delta URL must not be reused. The
@@ -1528,7 +2367,14 @@ final class TaskProviderCoordinator: ObservableObject {
                     accountKey: account.accountKey,
                     listID: item.remoteParentID,
                     title: item.cachedTitle,
-                    details: nil,
+                    details: Self.sidebarDetails(
+                        microsoftTaskDetails[
+                            microsoftDetailsKey(
+                                accountID: account.id,
+                                remoteID: item.remoteID
+                            )
+                        ] ?? ""
+                    ),
                     dueAt: item.cachedDueAt,
                     isCompleted: item.cachedCompleted,
                     listTitle: listTitle,
@@ -1541,43 +2387,193 @@ final class TaskProviderCoordinator: ObservableObject {
         }
     }
 
+    private enum ProviderSyncDecision {
+        case unchanged
+        case pushLocal
+        case applyRemote
+        case conflict
+    }
+
+    private func syncDecision(
+        task: EventTask,
+        dueAt: Date?,
+        remote: RemoteTaskSnapshot,
+        binding: TaskBindingRecord,
+        item: ProviderItemRecord,
+        localDueAt: Date?,
+        capabilities: TaskProviderCapabilities
+    ) -> ProviderSyncDecision {
+        let baseline = baselineProjectionHash(
+            binding: binding,
+            item: item,
+            capabilities: capabilities
+        )
+        let localProjection = projectionHash(
+            task: task,
+            dueAt: dueAt,
+            capabilities: capabilities
+        )
+        let remoteProjection = projectionHash(
+            remote,
+            capabilities: capabilities
+        )
+        let remoteDueChanged = !sameProviderDate(
+            item.cachedDueAt,
+            remote.dueAt
+        )
+        let convergedDateOnlyDue = !remoteDueChanged
+            || sameProviderDate(localDueAt, remote.dueAt)
+        if localProjection == remoteProjection,
+           capabilities.supportsTimedDue || convergedDateOnlyDue {
+            return .unchanged
+        }
+
+        var localChanged = localProjection != baseline
+        if !capabilities.supportsTimedDue,
+           remoteDueChanged,
+           !sameProviderDate(localDueAt, item.cachedDueAt) {
+            localChanged = true
+        }
+        let remoteChanged = remoteProjection != baseline
+            || binding.remoteVersion != remote.version
+            || remoteDueChanged
+        return switch (localChanged, remoteChanged) {
+        case (false, false): .unchanged
+        case (true, false): .pushLocal
+        case (false, true): .applyRemote
+        case (true, true): .conflict
+        }
+    }
+
+    private func reconcileRemoteRefresh(
+        remote: RemoteTaskSnapshot,
+        binding: TaskBindingRecord,
+        item: ProviderItemRecord,
+        eventTaskID: String,
+        capabilities: TaskProviderCapabilities,
+        in contextStore: ContextStore
+    ) -> Bool {
+        do {
+            guard try repository.fetchPendingOperation(
+                eventTaskID: eventTaskID
+            ) == nil else {
+                return false
+            }
+        } catch {
+            lastErrorMessage = Self.message(for: error)
+            return false
+        }
+        // A conflict is a user decision gate. A background refresh may update
+        // neither side until the user chooses local, remote, or another task.
+        guard binding.syncState != .conflict else { return false }
+        guard let task = try? contextStore.eventTasks.fetch(id: eventTaskID)
+        else { return false }
+        let brief = try? contextStore.eventContexts.fetchBrief(
+            contextID: task.contextID
+        )
+        let localDueAt = task.effectiveDueDate(
+            eventStart: brief?.link.startSnapshot,
+            eventEnd: brief?.link.endSnapshot
+        )
+        let dueAt = remoteDueDate(
+            localDueAt,
+            capabilities: capabilities
+        )
+        let decision = syncDecision(
+            task: task,
+            dueAt: dueAt,
+            remote: remote,
+            binding: binding,
+            item: item,
+            localDueAt: localDueAt,
+            capabilities: capabilities
+        )
+        switch decision {
+        case .conflict:
+            return ((try? repository.markBinding(
+                bindingID: binding.id,
+                state: .conflict
+            )) == true)
+        case .applyRemote:
+            do {
+                return try applyRemote(
+                    remote,
+                    binding: binding,
+                    item: item,
+                    eventTaskID: eventTaskID,
+                    capabilities: capabilities,
+                    in: contextStore
+                )
+            } catch {
+                lastErrorMessage = Self.message(for: error)
+                return false
+            }
+        case .pushLocal:
+            // A refresh is read-only. If the provider was previously missing
+            // or disconnected, local changes need an explicit resolution.
+            guard binding.syncState == .linked else {
+                return ((try? repository.markBinding(
+                    bindingID: binding.id,
+                    state: .conflict
+                )) == true)
+            }
+            return false
+        case .unchanged:
+            let stateChanged = binding.syncState != .linked
+            try? repository.updateLinkedTask(
+                bindingID: binding.id,
+                itemID: item.id,
+                remote: remote,
+                syncState: .linked,
+                syncHash: projectionHash(
+                    remote,
+                    capabilities: capabilities
+                )
+            )
+            return stateChanged
+        }
+    }
+
     private func applyRemote(
         _ remote: RemoteTaskSnapshot,
         binding: TaskBindingRecord,
         item: ProviderItemRecord,
         eventTaskID: String,
+        capabilities: TaskProviderCapabilities,
         in contextStore: ContextStore
-    ) -> Bool {
-        var projectionChanged = binding.syncState != .linked
-        if let task = try? contextStore.eventTasks.fetch(id: eventTaskID) {
-            if task.title != remote.title {
-                _ = try? contextStore.updateEventTask(
-                    contextID: task.contextID,
-                    taskID: task.id,
-                    section: task.section,
-                    title: remote.title,
-                    sortOrder: task.sortOrder,
-                    due: task.due
-                )
-                projectionChanged = true
-            }
-            if task.isCompleted != remote.isCompleted {
-                _ = try? contextStore.setEventTaskCompleted(
-                    contextID: task.contextID,
-                    taskID: task.id,
-                    isCompleted: remote.isCompleted
-                )
-                projectionChanged = true
-            }
+    ) throws -> Bool {
+        guard let task = try contextStore.eventTasks.fetch(id: eventTaskID)
+        else { throw TaskProviderError.taskNotFound }
+        let brief = try contextStore.eventContexts.fetchBrief(
+            contextID: task.contextID
+        )
+        let localDue = task.effectiveDueDate(
+            eventStart: brief?.link.startSnapshot,
+            eventEnd: brief?.link.endSnapshot
+        )
+        let remoteDueChanged = !sameProviderDate(
+            item.cachedDueAt,
+            remote.dueAt
+        )
+        let shouldApplyDue = capabilities.supportsTimedDue
+            || remoteDueChanged
+        let dueOverride: EventTaskDue? = if shouldApplyDue,
+            !sameProviderDate(localDue, remote.dueAt) {
+            remote.dueAt.map(EventTaskDue.fixed) ?? EventTaskDue.none
+        } else {
+            nil
         }
-        try? repository.updateLinkedTask(
+        return try repository.applyRemoteProjection(
             bindingID: binding.id,
             itemID: item.id,
+            eventTaskID: eventTaskID,
             remote: remote,
-            syncState: .linked,
-            syncHash: remoteHash(remote)
+            syncHash: projectionHash(
+                remote,
+                capabilities: capabilities
+            ),
+            dueOverride: dueOverride
         )
-        return projectionChanged
     }
 
     private static func sidebarDetails(_ notes: String) -> String? {
@@ -1609,6 +2605,23 @@ final class TaskProviderCoordinator: ObservableObject {
         )
     }
 
+    private func snapshot(
+        _ remote: RemoteTaskSnapshot,
+        expectedVersion: String?
+    ) -> RemoteTaskSnapshot {
+        RemoteTaskSnapshot(
+            id: remote.id,
+            parentID: remote.parentID,
+            parentAccountKey: remote.parentAccountKey,
+            title: remote.title,
+            notes: remote.notes,
+            dueAt: remote.dueAt,
+            isCompleted: remote.isCompleted,
+            version: expectedVersion,
+            deepLink: remote.deepLink
+        )
+    }
+
     private func remoteDueDate(
         _ dueAt: Date?,
         capabilities: TaskProviderCapabilities
@@ -1618,30 +2631,112 @@ final class TaskProviderCoordinator: ObservableObject {
         capabilities.supportsTimedDue ? dueAt : nil
     }
 
-    private func localHash(
+    private func projectionHash(
         task: EventTask,
         dueAt: Date?,
-        remote: RemoteTaskSnapshot
+        capabilities: TaskProviderCapabilities
     ) -> String {
-        hash([
-            task.id, task.title, String(task.isCompleted),
-            dueAt?.description ?? "",
-            remote.id, remote.version ?? ""
-        ].joined(separator: "|"))
+        projectionHash(
+            title: task.title,
+            dueAt: dueAt,
+            isCompleted: task.isCompleted,
+            includeDue: capabilities.supportsTimedDue
+        )
     }
 
-    private func remoteHash(_ remote: RemoteTaskSnapshot) -> String {
-        hash([
-            remote.id, remote.parentID, remote.title, remote.notes,
-            remote.dueAt?.description ?? "", String(remote.isCompleted),
-            remote.version ?? ""
-        ].joined(separator: "|"))
+    private func projectionHash(
+        _ remote: RemoteTaskSnapshot,
+        capabilities: TaskProviderCapabilities
+    ) -> String {
+        projectionHash(
+            title: remote.title,
+            dueAt: remote.dueAt,
+            isCompleted: remote.isCompleted,
+            includeDue: capabilities.supportsTimedDue
+        )
+    }
+
+    private func projectionHash(
+        title: String,
+        dueAt: Date?,
+        isCompleted: Bool,
+        includeDue: Bool
+    ) -> String {
+        let dueToken: String
+        if includeDue {
+            dueToken = dueAt.map {
+                String(Int($0.timeIntervalSince1970.rounded()))
+            } ?? "none"
+        } else {
+            dueToken = "date-only-provider"
+        }
+        return "projection:v2:" + hash(
+            [title, dueToken, String(isCompleted)].joined(separator: "|")
+        )
+    }
+
+    private func baselineProjectionHash(
+        binding: TaskBindingRecord,
+        item: ProviderItemRecord,
+        capabilities: TaskProviderCapabilities
+    ) -> String {
+        if let stored = binding.lastSyncedHash,
+           stored.hasPrefix("projection:v2:") {
+            return stored
+        }
+        // v4-v9 hashes mixed local IDs and remote versions. The cached item is
+        // the only safe migration baseline for those legacy rows.
+        return projectionHash(
+            snapshot(from: item),
+            capabilities: capabilities
+        )
+    }
+
+    private func sameProviderDate(_ lhs: Date?, _ rhs: Date?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): true
+        case let (lhs?, rhs?):
+            Int(lhs.timeIntervalSince1970.rounded())
+                == Int(rhs.timeIntervalSince1970.rounded())
+        default: false
+        }
     }
 
     private func hash(_ string: String) -> String {
         SHA256.hash(data: Data(string.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
+    }
+
+    private func handlePendingSyncFailure(
+        _ error: Error,
+        eventTaskID: String,
+        bindingID: String
+    ) {
+        let pending = try? repository.fetchPendingOperation(
+            eventTaskID: eventTaskID
+        )
+        switch error {
+        case TaskProviderError.conflict,
+             TaskProviderError.taskNotFound:
+            try? repository.removePendingOperation(eventTaskID: eventTaskID)
+        default:
+            if let pending {
+                try? repository.recordPendingFailure(
+                    operationID: pending.id,
+                    message: Self.message(for: error)
+                )
+            }
+        }
+        recordSyncError(error, bindingID: bindingID)
+        onLocalProjectionChange?()
+    }
+
+    private func microsoftDetailsKey(
+        accountID: String,
+        remoteID: String
+    ) -> String {
+        "\(accountID)\u{1F}\(remoteID)"
     }
 
     private func recordSyncError(_ error: Error, bindingID: String?) {

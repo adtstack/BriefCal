@@ -609,14 +609,41 @@ struct TaskCenterProviderLink: Equatable {
     let remoteParentID: String
     let syncState: TaskProviderSyncState
     let authorizationState: TaskProviderAuthorizationState
+    let pendingOperation: ProviderPendingOperationKind?
+    let pendingAttemptCount: Int
+    let pendingLastError: String?
 
     var needsAttention: Bool {
-        switch syncState {
+        if pendingOperation != nil { return true }
+        return switch syncState {
         case .missing, .conflict, .disconnected:
             true
         case .pendingCreate, .linked:
             false
         }
+    }
+
+    var statusTitle: String {
+        pendingOperation?.title ?? syncState.title
+    }
+
+    var recoveryMessage: String? {
+        if let pendingOperation {
+            var message = pendingOperation.recoveryMessage
+            if pendingAttemptCount >= ProviderPendingOperationRecord.maximumAttempts {
+                message += " The retry limit has been reached."
+            }
+            if let pendingLastError, !pendingLastError.isEmpty {
+                message += " Last error: \(pendingLastError)"
+            }
+            return message
+        }
+        return syncState.recoveryMessage
+    }
+
+    var canRetryPendingOperation: Bool {
+        pendingOperation != nil
+            && pendingAttemptCount < ProviderPendingOperationRecord.maximumAttempts
     }
 }
 
@@ -629,6 +656,7 @@ struct TaskCenterItem: Equatable, Identifiable {
     let sortOrder: Int
     let source: TaskCenterItemSource
     let providerLink: TaskCenterProviderLink?
+    let isProviderLocalOnly: Bool
     let eventLinkStatus: EventLinkStatus?
     let eventLifecycleStatus: EventLifecycleStatus?
     let wasOriginalDeletedByKaosCal: Bool

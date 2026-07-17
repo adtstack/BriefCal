@@ -77,6 +77,7 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
     let providerDestinations: Int
     let providerSyncCursors: Int
     let providerPendingOperations: Int
+    let providerPreferences: Int
     let contextReferences: Int
 
     var total: Int {
@@ -96,6 +97,7 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
             + providerDestinations
             + providerSyncCursors
             + providerPendingOperations
+            + providerPreferences
             + contextReferences
     }
 }
@@ -372,6 +374,10 @@ struct LocalDataBackupService: Sendable {
                     db,
                     sql: "SELECT COUNT(*) FROM provider_pending_operations"
                 ) ?? 0,
+                providerPreferences: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM task_provider_preferences"
+                ) ?? 0,
                 contextReferences: Int.fetchOne(
                     db,
                     sql: "SELECT COUNT(*) FROM context_references"
@@ -382,6 +388,7 @@ struct LocalDataBackupService: Sendable {
             // data. Explicit child-first deletes make every reset target
             // auditable without relying solely on cascade behavior.
             try db.execute(sql: "DELETE FROM provider_pending_operations")
+            try db.execute(sql: "DELETE FROM task_provider_preferences")
             try db.execute(sql: "DELETE FROM provider_sync_cursors")
             try db.execute(sql: "DELETE FROM task_bindings")
             try db.execute(sql: "DELETE FROM calendar_task_destinations")

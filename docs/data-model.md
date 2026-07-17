@@ -336,6 +336,29 @@ duplicate/relink navigation과 성공한 original write의 focus target이 norma
 temporary reveal/bypass도 persisted selection을 수정하지 않는다. 이미 normally visible한
 event에는 temporary reveal state를 만들지 않는다.
 
+### 구현된 V10 task provider recovery
+
+`v10_task_provider_recovery`는 v5의 delete-only pending table을 task 단위의 durable mutation
+record로 교체하고 task별 local-only preference를 추가한다.
+
+| table/field | 계약 |
+| --- | --- |
+| `provider_pending_operations.event_task_id` | event task FK이자 unique operation owner |
+| `operation` | `create`, `update`, `delete` 중 하나 |
+| `account_id`, `remote_parent_id` | operation이 시작된 exact provider account/list destination |
+| `remote_id` | create에는 `NULL`, update/delete에는 필수 |
+| `expected_version` | write 시점의 provider version/ETag snapshot |
+| `attempt_count` | 0~3; 자동 무한 재시도 없이 명시적 retry를 제한 |
+| `last_error`, timestamps | 재실행 뒤 사용자에게 보여 줄 마지막 실패와 ordering |
+| `task_provider_preferences` | `event_task_id` PK와 `local_only` mode; binding/pending과 분리된 durable opt-out |
+
+local-only 선택은 같은 transaction에서 해당 task binding과 pending을 제거하지만 remote task는
+삭제하지 않는다. exact relink는 선택 remote item의 다른 task 소유 여부를 검사하고 기존 binding,
+pending, local-only preference와 새 binding 및 remote projection을 한 SQLite transaction에서
+교체한다. calendar destination 변경은 기존 binding의 provider/account/list를 바꾸지 않으며,
+그 시점의 unbound task는 local-only로 고정해 다음 edit에서 새 destination으로 조용히 생성되지
+않게 한다.
+
 duplicate candidate는 fetch 시 `CalendarDuplicateCandidateDetector.candidateIndex`로 한 번 계산해 AppState memory에 event ID별로 보관한다. 카드·Agenda·Inspector는 이 index를 O(1)로 조회하고 DB에 candidate row나 dismissal 상태를 저장하지 않는다. 다음 EventKit refresh에서 index 전체를 새 snapshot으로 교체하고 권한 회수 시 비운다.
 
 ## Status values
@@ -500,6 +523,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - Phase 8 role preference는 `v3_calendar_clarity`로만 추가하며 v1/v2 SQL을 고쳐 쓰지 않는다. role Smart Filter·restriction·duplicate projection은 schema를 필요로 하지 않는다.
 - Phase 9 archive manifest와 Local Data settings는 schema table이 아니며 migration을 추가하지 않는다.
 - saved Set은 기존 v1~v8 SQL을 바꾸지 않고 `v9_saved_calendar_sets`로만 추가한다.
+- task provider recovery는 `v10_task_provider_recovery`로만 추가하며 v4/v5 table SQL을 고쳐 쓰지 않는다.
 - destructive migration은 v1에서 금지한다.
 - import/reset은 active data를 바꾸기 전에 현재 DB의 자동 recovery backup을 만든다.
 
@@ -529,7 +553,7 @@ extra/comment/attribute, trailing/gapped/overlapping payload와 WAL/SHM은 거�
 - `is_encrypted = false`
 
 archive format version은 DB schema와 별도다. 현재 마지막 migration은
-`v9_saved_calendar_sets`이며 manifest의 전체 migration 목록과 SQLite 내부 migration table이
+`v10_task_provider_recovery`이며 manifest의 전체 migration 목록과 SQLite 내부 migration table이
 맞아야 한다. 기기 이름과 `source_machine_name`은 저장하지 않는다.
 SHA-256은 manifest와 DB entry의 byte 일치 확인이며 제작자 서명은 아니다. Phase 9은
 실행 중인 앱과 application identifier, current schema object와 migration 목록이
@@ -551,6 +575,7 @@ Reset은 사전 자동 ZIP 뒤 KaosCal이 소유한 active user-data table을 �
 - `calendar_sets`
 - `context_references`
 - `provider_pending_operations`
+- `task_provider_preferences`
 - `provider_sync_cursors`
 - `task_bindings`
 - `calendar_task_destinations`

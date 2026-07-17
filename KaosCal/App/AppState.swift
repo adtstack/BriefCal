@@ -1949,6 +1949,151 @@ final class AppState: ObservableObject {
         }
     }
 
+    @discardableResult
+    func keepTaskLocalOnly(_ id: TaskCenterItemID) -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
+        guard case let .eventTask(taskID, _) = id,
+              let taskProviderCoordinator else {
+            localOperationError = "Only Event Brief tasks can change their provider link."
+            return false
+        }
+        do {
+            try taskProviderCoordinator.keepTaskLocalOnly(
+                eventTaskID: taskID
+            )
+            localOperationError = nil
+            loadSelectedEventBrief()
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            refreshTaskCenter()
+            return false
+        }
+    }
+
+    @discardableResult
+    func useCalendarDefaultTaskProvider(_ id: TaskCenterItemID) -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
+        guard case let .eventTask(taskID, _) = id,
+              let contextStore,
+              let taskProviderCoordinator else {
+            localOperationError = "Only Event Brief tasks can use a calendar provider destination."
+            return false
+        }
+        do {
+            try taskProviderCoordinator.useCalendarDefaultProvider(
+                eventTaskID: taskID,
+                in: contextStore
+            )
+            localOperationError = nil
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            refreshTaskCenter()
+            return false
+        }
+    }
+
+    func taskProviderRelinkCandidates(
+        for id: TaskCenterItemID
+    ) async throws -> [TaskProviderLinkCandidate] {
+        guard localDataOperationState == .idle else {
+            throw localDataMaintenanceBlockError
+        }
+        guard case let .eventTask(taskID, _) = id,
+              let taskProviderCoordinator else {
+            throw TaskProviderError.taskNotFound
+        }
+        return try await taskProviderCoordinator.relinkCandidates(
+            eventTaskID: taskID
+        )
+    }
+
+    @discardableResult
+    func relinkTaskProvider(
+        _ id: TaskCenterItemID,
+        to candidate: TaskProviderLinkCandidate
+    ) async -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
+        guard case let .eventTask(taskID, _) = id,
+              let contextStore,
+              let taskProviderCoordinator else {
+            localOperationError = "The Event Brief task is no longer available."
+            return false
+        }
+        do {
+            try await taskProviderCoordinator.relinkEventTask(
+                eventTaskID: taskID,
+                to: candidate,
+                in: contextStore
+            )
+            localOperationError = nil
+            loadSelectedEventBrief()
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            refreshTaskCenter()
+            return false
+        }
+    }
+
+    @discardableResult
+    func retryTaskProviderOperation(
+        _ id: TaskCenterItemID
+    ) async -> Bool {
+        guard localDataOperationState == .idle else {
+            localOperationError = Self.message(
+                for: localDataMaintenanceBlockError
+            )
+            return false
+        }
+        guard case let .eventTask(taskID, contextID) = id,
+              let contextStore,
+              let taskProviderCoordinator else {
+            localOperationError = "The Event Brief task is no longer available."
+            return false
+        }
+        do {
+            let completedOperation = try await taskProviderCoordinator
+                .retryPendingOperation(
+                    eventTaskID: taskID,
+                    in: contextStore
+                )
+            if completedOperation == .delete {
+                try contextStore.deleteEventTask(
+                    contextID: contextID,
+                    taskID: taskID
+                )
+            }
+            localOperationError = nil
+            loadSelectedEventBrief()
+            refreshTaskCenter()
+            return true
+        } catch {
+            localOperationError = Self.message(for: error)
+            refreshTaskCenter()
+            return false
+        }
+    }
+
     func setTaskCenterItemCompleted(
         _ id: TaskCenterItemID,
         isCompleted: Bool

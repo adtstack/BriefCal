@@ -44,7 +44,7 @@ KaosCal은 macOS 14 이상을 대상으로 하는 macOS-first local-first calend
 
 ## 현재 모듈 구조
 
-아래 tree는 Phase 9 Local Data 이후의 calendar usage와 saved Calendar Set 확장을 포함한 실제 구조다. recurrence editor와 mutation/linked-delete impact review는 `EventEditorView`, scope·partial-success·session Undo와 missing/orphan/deleted-original recovery 조정은 `AppState`, change-log/relink/delete-finalize transaction은 기존 `ContextStore`에 유지했다. Phase 8은 EventKit snapshot을 바꾸지 않고 `CalendarClarity`의 로컬 projection과 additive v3 preference 저장소를 추가했다. 이후 v8은 calendar usage를, v9는 저장 Set·membership·현재 선택을 additive table로 추가한다. Phase 9 Local Data 기능은 같은 `AppDatabase` writer의 snapshot/restore와 `ContextStore` local-data service를 Settings UI에 연결한다.
+아래 tree는 Phase 9 Local Data 이후의 calendar usage와 saved Calendar Set, v10 task provider recovery 확장을 포함한 실제 구조다. recurrence editor와 mutation/linked-delete impact review는 `EventEditorView`, scope·partial-success·session Undo와 missing/orphan/deleted-original recovery 조정은 `AppState`, change-log/relink/delete-finalize transaction은 기존 `ContextStore`에 유지했다. Phase 8은 EventKit snapshot을 바꾸지 않고 `CalendarClarity`의 로컬 projection과 additive v3 preference 저장소를 추가했다. 이후 v8은 calendar usage를, v9는 저장 Set·membership·현재 선택을, v10은 task별 pending/local-only recovery를 additive table로 추가한다. Phase 9 Local Data 기능은 같은 `AppDatabase` writer의 snapshot/restore와 `ContextStore` local-data service를 Settings UI에 연결한다.
 
 ```text
 KaosCal.app
@@ -177,6 +177,13 @@ TaskProviderCoordinator.taskLists metadata
   → Due date / Title sort
   → ProviderTaskSidebarView
 ```
+
+Event Brief task provider write는 binding의 provider/account/list를 source of truth로 사용한다.
+local/remote projection hash와 remote version을 비교해 unchanged, push-local, apply-remote,
+conflict를 나누며 remote lookup의 nil은 자동 create가 아니라 missing이다. create/update/delete
+전에 v10 pending row를 저장하고 명시적 retry만 최대 3회 허용한다. exact relink와 remote
+projection 적용은 한 SQLite transaction이고 local-only는 binding/pending만 제거해 remote task를
+보존한다.
 
 - 빈 list는 `taskLists` metadata가 보존하고, 일시적 metadata 조회 실패에는 이미 loaded된
   item의 list/account snapshot을 fallback으로 사용한다. authorization loss나 명시적
@@ -396,13 +403,13 @@ EventKitProvider
 
 ```text
 KaosCalApp / AppBootstrap
-  → AppDatabase(DatabaseQueue + v1 ... v9 additive migrations)
+  → AppDatabase(DatabaseQueue + v1 ... v10 additive migrations)
   → ContextStore transaction boundary
   → EventContext/EventTask/PersonalTask/CalendarRole/CalendarSet repositories
   → TaskCenterRepository combined read
 ```
 
-- `v1_context_store`는 `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`만 만든 immutable baseline이다. Phase 6은 이 baseline을 바꾸지 않고 `v2_event_change_log`를 additive migration으로 추가했다. Phase 7B는 기존 status/snapshot/foreign key와 v2 `relinked`, Phase 7C는 기존 `cancelled`/`orphaned`, `cancelled` log, scope와 unavailable Undo를 재사용해 migration을 추가하지 않았다. Phase 8은 기존 table을 바꾸지 않고 `v3_calendar_clarity`의 sparse `calendar_preferences`를 추가했다. Phase 9 settings/backup metadata는 DB table이 아니라 archive manifest다. 이후 task provider/reference 확장이 v4~v7, calendar usage가 v8, 저장 Calendar Set이 `v9_saved_calendar_sets`로 이어진다.
+- `v1_context_store`는 `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`만 만든 immutable baseline이다. Phase 6은 이 baseline을 바꾸지 않고 `v2_event_change_log`를 additive migration으로 추가했다. Phase 7B는 기존 status/snapshot/foreign key와 v2 `relinked`, Phase 7C는 기존 `cancelled`/`orphaned`, `cancelled` log, scope와 unavailable Undo를 재사용해 migration을 추가하지 않았다. Phase 8은 기존 table을 바꾸지 않고 `v3_calendar_clarity`의 sparse `calendar_preferences`를 추가했다. Phase 9 settings/backup metadata는 DB table이 아니라 archive manifest다. 이후 task provider/reference 확장이 v4~v7, calendar usage가 v8, 저장 Calendar Set이 v9, task provider durable recovery가 `v10_task_provider_recovery`로 이어진다.
 - 테스트 host는 `XCTestConfigurationFilePath`를 감지해 default Application Support DB를 열지 않는다. repository test는 in-memory 또는 임시 파일 DB만 사용한다.
 - 앱 시작 DB open/migration 실패는 in-memory fallback 없이 전역 복구 화면으로 전환한다. 기존 DB를 삭제하거나 덮어쓰지 않는다.
 - 첫 non-empty notes 또는 event task 저장만 context+link를 만들며, resolve부터 insert/update까지 하나의 write transaction이다.
@@ -481,7 +488,7 @@ Settings / AppState local-data operation gate
   → post-restore schema/integrity/FK check + local projection reload
 ```
 
-- archive format version은 SQLite schema와 독립적이다. manifest는 현재 v9까지의 migration 목록, DB byte count와 SHA-256을 기록하며 기기 이름은 기록하지 않는다.
+- archive format version은 SQLite schema와 독립적이다. manifest는 현재 v10까지의 migration 목록, DB byte count와 SHA-256을 기록하며 기기 이름은 기록하지 않는다.
 - 수동 파일 작업은 `NSSavePanel`/`NSOpenPanel`에서 사용자가 고른 security-scoped URL과 user-selected read/write entitlement만 사용한다. 자동 backup은 sandbox Application Support 안에 둔다.
 - import는 root의 정확한 두 store-only entry만 허용한다. manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 두고 filesystem file replacement, WAL/SHM copy, nested path, duplicate/symlink/extra entry, deflate/encryption/data-descriptor/ZIP64/multi-disk와 record-level merge는 사용하지 않는다.
 - SHA-256은 archive 내부 byte integrity 검사일 뿐 제작자 서명이 아니다. 실행 중인 앱과 application identifier·current schema object·migration 목록이 정확히 같은 신뢰 가능한 KaosCal backup만 import하며 과거 schema 자동 migration이나 미래 schema downgrade는 하지 않는다.

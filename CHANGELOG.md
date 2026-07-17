@@ -21,6 +21,10 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
 - **Task Provider recovery:** Task Center에 provider·계정·list와 linked/pending/attention
   상태를 표시하고 missing 재확인·재생성, conflict local/remote 선택, disconnected 설정
   복구 동작을 추가했다.
+- **Task Provider P1/P2 safety:** local/remote projection과 version을 비교하는 충돌 상태기계,
+  remote 삭제의 non-destructive missing, remote due 반영, create/update/delete durable pending과
+  3회 명시적 retry를 추가했다. provider/account/list/task exact 후보 relink와 원격 task를
+  보존하는 task별 durable local-only, destination 변경 시 기존 task 보호도 제공한다.
 - **Apple Reminders connection:** 오른쪽 `Tasks`를 전체 높이로 표시하고 처음 열 때
   Reminders 권한을 문맥에 맞게 요청한다. 거부 상태에서는 System Settings 복구 동작을,
   연결 뒤에는 항상 보이는 연결 상태와 실제 Reminders 목록·task 조회를 제공한다.

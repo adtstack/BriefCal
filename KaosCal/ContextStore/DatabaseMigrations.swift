@@ -732,6 +732,83 @@ enum DatabaseMigrations {
                 );
             """)
         }
+        migrator.registerMigration("v10_task_provider_recovery") { db in
+            try db.execute(sql: """
+                ALTER TABLE provider_pending_operations
+                    RENAME TO provider_pending_operations_v9;
+                DROP INDEX provider_pending_operations_account;
+
+                CREATE TABLE provider_pending_operations (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    account_id TEXT NOT NULL
+                        REFERENCES provider_accounts(id) ON DELETE CASCADE,
+                    event_task_id TEXT NOT NULL UNIQUE
+                        REFERENCES event_tasks(id) ON DELETE CASCADE,
+                    operation TEXT NOT NULL
+                        CHECK (operation IN ('create', 'update', 'delete')),
+                    remote_id TEXT,
+                    remote_parent_id TEXT NOT NULL,
+                    expected_version TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0
+                        CHECK (attempt_count BETWEEN 0 AND 3),
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    CHECK (
+                        (operation = 'create' AND remote_id IS NULL)
+                        OR (operation != 'create' AND remote_id IS NOT NULL)
+                    )
+                );
+
+                INSERT INTO provider_pending_operations (
+                    id, account_id, event_task_id, operation, remote_id,
+                    remote_parent_id, expected_version, attempt_count,
+                    last_error, created_at, updated_at
+                )
+                SELECT pending.id, pending.account_id, binding.event_task_id,
+                    'delete', pending.remote_id, pending.remote_parent_id,
+                    pending.expected_version,
+                    MAX(0, MIN(pending.attempt_count, 3)), pending.last_error,
+                    pending.created_at, pending.updated_at
+                FROM provider_pending_operations_v9 AS pending
+                INNER JOIN provider_items AS item
+                    ON item.account_id = pending.account_id
+                    AND item.remote_id = pending.remote_id
+                    AND item.remote_parent_id = pending.remote_parent_id
+                INNER JOIN task_bindings AS binding
+                    ON binding.provider_item_id = item.id
+                WHERE binding.event_task_id IS NOT NULL
+                  AND pending.rowid = (
+                    SELECT candidate.rowid
+                    FROM provider_pending_operations_v9 AS candidate
+                    INNER JOIN provider_items AS candidate_item
+                        ON candidate_item.account_id = candidate.account_id
+                        AND candidate_item.remote_id = candidate.remote_id
+                        AND candidate_item.remote_parent_id = candidate.remote_parent_id
+                    INNER JOIN task_bindings AS candidate_binding
+                        ON candidate_binding.provider_item_id = candidate_item.id
+                    WHERE candidate_binding.event_task_id = binding.event_task_id
+                    ORDER BY candidate.updated_at DESC, candidate.rowid DESC
+                    LIMIT 1
+                  );
+
+                DROP TABLE provider_pending_operations_v9;
+
+                CREATE INDEX provider_pending_operations_account
+                    ON provider_pending_operations(account_id, updated_at);
+                CREATE INDEX provider_pending_operations_task
+                    ON provider_pending_operations(event_task_id);
+
+                CREATE TABLE task_provider_preferences (
+                    event_task_id TEXT PRIMARY KEY NOT NULL
+                        REFERENCES event_tasks(id) ON DELETE CASCADE,
+                    link_mode TEXT NOT NULL
+                        CHECK (link_mode IN ('local_only')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+            """)
+        }
         return migrator
     }
 }

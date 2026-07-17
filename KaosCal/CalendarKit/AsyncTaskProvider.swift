@@ -10,6 +10,13 @@ protocol AsyncTaskProviding: AnyObject {
     func updateTask(_ task: RemoteTaskSnapshot, with patch: RemoteTaskPatch) async throws -> RemoteTaskSnapshot
     func deleteTask(_ task: RemoteTaskSnapshot, expectedVersion: String?) async throws
     func lookupTask(id: String, parentID: String) async throws -> RemoteTaskSnapshot?
+    func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot]
+}
+
+extension AsyncTaskProviding {
+    func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
+        []
+    }
 }
 
 @MainActor
@@ -81,14 +88,60 @@ final class GoogleTasksProvider: AsyncTaskProviding {
         } catch TaskProviderError.taskNotFound { return nil }
     }
 
+    func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
+        var snapshots = [RemoteTaskSnapshot]()
+        for list in lists where list.provider == .googleTasks
+            && list.accountKey == accountKey {
+            var pageToken: String?
+            var seenTokens = Set<String>()
+            repeat {
+                let (data, _) = try await session.send {
+                    GoogleTasksAPI.tasksRequest(
+                        listID: list.id,
+                        pageToken: pageToken,
+                        accessToken: $0
+                    )
+                }
+                let page = try JSONDecoder().decode(TaskPage.self, from: data)
+                snapshots.append(contentsOf: (page.items ?? []).map {
+                    snapshot($0, parentID: list.id)
+                })
+                pageToken = page.nextPageToken
+                if let pageToken, !seenTokens.insert(pageToken).inserted {
+                    throw TaskProviderError.providerFailure(
+                        "Google Tasks returned a repeated task page cursor."
+                    )
+                }
+            } while pageToken != nil
+        }
+        return snapshots
+    }
+
     private func snapshot(from data: Data, parentID: String) throws -> RemoteTaskSnapshot {
-        let task = try JSONDecoder().decode(Task.self, from: data)
+        snapshot(try JSONDecoder().decode(Task.self, from: data), parentID: parentID)
+    }
+
+    private func snapshot(_ task: Task, parentID: String) -> RemoteTaskSnapshot {
         let formatter = ISO8601DateFormatter()
-        return RemoteTaskSnapshot(id: task.id, parentID: parentID, title: task.title ?? "", notes: task.notes ?? "", dueAt: task.due.flatMap { formatter.date(from: $0) }, isCompleted: task.status == "completed", version: task.etag, deepLink: nil)
+        return RemoteTaskSnapshot(
+            id: task.id,
+            parentID: parentID,
+            parentAccountKey: accountKey,
+            title: task.title ?? "",
+            notes: task.notes ?? "",
+            dueAt: task.due.flatMap { formatter.date(from: $0) },
+            isCompleted: task.status == "completed",
+            version: task.etag,
+            deepLink: nil
+        )
     }
 
     private struct ListResponse: Decodable {
         let items: [List]?
+        let nextPageToken: String?
+    }
+    private struct TaskPage: Decodable {
+        let items: [Task]?
         let nextPageToken: String?
     }
     private struct List: Decodable { let id: String; let title: String }
@@ -179,6 +232,27 @@ final class TodoistTasksProvider: AsyncTaskProviding {
         }
     }
 
+    func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
+        var snapshots = [RemoteTaskSnapshot]()
+        for list in lists where list.provider == .todoist
+            && list.accountKey == accountKey {
+            let tasks = try await allPages(
+                request: {
+                    TodoistAPI.tasksRequest(
+                        parentID: list.id,
+                        cursor: $1,
+                        accessToken: $0
+                    )
+                },
+                type: TaskPage.self
+            )
+            snapshots.append(contentsOf: tasks.map {
+                snapshot($0, fallbackParentID: list.id)
+            })
+        }
+        return snapshots
+    }
+
     private func completedTask(
         id: String,
         parentID: String
@@ -249,7 +323,20 @@ final class TodoistTasksProvider: AsyncTaskProviding {
     ) -> RemoteTaskSnapshot {
         let formatter = ISO8601DateFormatter()
         let parentID = task.sectionID.map { "section:\($0)" } ?? task.projectID.map { "project:\($0)" } ?? fallbackParentID
-        return RemoteTaskSnapshot(id: task.id, parentID: parentID, title: task.content, notes: task.description ?? "", dueAt: task.due?.dateTime.flatMap { formatter.date(from: $0) } ?? task.due?.date.flatMap { formatter.date(from: $0 + "T00:00:00Z") }, isCompleted: task.completedAt != nil, version: task.updatedAt, deepLink: URL(string: "https://app.todoist.com/app/task/\(task.id)"))
+        return RemoteTaskSnapshot(
+            id: task.id,
+            parentID: parentID,
+            parentAccountKey: accountKey,
+            title: task.content,
+            notes: task.description ?? "",
+            dueAt: task.due?.dateTime.flatMap { formatter.date(from: $0) }
+                ?? task.due?.date.flatMap {
+                    formatter.date(from: $0 + "T00:00:00Z")
+                },
+            isCompleted: task.completedAt != nil,
+            version: task.updatedAt,
+            deepLink: URL(string: "https://app.todoist.com/app/task/\(task.id)")
+        )
     }
 
     private protocol CursorPage: Decodable {
@@ -267,6 +354,14 @@ final class TodoistTasksProvider: AsyncTaskProviding {
         let results: [Section]
         let nextCursor: String?
         enum CodingKeys: String, CodingKey { case results; case nextCursor = "next_cursor" }
+    }
+    private struct TaskPage: CursorPage {
+        let results: [Task]
+        let nextCursor: String?
+        enum CodingKeys: String, CodingKey {
+            case results
+            case nextCursor = "next_cursor"
+        }
     }
     private struct Section: Decodable {
         let id: String
@@ -421,6 +516,36 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
         }
     }
 
+    func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
+        var snapshots = [RemoteTaskSnapshot]()
+        for list in lists where list.provider == .microsoftToDo
+            && list.accountKey == accountKey {
+            var nextLink: URL?
+            var seenLinks = Set<String>()
+            repeat {
+                let (data, _) = try await session.send {
+                    MicrosoftToDoAPI.tasksRequest(
+                        listID: list.id,
+                        accessToken: $0,
+                        nextLink: nextLink
+                    )
+                }
+                let page = try JSONDecoder().decode(TaskPage.self, from: data)
+                snapshots.append(contentsOf: page.value.map {
+                    snapshot($0, parentID: list.id, fallbackDeepLink: nil)
+                })
+                nextLink = page.nextLink.flatMap(URL.init(string:))
+                if let nextLink,
+                   !seenLinks.insert(nextLink.absoluteString).inserted {
+                    throw TaskProviderError.providerFailure(
+                        "Microsoft To Do returned a repeated task page link."
+                    )
+                }
+            } while nextLink != nil
+        }
+        return snapshots
+    }
+
     func fetchDelta(listID: String, cursor: URL?) async throws -> MicrosoftToDoDelta {
         var nextURL = cursor
         var tasks = [RemoteTaskSnapshot]()
@@ -474,6 +599,7 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
         RemoteTaskSnapshot(
             id: task.id,
             parentID: parentID,
+            parentAccountKey: accountKey,
             title: task.title ?? "",
             notes: task.body?.content ?? "",
             dueAt: task.dueDateTime.flatMap(date(from:)),
@@ -516,6 +642,15 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
             case value
             case nextLink = "@odata.nextLink"
             case deltaLink = "@odata.deltaLink"
+        }
+    }
+
+    private struct TaskPage: Decodable {
+        let value: [Task]
+        let nextLink: String?
+        enum CodingKeys: String, CodingKey {
+            case value
+            case nextLink = "@odata.nextLink"
         }
     }
 

@@ -1081,6 +1081,34 @@
   result bundle은 `/tmp/KaosCalTasksFilters-Final-R2-20260716.xcresult`다.
 - 결과: **implemented / real Apple·Microsoft menu, keyboard·VoiceOver live pending**.
 
+## 2026-07-17 — Task Provider P1/P2 상태기계·relink·local-only
+
+- 관련 요구사항: `PRV-009`, `PRV-011`, `BAK-005`
+- `v10_task_provider_recovery`에서 delete-only pending을 event-task별 create/update/delete
+  operation으로 확장하고 account/list/remote/version, 0~3 attempt, 마지막 오류를 저장했다.
+  task별 `task_provider_preferences(local_only)`도 추가해 binding/pending을 제거한 뒤에도
+  재실행 중 자동 provider 생성이 다시 켜지지 않게 했다.
+- linked sync는 저장 binding의 provider/account/list만 사용한다. local/remote projection hash,
+  cached baseline과 remote version을 함께 비교해 unchanged, local push, remote apply, conflict를
+  구분한다. remote lookup nil은 자동 recreate하지 않고 missing이며 remote-only title/completion/
+  due와 binding baseline은 한 SQLite transaction으로 반영한다.
+- provider write 전에 pending을 저장하고 실패를 Task Center에 투영한다. 재시도는 사용자 명시
+  동작만 허용하고 최대 3회다. crash 뒤 양쪽 결과가 이미 같으면 convergence로 baseline을
+  전진시켜 불필요한 conflict를 피한다.
+- provider/account/list/task exact 후보를 검색하는 relink sheet를 추가했다. 최종 lookup과 다른
+  task 소유 검사를 거쳐 local projection, provider item, 기존 binding/pending/local-only와 새
+  binding을 한 transaction에서 교체한다. `Keep Local Only`는 remote task를 삭제하지 않는다.
+- calendar destination 변경은 기존 binding을 이동하지 않고 변경 당시 unbound task를
+  local-only로 고정한다. 변경 후 만든 task만 새 destination을 사용한다.
+- Google의 date-only due는 timed projection hash에서 제외하고 cached remote due 변경을 별도로
+  판정한다. Microsoft 설명은 SQLite/backup에 저장하지 않고 프로세스 첫 full delta로 다시
+  hydrate한다. OAuth snapshot에는 account key를 넣어 account-local list ID를 구분한다.
+- 회귀 테스트 코드는 conflict/no-overwrite, remote apply+delete missing, pending create 재실행+
+  local-only, remote 성공 뒤 local delete crash window, exact relink를 포함한다.
+- 검증: Debug app `build`, `build-for-testing` 컴파일 성공. 사용자 요청에 따라 테스트 실행과
+  실제 provider 계정 fixture는 수행하지 않았다.
+- 결과: **code complete through P2 / user test pending**.
+
 ## 다음 항목 템플릿
 
 ```markdown

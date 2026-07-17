@@ -1,16 +1,16 @@
 # Current Status
 
-> 기준 시각: 2026-07-16, Asia/Seoul
+> 기준 시각: 2026-07-17, Asia/Seoul
 >
 > 용도: 현재 진행 상태의 요약. 범위·판정·실행 증거의 원문은 아래 근거 문서를 따른다.
 
 ## 요약
 
-- **현재 위치:** v1 기능 개발은 종료·동결했다. v2 T0/T1, OAuth task provider T2/T3, T4의 EventKit 유지 결정, T5 reference-only 계층과 동결 후 calendar visibility/availability blocking, saved Calendar Set v9, Task Center provider recovery, mini month event dot, Tasks의 Apple Reminders 직접 연결과 list/source 필터·가독성 개선까지 저장소와 UI를 확장했다. 최종 257-test suite는 통과했고 실제 Exchange/provider·실창·VoiceOver gate는 별도 대기 중이다. 자동 테스트만으로 beta ready를 선언하지 않는다.
+- **현재 위치:** v1 기능 개발은 종료·동결했다. v2 T0/T1, OAuth task provider T2/T3, T4의 EventKit 유지 결정, T5 reference-only 계층과 동결 후 calendar visibility/availability blocking, saved Calendar Set v9, Task Center provider recovery, mini month event dot, Tasks의 Apple Reminders 직접 연결과 list/source 필터·가독성 개선까지 저장소와 UI를 확장했다. 2026-07-17에는 task provider P1/P2 상태기계·durable pending/local-only·exact remote relink를 v10으로 추가했다. 직전 257-test suite는 통과했지만 이 후속 변경은 요청에 따라 test target 컴파일만 확인했고 테스트 실행은 사용자 수동 gate로 남겼다.
 - **다음 기준:** v1 유지보수 예외는 [v1 동결 결정](v1-freeze.md)을 따르고, 새 동작은 [제품·시스템 스펙](specification.md)의 요구사항 ID와 [v2 실행계획](v2-execution-plan.md)을 먼저 갱신한다.
 - **최신 완료 자동 결과:** 257 tests executed, 256 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
 - **중간 체크포인트:** 이전 254-test와 Tasks 300/360pt offscreen·filter focused test도 통과했으며 최종 판정은 257-test 결과를 따른다.
-- **새 구현 / live 대기:** Task Center의 provider/account/list 상태·명시적 missing/conflict/disconnected 복구, mini month 일정 존재 표시 `CAL-007`/`UI-005`, Tasks 안의 Apple Reminders 권한 요청·거부 복구·연결 상태, Apple/Microsoft list 선택·상태·검색·정렬 필터와 읽기 계층을 구현했다. 자동 회귀는 통과했지만 실제 provider·실창·VoiceOver 판정은 남아 있다.
+- **새 구현 / live 대기:** Task Center의 provider/account/list 상태, remote/local 동시 변경 conflict, remote delete missing, bounded pending retry, task별 durable local-only, exact provider/account/list remote relink, remote due projection과 destination 변경 안전성을 구현했다. Mini month `CAL-007`/`UI-005`, Tasks 안의 Apple Reminders 권한·복구·list/source 필터도 코드에 있다. 새 P1/P2 회귀 테스트는 작성·컴파일됐지만 실행하지 않았고 실제 provider·실창·VoiceOver 판정도 남아 있다.
 - **외부 베타 판정:** v1에서는 더 이상 추진하지 않는다. final live UI/accessibility/Exchange gate, 실제 bootstrap fault와 Developer ID/notary/license/support 입력은 알려진 제한으로 보존한다.
 - **증거 경계:** 최신 Phase 10 Release는 EventKit/Exchange write나 실제 손상 DB recovery를 실행하지 않았다. 실제 Exchange 결과는 아래의 별도 과거 live run에만 귀속한다.
 
@@ -22,7 +22,7 @@
 | 1 · EventKit read-only | 실계정 부분 통과 | full access와 `KAOS-TEST`·`일정`의 Exchange/writable 표시 | 권한 거부·복구 UI, shared read-only, live all-day/recurrence 표시, Calendar.app 변경 반영 |
 | 2 · Calendar layout | 구현·자동·offscreen 검증 완료, event dot live 대기 | Day/Week/Agenda 공통 범위, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count | `CAL-007`/`UI-005` 실창·VoiceOver, 실제 고밀도 scroll·선택·inspector, live all-day/recurrence 배치 |
 | 3 · Local context DB | 구현 기준 완료 | v1 DB, repository, identity, 재열기·동시 저장 자동 회귀 | 실제 UI 재실행 유지, identifier churn·detached recurrence |
-| 4 · Event Brief / Task Center | 구현·자동·fixture 시각 검증 완료 | local notes, Before/During/After, personal/event task CRUD, provider source/status와 명시적 recovery, Tasks 전체 높이·Apple Reminders 직접 권한 요청/복구, Apple/Microsoft list·상태·검색·정렬 필터와 300/360pt offscreen | 실제 provider·창의 focus·menu·검색·삭제·재실행, 긴 source 문구·VoiceOver, 다른 remote 직접 relink와 durable per-task unlink |
+| 4 · Event Brief / Task Center | P1/P2 코드·test target 컴파일 완료, 실행 검증 대기 | local notes, Before/During/After, personal/event task CRUD, provider source/status, durable pending/local-only, exact remote relink, remote due/conflict/missing recovery, Tasks 전체 높이·list/source 필터 | 실제 provider 계정별 create/update/delete/relink/unlink·재실행·retry limit, 창 focus/menu/검색, 긴 source 문구·VoiceOver, 작성한 P1/P2 회귀 테스트 실행 |
 | 5 · Real event editing | 비반복 live CRUD 부분 통과 | attendee 없는 writable 단일 일정 create→restart/refetch→update→delete와 서버 residue 0 | Calendar.app 시각 round-trip, all-day, floating/zoned time, identifier churn |
 | 6 · Recurrence / safe move | 구현·자동·Release checkpoint 완료 | 명시적 scope, impact Confirm, linked safe move, change log, 좁은 session Undo | 지원 범위 내 recurrence scope/future split과 calendar move의 live 검증 |
 | 7 · Lifecycle / After Review | 7A–7C 구현, 비반복 linked delete live 통과 | lifecycle, missing/orphan/relink, linked original delete 뒤 local Brief/task 보존 | recurring `thisEvent`, 외부 삭제 지연·one-off exception, crash-window recovery, 남겨 둔 live Brief 정리 |
@@ -34,6 +34,19 @@
 review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
+
+### 2026-07-17 Task Provider P1/P2 코드 체크포인트
+
+- remote/local projection hash와 version을 함께 비교해 remote-only 반영, local-only push,
+  양쪽 변경 conflict를 나누고 remote 삭제는 자동 재생성하지 않는 missing으로 유지한다.
+- create/update/delete 전에 v10 pending row를 저장하고 명시적 재시도를 최대 3회로 제한한다.
+  task별 local-only 선택, destination 변경 전 기존 unbound task 고정, provider/account/list/task
+  exact 후보 선택과 atomic relink를 추가했다.
+- Microsoft task 설명은 원문을 SQLite/backup에 넣지 않고 프로세스 첫 full delta에서 다시
+  채운다. Google의 date-only due는 timed due hash에서 제외하되 remote due 변경은 cache와
+  비교해 적용·충돌 판정한다.
+- 검증: Debug app `build`와 `build-for-testing` 컴파일, `git diff --check` 성공.
+  사용자 요청에 따라 테스트 실행과 실제 계정 조작은 하지 않았다.
 
 ### 2026-07-16 Tasks list 필터·가독성 최종 결과
 
