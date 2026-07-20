@@ -1774,6 +1774,8 @@ struct ProviderTaskSidebarListOption: Equatable, Identifiable {
 enum ProviderTaskSidebarFiltering {
     static let supportedProviders: Set<TaskProviderKind> = [
         .appleReminders,
+        .googleTasks,
+        .todoist,
         .microsoftToDo
     ]
 
@@ -1889,7 +1891,8 @@ enum ProviderTaskSidebarFiltering {
         switch provider {
         case .appleReminders: 0
         case .microsoftToDo: 1
-        default: 2
+        case .googleTasks: 2
+        case .todoist: 3
         }
     }
 
@@ -1921,6 +1924,7 @@ enum ProviderTaskSidebarFiltering {
 
 enum ProviderTaskSidebarSort: String, CaseIterable, Identifiable {
     case dueDate
+    case priority
     case title
 
     var id: String { rawValue }
@@ -1928,6 +1932,7 @@ enum ProviderTaskSidebarSort: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .dueDate: "Due date"
+        case .priority: "Priority"
         case .title: "Title"
         }
     }
@@ -1954,6 +1959,10 @@ enum ProviderTaskSidebarOrdering {
             default:
                 break
             }
+        case .priority:
+            if lhs.priority != rhs.priority {
+                return lhs.priority.rawValue > rhs.priority.rawValue
+            }
         case .title:
             break
         }
@@ -1965,14 +1974,33 @@ enum ProviderTaskSidebarOrdering {
     }
 }
 
+struct ProviderTaskEditorPresentation: Identifiable {
+    enum Mode {
+        case create(preferredList: RemoteTaskList?)
+        case edit(ProviderTaskListItem)
+    }
+
+    let id = UUID()
+    let mode: Mode
+}
+
 struct ProviderTaskSidebarView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var coordinator: TaskProviderCoordinator
     @AppStorage private var statusFilterStorage: String
     @AppStorage private var sortStorage: String
     @AppStorage private var selectedListStorage: String
+    @AppStorage private var calendarSetOnly: Bool
     @State private var searchText = ""
     @State private var isRequestingRemindersAccess = false
+    @State private var editorPresentation: ProviderTaskEditorPresentation?
+    @State private var isSelectingTasks = false
+    @State private var selectedTaskIDs = Set<String>()
+    @State private var isPerformingBulkAction = false
+    @State private var bulkErrorMessage: String?
+    @State private var isUndoing = false
+    @State private var undoErrorMessage: String?
+    @FocusState private var focusedTaskID: String?
 
     init(
         appState: AppState,
@@ -1996,6 +2024,11 @@ struct ProviderTaskSidebarView: View {
             "tasks.sidebar.selectedList.v1",
             store: preferences
         )
+        _calendarSetOnly = AppStorage(
+            wrappedValue: false,
+            "tasks.sidebar.currentCalendarSetOnly.v1",
+            store: preferences
+        )
     }
 
     var body: some View {
@@ -2004,6 +2037,16 @@ struct ProviderTaskSidebarView: View {
 
             if showsTaskControls {
                 taskControls
+                Divider()
+            }
+
+            if isSelectingTasks {
+                bulkActionBar
+                Divider()
+            }
+
+            if coordinator.sidebarUndoState != nil || undoErrorMessage != nil {
+                undoBar
                 Divider()
             }
 
@@ -2024,6 +2067,25 @@ struct ProviderTaskSidebarView: View {
         .onChange(of: isLoading) { _, _ in
             normalizeListSelection()
         }
+        .onChange(of: combinedItems.map(\.id)) { _, availableIDs in
+            selectedTaskIDs.formIntersection(Set(availableIDs))
+            if selectedTaskIDs.isEmpty && displayedItems.isEmpty {
+                isSelectingTasks = false
+            }
+        }
+        .onChange(of: coordinator.sidebarUndoState?.id) { _, _ in
+            undoErrorMessage = nil
+        }
+        .onChange(of: calendarSetOnly) { _, _ in
+            selectedTaskIDs.formIntersection(Set(displayedItems.map(\.id)))
+        }
+        .sheet(item: $editorPresentation) { presentation in
+            ProviderTaskEditorSheet(
+                coordinator: coordinator,
+                mode: presentation.mode,
+                writableLists: writableTaskLists
+            )
+        }
         .accessibilityIdentifier("rightSidebar.tasks")
     }
 
@@ -2038,6 +2100,30 @@ struct ProviderTaskSidebarView: View {
                     .accessibilityLabel("Apple Reminders connected")
                     .help("Apple Reminders connected")
             }
+            Button {
+                toggleSelectionMode()
+            } label: {
+                Image(systemName: isSelectingTasks ? "checkmark" : "checkmark.circle")
+            }
+            .buttonStyle(.plain)
+            .frame(width: 28, height: 28)
+            .disabled(combinedItems.isEmpty || isPerformingBulkAction)
+            .help(isSelectingTasks ? "Finish selecting tasks" : "Select multiple tasks")
+            .accessibilityLabel(isSelectingTasks ? "Finish selecting tasks" : "Select multiple tasks")
+            .accessibilityIdentifier("tasks.selectionMode")
+            Button {
+                editorPresentation = ProviderTaskEditorPresentation(
+                    mode: .create(preferredList: preferredCreationList)
+                )
+            } label: {
+                Image(systemName: "plus")
+            }
+            .buttonStyle(.plain)
+            .frame(width: 28, height: 28)
+            .disabled(!canCreateTask)
+            .help(createTaskHelp)
+            .accessibilityLabel("New task")
+            .accessibilityIdentifier("tasks.create")
             Button {
                 coordinator.refresh()
             } label: {
@@ -2068,6 +2154,17 @@ struct ProviderTaskSidebarView: View {
             .accessibilityIdentifier("tasks.statusFilter")
 
             viewControls
+
+            Toggle(isOn: $calendarSetOnly) {
+                Label(
+                    "Only tasks linked to \(appState.selectedCalendarSetTitle)",
+                    systemImage: "calendar.badge.checkmark"
+                )
+                    .font(.subheadline)
+            }
+            .toggleStyle(.switch)
+            .help("Unlinked tasks are hidden because KaosCal cannot safely infer which Calendar Set they belong to.")
+            .accessibilityIdentifier("tasks.currentCalendarSetOnly")
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
@@ -2184,6 +2281,15 @@ struct ProviderTaskSidebarView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 Spacer()
+                if !coordinator.activeSidebarMutationIDs.isEmpty {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Syncing task changes")
+                } else if let lastSync = coordinator.lastSidebarSyncAt {
+                    Text("Updated \(lastSync.formatted(date: .omitted, time: .shortened))")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
                 Menu {
                     Picker("Sort by", selection: $sortStorage) {
                         ForEach(ProviderTaskSidebarSort.allCases) { option in
@@ -2223,8 +2329,7 @@ struct ProviderTaskSidebarView: View {
 
     private var combinedItems: [ProviderTaskListItem] {
         ProviderTaskSidebarFiltering.availableItems(
-            coordinator.appleRemindersTaskState.items
-                + coordinator.microsoftToDoTaskState.items,
+            coordinator.allSidebarTaskItems,
             lists: coordinator.taskLists,
             fallbackProviders: fallbackListProviders
         )
@@ -2250,7 +2355,7 @@ struct ProviderTaskSidebarView: View {
     }
 
     private var supportedSidebarProviders: [TaskProviderKind] {
-        [.appleReminders, .microsoftToDo]
+        [.appleReminders, .microsoftToDo, .googleTasks, .todoist]
     }
 
     private var listOptions: [ProviderTaskSidebarListOption] {
@@ -2265,6 +2370,8 @@ struct ProviderTaskSidebarView: View {
         var providers = coordinator.taskListRefreshFailures
         if coordinator.isRefreshingOAuthTaskLists {
             providers.insert(.microsoftToDo)
+            providers.insert(.googleTasks)
+            providers.insert(.todoist)
         }
         return providers
     }
@@ -2274,13 +2381,59 @@ struct ProviderTaskSidebarView: View {
         return listOptions.first { $0.identity == selectedList }
     }
 
+    private var writableTaskLists: [RemoteTaskList] {
+        coordinator.taskLists
+            .filter {
+                coordinator.isSidebarListWritable($0)
+            }
+            .sorted {
+                if $0.sourceTitle == $1.sourceTitle {
+                    return $0.title.localizedCaseInsensitiveCompare($1.title)
+                        == .orderedAscending
+                }
+                return $0.sourceTitle.localizedCaseInsensitiveCompare(
+                    $1.sourceTitle
+                ) == .orderedAscending
+            }
+    }
+
+    private var preferredCreationList: RemoteTaskList? {
+        guard let selectedList else {
+            return writableTaskLists.count == 1
+                ? writableTaskLists.first
+                : nil
+        }
+        return writableTaskLists.first {
+            $0.provider == selectedList.provider
+                && $0.accountKey == selectedList.accountKey
+                && $0.id == selectedList.listID
+        }
+    }
+
+    private var canCreateTask: Bool {
+        guard !writableTaskLists.isEmpty else { return false }
+        guard selectedList != nil else { return true }
+        return preferredCreationList != nil
+    }
+
+    private var createTaskHelp: String {
+        if let provider = selectedList?.provider,
+           coordinator.taskListRefreshFailures.contains(provider) {
+            return "Refresh \(provider.title) lists before creating a task."
+        }
+        if writableTaskLists.isEmpty {
+            return "No writable task list is available."
+        }
+        return "Create a task"
+    }
+
     private var selectedListSubtitle: String {
         guard let selectedListOption else {
             let providers = Set(listOptions.map(\.provider))
             if providers.count == 1, let provider = providers.first {
                 return provider.title
             }
-            return "Apple Reminders · Microsoft To Do"
+            return "All connected providers"
         }
         return "\(selectedListOption.provider.title) · \(selectedListOption.accountTitle)"
     }
@@ -2314,11 +2467,23 @@ struct ProviderTaskSidebarView: View {
 
     private var displayedItems: [ProviderTaskListItem] {
         ProviderTaskSidebarFiltering.items(
-            combinedItems,
+            calendarScopedItems,
             list: selectedList,
             status: statusFilter,
             query: searchText
         )
+    }
+
+    private var calendarScopedItems: [ProviderTaskListItem] {
+        guard calendarSetOnly else { return combinedItems }
+        return combinedItems.filter { item in
+            guard let link = coordinator.calendarLink(for: item) else {
+                return false
+            }
+            return appState.currentCalendarSetIncludes(
+                calendarIdentifier: link.calendarIdentifier
+            )
+        }
     }
 
     private var hasSearchQuery: Bool {
@@ -2337,6 +2502,11 @@ struct ProviderTaskSidebarView: View {
     ) -> Int {
         combinedItems.lazy.filter {
             ProviderTaskSidebarFiltering.listIdentity(for: $0) == identity
+                && (!calendarSetOnly || coordinator.calendarLink(for: $0).map {
+                    appState.currentCalendarSetIncludes(
+                        calendarIdentifier: $0.calendarIdentifier
+                    )
+                } == true)
         }.count
     }
 
@@ -2361,6 +2531,8 @@ struct ProviderTaskSidebarView: View {
     private var isLoading: Bool {
         if coordinator.isRefreshingOAuthTaskLists { return true }
         if case .loading = coordinator.appleRemindersTaskState { return true }
+        if case .loading = coordinator.googleTasksTaskState { return true }
+        if case .loading = coordinator.todoistTaskState { return true }
         if case .loading = coordinator.microsoftToDoTaskState { return true }
         return false
     }
@@ -2373,8 +2545,12 @@ struct ProviderTaskSidebarView: View {
         case .microsoftToDo:
             if coordinator.isRefreshingOAuthTaskLists { return true }
             if case .loading = coordinator.microsoftToDoTaskState { return true }
-        default:
-            break
+        case .googleTasks:
+            if coordinator.isRefreshingOAuthTaskLists { return true }
+            if case .loading = coordinator.googleTasksTaskState { return true }
+        case .todoist:
+            if coordinator.isRefreshingOAuthTaskLists { return true }
+            if case .loading = coordinator.todoistTaskState { return true }
         }
         return false
     }
@@ -2384,7 +2560,9 @@ struct ProviderTaskSidebarView: View {
               combinedItems.isEmpty,
               listOptions.isEmpty,
               !coordinator.isRefreshingOAuthTaskLists,
-              case .unavailable = coordinator.microsoftToDoTaskState else {
+              case .unavailable = coordinator.microsoftToDoTaskState,
+              case .unavailable = coordinator.googleTasksTaskState,
+              case .unavailable = coordinator.todoistTaskState else {
             return false
         }
         return true
@@ -2401,13 +2579,21 @@ struct ProviderTaskSidebarView: View {
                 if case .unavailable = coordinator.microsoftToDoTaskState {
                     return true
                 }
-            default:
-                break
+            case .googleTasks:
+                if case .unavailable = coordinator.googleTasksTaskState {
+                    return true
+                }
+            case .todoist:
+                if case .unavailable = coordinator.todoistTaskState {
+                    return true
+                }
             }
             return false
         }
         guard case .unavailable = coordinator.appleRemindersTaskState,
-              case .unavailable = coordinator.microsoftToDoTaskState else {
+              case .unavailable = coordinator.microsoftToDoTaskState,
+              case .unavailable = coordinator.googleTasksTaskState,
+              case .unavailable = coordinator.todoistTaskState else {
             return false
         }
         return true
@@ -2420,6 +2606,12 @@ struct ProviderTaskSidebarView: View {
         }
         if case let .failed(message) = coordinator.microsoftToDoTaskState {
             messages.append("Microsoft To Do: \(message)")
+        }
+        if case let .failed(message) = coordinator.googleTasksTaskState {
+            messages.append("Google Tasks: \(message)")
+        }
+        if case let .failed(message) = coordinator.todoistTaskState {
+            messages.append("Todoist: \(message)")
         }
         return messages.isEmpty ? nil : messages.joined(separator: "\n")
     }
@@ -2435,8 +2627,14 @@ struct ProviderTaskSidebarView: View {
             if case let .failed(message) = coordinator.microsoftToDoTaskState {
                 return "Microsoft To Do: \(message)"
             }
-        default:
-            break
+        case .googleTasks:
+            if case let .failed(message) = coordinator.googleTasksTaskState {
+                return "Google Tasks: \(message)"
+            }
+        case .todoist:
+            if case let .failed(message) = coordinator.todoistTaskState {
+                return "Todoist: \(message)"
+            }
         }
         return nil
     }
@@ -2463,7 +2661,7 @@ struct ProviderTaskSidebarView: View {
             )
         } description: {
             Text(
-                "Grant Reminders access or connect Microsoft To Do in Settings."
+                "Grant Reminders access or connect a task provider in Settings."
             )
         }
     }
@@ -2627,7 +2825,7 @@ struct ProviderTaskSidebarView: View {
 
     private var emptyStateDescription: String {
         if listOptions.isEmpty {
-            return "Create a list in Apple Reminders or Microsoft To Do, then refresh."
+            return "Create a list in a connected task provider, then refresh."
         }
         if let selectedListOption {
             return "\(selectedListOption.provider.title) · \(selectedListOption.accountTitle)"
@@ -2638,7 +2836,7 @@ struct ProviderTaskSidebarView: View {
         case .completed:
             return "Completed tasks from the selected sources will appear here."
         case .all:
-            return "Create a task in Apple Reminders or Microsoft To Do, then refresh."
+            return "Create a task in a connected provider, then refresh."
         }
     }
 
@@ -2676,12 +2874,28 @@ struct ProviderTaskSidebarView: View {
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .onMoveCommand(perform: moveTaskFocus)
     }
 
     @ViewBuilder
     private func taskRows(_ items: [ProviderTaskListItem]) -> some View {
         ForEach(items) { item in
-            taskRow(item)
+            ProviderTaskSidebarRow(
+                appState: appState,
+                coordinator: coordinator,
+                item: item,
+                isSelectionMode: isSelectingTasks,
+                isSelected: selectedTaskIDs.contains(item.id),
+                toggleSelection: {
+                    toggleSelection(of: item)
+                }
+            ) {
+                editorPresentation = ProviderTaskEditorPresentation(
+                    mode: .edit(item)
+                )
+            }
+                .focusable()
+                .focused($focusedTaskID, equals: item.id)
                 .padding(.horizontal, 14)
             if item.id != items.last?.id {
                 Divider()
@@ -2733,6 +2947,10 @@ struct ProviderTaskSidebarView: View {
         if case .failed = coordinator.appleRemindersTaskState { return true }
         if case .loading = coordinator.microsoftToDoTaskState { return true }
         if case .failed = coordinator.microsoftToDoTaskState { return true }
+        if case .loading = coordinator.googleTasksTaskState { return true }
+        if case .failed = coordinator.googleTasksTaskState { return true }
+        if case .loading = coordinator.todoistTaskState { return true }
+        if case .failed = coordinator.todoistTaskState { return true }
         return false
     }
 
@@ -2777,6 +2995,26 @@ struct ProviderTaskSidebarView: View {
                 .foregroundStyle(.secondary)
         case let .failed(message):
             Label("Microsoft To Do: \(message)", systemImage: "exclamationmark.circle")
+                .foregroundStyle(.secondary)
+        case .unavailable, .loaded:
+            EmptyView()
+        }
+        switch coordinator.googleTasksTaskState {
+        case .loading:
+            Label("Refreshing Google Tasks…", systemImage: "arrow.clockwise")
+                .foregroundStyle(.secondary)
+        case let .failed(message):
+            Label("Google Tasks: \(message)", systemImage: "exclamationmark.circle")
+                .foregroundStyle(.secondary)
+        case .unavailable, .loaded:
+            EmptyView()
+        }
+        switch coordinator.todoistTaskState {
+        case .loading:
+            Label("Refreshing Todoist…", systemImage: "arrow.clockwise")
+                .foregroundStyle(.secondary)
+        case let .failed(message):
+            Label("Todoist: \(message)", systemImage: "exclamationmark.circle")
                 .foregroundStyle(.secondary)
         case .unavailable, .loaded:
             EmptyView()
@@ -2829,64 +3067,570 @@ struct ProviderTaskSidebarView: View {
         ProviderTaskSidebarOrdering.precedes(lhs, rhs, by: sort)
     }
 
-    private func taskRow(_ item: ProviderTaskListItem) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(
-                    item.isCompleted ? KaosCalTheme.accent : Color.secondary
-                )
-                .font(.body)
-                .frame(width: 18)
-                .padding(.top, 2)
+    private var selectedTasks: [ProviderTaskListItem] {
+        combinedItems.filter { selectedTaskIDs.contains($0.id) }
+    }
 
-            VStack(alignment: .leading, spacing: 5) {
-                Text(item.title)
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(
-                        item.isCompleted ? Color.secondary : Color.primary
-                    )
-                    .strikethrough(item.isCompleted)
-                    .lineLimit(2)
+    private var selectedTasksAreWritable: Bool {
+        !selectedTasks.isEmpty
+            && selectedTasks.allSatisfy {
+                coordinator.isSidebarTaskWritable($0)
+                    && coordinator.capabilities(for: $0.provider)?
+                        .supportsCompletion == true
+            }
+    }
 
-                if let details = item.details {
-                    Text(details)
+    private var selectedTasksCanMove: Bool {
+        guard let first = selectedTasks.first,
+              coordinator.capabilities(for: first.provider)?
+                .supportsListMove == true else {
+            return false
+        }
+        return selectedTasks.allSatisfy {
+            $0.provider == first.provider
+                && (first.provider == .appleReminders
+                    || $0.accountKey == first.accountKey)
+                && coordinator.isSidebarTaskWritable($0)
+        } && !bulkMoveLists.isEmpty
+    }
+
+    private var bulkMoveLists: [RemoteTaskList] {
+        guard let first = selectedTasks.first else { return [] }
+        return writableTaskLists.filter {
+            $0.provider == first.provider
+                && (first.provider == .appleReminders
+                    || $0.accountKey == first.accountKey)
+        }
+    }
+
+    private var bulkActionBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Text("\(selectedTaskIDs.count) selected")
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                Spacer()
+                Menu("Status") {
+                    Button("Mark Complete") {
+                        performBulkCompletion(true)
+                    }
+                    Button("Mark Incomplete") {
+                        performBulkCompletion(false)
+                    }
+                }
+                .disabled(!selectedTasksAreWritable || isPerformingBulkAction)
+                Menu("Move") {
+                    ForEach(
+                        bulkMoveLists,
+                        id: \.destinationSelectionKey
+                    ) { list in
+                        Button(createListTitle(list)) {
+                            performBulkMove(to: list)
+                        }
+                    }
+                }
+                .disabled(!selectedTasksCanMove || isPerformingBulkAction)
+                if isPerformingBulkAction {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Changing selected tasks")
+                }
+            }
+            if let bulkErrorMessage {
+                Label(bulkErrorMessage, systemImage: "exclamationmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if !selectedTaskIDs.isEmpty && !selectedTasksAreWritable {
+                Text("Bulk status changes require writable tasks whose provider supports completion.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .accessibilityIdentifier("tasks.bulkActions")
+    }
+
+    private var undoBar: some View {
+        HStack(spacing: 10) {
+            if isUndoing {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                if let state = coordinator.sidebarUndoState {
+                    Text(state.message)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-
-                if let dueAt = item.dueAt {
-                    Label(
-                        dueText(dueAt),
-                        systemImage: isOverdue(dueAt)
-                            ? "exclamationmark.circle"
-                            : "calendar"
-                    )
-                        .font(.subheadline)
-                        .foregroundStyle(
-                            isOverdue(dueAt) ? Color.red : Color.secondary
-                        )
+                if let undoErrorMessage {
+                    Text(undoErrorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+            }
+            Spacer()
+            if coordinator.sidebarUndoState != nil {
+                Button("Undo") { performUndo() }
+                    .disabled(isUndoing)
+                    .keyboardShortcut("z", modifiers: [.command])
+                    .accessibilityIdentifier("tasks.undo")
+            }
+            Button {
+                coordinator.dismissSidebarUndo()
+                undoErrorMessage = nil
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss task change")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(KaosCalTheme.accent.opacity(0.08))
+    }
+
+    private func toggleSelectionMode() {
+        isSelectingTasks.toggle()
+        bulkErrorMessage = nil
+        if !isSelectingTasks {
+            selectedTaskIDs.removeAll()
+        }
+    }
+
+    private func toggleSelection(of item: ProviderTaskListItem) {
+        if selectedTaskIDs.contains(item.id) {
+            selectedTaskIDs.remove(item.id)
+        } else {
+            selectedTaskIDs.insert(item.id)
+        }
+        focusedTaskID = item.id
+    }
+
+    private func performBulkCompletion(_ completed: Bool) {
+        let tasks = selectedTasks
+        guard selectedTasksAreWritable, !isPerformingBulkAction else { return }
+        isPerformingBulkAction = true
+        bulkErrorMessage = nil
+        Task {
+            do {
+                _ = try await coordinator.setSidebarTasksCompleted(
+                    tasks,
+                    isCompleted: completed
+                )
+                selectedTaskIDs.removeAll()
+                isSelectingTasks = false
+            } catch {
+                bulkErrorMessage = error.localizedDescription
+            }
+            isPerformingBulkAction = false
+        }
+    }
+
+    private func performBulkMove(to list: RemoteTaskList) {
+        let tasks = selectedTasks
+        guard selectedTasksCanMove, !isPerformingBulkAction else { return }
+        isPerformingBulkAction = true
+        bulkErrorMessage = nil
+        Task {
+            do {
+                _ = try await coordinator.moveSidebarTasks(tasks, to: list)
+                selectedTaskIDs.removeAll()
+                isSelectingTasks = false
+            } catch {
+                bulkErrorMessage = error.localizedDescription
+            }
+            isPerformingBulkAction = false
+        }
+    }
+
+    private func performUndo() {
+        guard !isUndoing else { return }
+        isUndoing = true
+        undoErrorMessage = nil
+        Task {
+            do {
+                try await coordinator.undoLastSidebarMutation()
+            } catch {
+                undoErrorMessage = error.localizedDescription
+            }
+            isUndoing = false
+        }
+    }
+
+    private func moveTaskFocus(_ direction: MoveCommandDirection) {
+        let ids = displayedItems.map(\.id)
+        guard !ids.isEmpty else { return }
+        guard let focusedTaskID,
+              let index = ids.firstIndex(of: focusedTaskID) else {
+            self.focusedTaskID = direction == .down ? ids.first : ids.last
+            return
+        }
+        switch direction {
+        case .down:
+            self.focusedTaskID = ids[min(index + 1, ids.count - 1)]
+        case .up:
+            self.focusedTaskID = ids[max(index - 1, 0)]
+        default:
+            break
+        }
+    }
+
+    private func createListTitle(_ list: RemoteTaskList) -> String {
+        "\(list.title) — \(list.sourceTitle)"
+    }
+}
+
+private struct ProviderTaskSidebarRow: View {
+    @ObservedObject var appState: AppState
+    @ObservedObject var coordinator: TaskProviderCoordinator
+    let item: ProviderTaskListItem
+    let isSelectionMode: Bool
+    let isSelected: Bool
+    let toggleSelection: () -> Void
+    let openEditor: () -> Void
+
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 10) {
+                leadingControl
+
+                Button(action: isSelectionMode ? toggleSelection : openEditor) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(item.title)
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(
+                                item.isCompleted
+                                    ? Color.secondary
+                                    : Color.primary
+                            )
+                            .strikethrough(item.isCompleted)
+                            .lineLimit(2)
+
+                        if let details = item.details {
+                            Text(details)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        if let dueAt = item.dueAt {
+                            Label(
+                                dueText(dueAt),
+                                systemImage: isOverdue(dueAt)
+                                    ? "exclamationmark.circle"
+                                    : "calendar"
+                            )
+                            .font(.subheadline)
+                            .foregroundStyle(
+                                isOverdue(dueAt)
+                                    ? Color.red
+                                    : Color.secondary
+                            )
+                        }
+
+                        if item.priority != .none {
+                            Label(item.priority.title, systemImage: "flag.fill")
+                                .font(.caption)
+                                .foregroundStyle(
+                                    item.priority == .high
+                                        ? Color.orange
+                                        : Color.secondary
+                                )
+                        }
+
+                        if let link = calendarLink {
+                            Label(
+                                "\(link.eventTitle) · \(link.calendarTitle)",
+                                systemImage: link.linkStatus == .active
+                                    ? "calendar.badge.checkmark"
+                                    : "calendar.badge.exclamationmark"
+                            )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        }
+
+                        if !canOpenDetails {
+                            Label(viewOnlyMessage, systemImage: "lock")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else if !canWrite {
+                            Label("View only", systemImage: "lock")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(!canOpenDetails || isWorking)
+                .accessibilityLabel(taskAccessibilityLabel)
+                .accessibilityHint(
+                    canWrite
+                        ? (isSelectionMode ? "Selects this task" : "Opens task details for editing")
+                        : (isSelectionMode ? "Selects this task" : "Opens read-only task details")
+                )
+
+                if let originalURL = item.originalURL {
+                    Button {
+                        NSWorkspace.shared.open(originalURL)
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 24, height: 24)
+                    .disabled(isWorking)
+                    .help("Open in \(item.provider.title)")
+                    .accessibilityLabel("Open ‘\(item.title)’ in \(item.provider.title)")
+                    .accessibilityIdentifier("task.\(item.id).openOriginal")
+                }
+                if let link = calendarLink {
+                    Button {
+                        Task {
+                            await appState.openOriginalEvent(
+                                contextID: link.contextID
+                            )
+                        }
+                    } label: {
+                        Image(systemName: "calendar.badge.clock")
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 24, height: 24)
+                    .disabled(isWorking)
+                    .help("Open linked event “\(link.eventTitle)”")
+                    .accessibilityLabel("Open event linked to ‘\(item.title)’")
+                    .accessibilityIdentifier("task.\(item.id).openLinkedEvent")
+                }
+            }
+
+            if let errorMessage {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(errorMessage, systemImage: "exclamationmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("task.\(item.id).error")
+                    HStack(spacing: 12) {
+                        Button("Refresh") {
+                            self.errorMessage = nil
+                            coordinator.refresh()
+                        }
+                        if item.provider == .appleReminders,
+                           coordinator.authorizationState(
+                            for: .appleReminders
+                           ) != .authorized {
+                            Button("Open Settings") {
+                                openRemindersPrivacySettings()
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+                .padding(.leading, 28)
             }
         }
         .padding(.vertical, 7)
         .help(item.details ?? item.title)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(taskAccessibilityLabel(item))
         .accessibilityIdentifier("task.\(item.id)")
+        .draggable("kaoscal-task:\(item.id)") {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist")
+                Text(item.title)
+                    .lineLimit(1)
+            }
+            .padding(10)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .contextMenu {
+            if !item.isCompleted {
+                Button("Reschedule for Tomorrow") {
+                    reschedule(daysFromToday: 1)
+                }
+                .disabled(!canWrite || isWorking)
+                Button("Reschedule One Week Later") {
+                    reschedule(daysFromToday: 7)
+                }
+                .disabled(!canWrite || isWorking)
+                if item.dueAt != nil {
+                    Button("Remove Due Date") {
+                        reschedule(to: nil)
+                    }
+                    .disabled(!canWrite || isWorking)
+                }
+                Divider()
+            }
+            if let link = calendarLink {
+                Button("Open Linked Event") {
+                    Task {
+                        await appState.openOriginalEvent(
+                            contextID: link.contextID
+                        )
+                    }
+                }
+            }
+            if let originalURL = item.originalURL {
+                Button("Open in \(item.provider.title)") {
+                    NSWorkspace.shared.open(originalURL)
+                }
+            }
+        }
     }
 
-    private func taskAccessibilityLabel(
-        _ item: ProviderTaskListItem
-    ) -> String {
+    @ViewBuilder
+    private var leadingControl: some View {
+        if isSelectionMode {
+            Button(action: toggleSelection) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.body)
+                    .frame(width: 18)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(isSelected ? KaosCalTheme.accent : .secondary)
+            .padding(.top, 2)
+            .accessibilityLabel(isSelected ? "Deselect task" : "Select task")
+        } else if isWorking {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 18, height: 18)
+                .padding(.top, 2)
+                .accessibilityLabel("Saving task")
+        } else if canWrite {
+            Button {
+                toggleCompletion()
+            } label: {
+                Image(
+                    systemName: item.isCompleted
+                        ? "checkmark.circle.fill"
+                        : "circle"
+                )
+                .font(.body)
+                .frame(width: 18)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(
+                item.isCompleted ? KaosCalTheme.accent : .secondary
+            )
+            .padding(.top, 2)
+            .accessibilityLabel(
+                item.isCompleted ? "Mark incomplete" : "Mark complete"
+            )
+            .accessibilityIdentifier("task.\(item.id).completion")
+        } else {
+            Image(
+                systemName: item.isCompleted
+                    ? "checkmark.circle.fill"
+                    : "circle"
+            )
+            .foregroundStyle(
+                item.isCompleted ? KaosCalTheme.accent : Color.secondary
+            )
+            .font(.body)
+            .frame(width: 18)
+            .padding(.top, 2)
+            .accessibilityLabel(item.isCompleted ? "Completed" : "Open")
+        }
+    }
+
+    private var canWrite: Bool {
+        coordinator.isSidebarTaskWritable(item)
+    }
+
+    private var calendarLink: ProviderTaskCalendarLink? {
+        coordinator.calendarLink(for: item)
+    }
+
+    private var canOpenDetails: Bool {
+        isSelectionMode
+            || coordinator.authorizationState(for: item.provider)
+                == .authorized
+    }
+
+    private var isWorking: Bool {
+        isSubmitting || coordinator.isMutatingSidebarTask(item)
+    }
+
+    private var viewOnlyMessage: String {
+        coordinator.authorizationState(for: item.provider) == .authorized
+            ? "\(item.provider.title) list is read only"
+            : "\(item.provider.title) unavailable"
+    }
+
+    private var taskAccessibilityLabel: String {
         var parts = [item.isCompleted ? "Completed" : "Open", item.title]
-        if let details = item.details {
-            parts.append(details)
-        }
-        if let dueAt = item.dueAt {
-            parts.append(dueText(dueAt))
-        }
+        if let details = item.details { parts.append(details) }
+        if let dueAt = item.dueAt { parts.append(dueText(dueAt)) }
+        parts.append("\(item.provider.title), \(item.accountTitle), \(item.listTitle)")
         return parts.joined(separator: ", ")
+    }
+
+    private func toggleCompletion() {
+        guard !isWorking else { return }
+        isSubmitting = true
+        errorMessage = nil
+        Task {
+            do {
+                _ = try await coordinator.setSidebarTaskCompleted(
+                    item,
+                    isCompleted: !item.isCompleted
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSubmitting = false
+        }
+    }
+
+    private func reschedule(daysFromToday days: Int) {
+        let day = appState.calendar.date(
+            byAdding: .day,
+            value: days,
+            to: appState.calendar.startOfDay(for: appState.taskReferenceDate)
+        ) ?? appState.taskReferenceDate.addingTimeInterval(
+            TimeInterval(days * 86_400)
+        )
+        let hour = item.dueAt.map {
+            appState.calendar.component(.hour, from: $0)
+        } ?? 9
+        let minute = item.dueAt.map {
+            appState.calendar.component(.minute, from: $0)
+        } ?? 0
+        let date = appState.calendar.date(
+            bySettingHour: hour,
+            minute: minute,
+            second: 0,
+            of: day
+        ) ?? day
+        reschedule(to: date)
+    }
+
+    private func reschedule(to dueAt: Date?) {
+        guard !isWorking else { return }
+        isSubmitting = true
+        errorMessage = nil
+        Task {
+            do {
+                let baseline = try await coordinator.loadSidebarTask(item)
+                _ = try await coordinator.updateSidebarTask(
+                    item,
+                    baseline: baseline,
+                    title: baseline.title,
+                    notes: baseline.notes,
+                    dueAt: dueAt,
+                    isCompleted: baseline.isCompleted
+                )
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            isSubmitting = false
+        }
     }
 
     private func isOverdue(_ date: Date) -> Bool {
@@ -2908,6 +3652,522 @@ struct ProviderTaskSidebarView: View {
             return "Overdue · \(dateText)"
         }
         return dateText
+    }
+
+    private func openRemindersPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders"
+        ) else { return }
+        NSWorkspace.shared.open(url)
+    }
+}
+
+struct ProviderTaskEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var coordinator: TaskProviderCoordinator
+    let mode: ProviderTaskEditorPresentation.Mode
+    let writableLists: [RemoteTaskList]
+
+    @State private var selectedListKey: String
+    @State private var baseline: RemoteTaskSnapshot?
+    @State private var title: String
+    @State private var notes: String
+    @State private var dueEnabled: Bool
+    @State private var dueDraft: Date
+    @State private var reminderEnabled: Bool
+    @State private var reminderDraft: Date
+    @State private var isCompleted: Bool
+    @State private var priority: TaskPriority
+    @State private var isLoading: Bool
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+    @State private var hasConflict = false
+    @State private var confirmsDeletion = false
+
+    init(
+        coordinator: TaskProviderCoordinator,
+        mode: ProviderTaskEditorPresentation.Mode,
+        writableLists: [RemoteTaskList]
+    ) {
+        self.coordinator = coordinator
+        self.mode = mode
+        self.writableLists = writableLists
+
+        let defaultDue = Calendar.autoupdatingCurrent.date(
+            byAdding: .day,
+            value: 1,
+            to: Date()
+        ) ?? Date().addingTimeInterval(86_400)
+        switch mode {
+        case let .create(preferredList):
+            let initialList = preferredList
+                ?? (writableLists.count == 1 ? writableLists.first : nil)
+            _selectedListKey = State(
+                initialValue: initialList?.destinationSelectionKey ?? ""
+            )
+            _baseline = State(initialValue: nil)
+            _title = State(initialValue: "")
+            _notes = State(initialValue: "")
+            _dueEnabled = State(initialValue: false)
+            _dueDraft = State(initialValue: defaultDue)
+            _reminderEnabled = State(initialValue: false)
+            _reminderDraft = State(initialValue: defaultDue)
+            _isCompleted = State(initialValue: false)
+            _priority = State(initialValue: .none)
+            _isLoading = State(initialValue: false)
+        case let .edit(item):
+            _selectedListKey = State(
+                initialValue: writableLists.first {
+                    $0.provider == item.provider
+                        && $0.accountKey == item.accountKey
+                        && $0.id == item.listID
+                }?.destinationSelectionKey ?? ""
+            )
+            _baseline = State(initialValue: nil)
+            _title = State(initialValue: item.title)
+            _notes = State(initialValue: item.details ?? "")
+            _dueEnabled = State(initialValue: item.dueAt != nil)
+            _dueDraft = State(initialValue: item.dueAt ?? defaultDue)
+            _reminderEnabled = State(initialValue: item.reminderAt != nil)
+            _reminderDraft = State(
+                initialValue: item.reminderAt ?? item.dueAt ?? defaultDue
+            )
+            _isCompleted = State(initialValue: item.isCompleted)
+            _priority = State(initialValue: item.priority)
+            _isLoading = State(initialValue: true)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label(sheetTitle, systemImage: "checklist")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                if isSubmitting {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Saving task")
+                }
+            }
+            .padding(20)
+
+            Divider()
+
+            if isLoading {
+                ProgressView("Loading the latest task…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        sourceSection
+                        editorFields
+                        statusMessage
+                    }
+                    .padding(20)
+                }
+            }
+
+            Divider()
+            actionBar
+                .padding(16)
+        }
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 500)
+        .task {
+            if case .edit = mode {
+                await reloadLatest()
+            }
+        }
+        .alert("Delete this task?", isPresented: $confirmsDeletion) {
+            Button("Delete", role: .destructive) {
+                deleteTask()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(deleteConfirmationMessage)
+        }
+        .accessibilityIdentifier("tasks.editor")
+    }
+
+    @ViewBuilder
+    private var sourceSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Destination")
+                .font(.headline)
+            switch mode {
+            case .create:
+                Picker("Task list", selection: $selectedListKey) {
+                    Text("Choose a writable list").tag("")
+                    ForEach(
+                        writableLists,
+                        id: \.destinationSelectionKey
+                    ) { list in
+                        Text(createListTitle(list))
+                            .tag(list.destinationSelectionKey)
+                    }
+                }
+                .accessibilityIdentifier("tasks.editor.list")
+            case let .edit(item):
+                LabeledContent("Provider", value: item.provider.title)
+                LabeledContent("Account", value: item.accountTitle)
+                if coordinator.isSidebarTaskWritable(item),
+                   activeCapabilities?.supportsListMove == true {
+                    Picker("List", selection: $selectedListKey) {
+                        ForEach(
+                            editableDestinationLists,
+                            id: \.destinationSelectionKey
+                        ) { list in
+                            Text(createListTitle(list))
+                                .tag(list.destinationSelectionKey)
+                        }
+                    }
+                    .help("Moving a task keeps its Event Brief link when one exists.")
+                    .accessibilityIdentifier("tasks.editor.destinationList")
+                } else if coordinator.isSidebarTaskWritable(item) {
+                    LabeledContent("List", value: item.listTitle)
+                } else {
+                    LabeledContent("List", value: item.listTitle)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(
+                            "This list is currently view only. Refresh list metadata or check its permissions before editing.",
+                            systemImage: "lock"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        Button("Refresh List Metadata") {
+                            coordinator.refresh()
+                        }
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
+    }
+
+    private var editorFields: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Title")
+                    .font(.headline)
+                TextField("Task title", text: $title)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("tasks.editor.title")
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Notes")
+                    .font(.headline)
+                TextEditor(text: $notes)
+                    .font(.body)
+                    .frame(minHeight: 100)
+                    .padding(6)
+                    .background(
+                        Color(nsColor: .textBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 7)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 7)
+                            .stroke(
+                                Color(nsColor: .separatorColor),
+                                lineWidth: 0.5
+                            )
+                    }
+                    .accessibilityIdentifier("tasks.editor.notes")
+                    .disabled(activeCapabilities?.supportsNotes != true)
+                if activeCapabilities?.supportsNotes == false {
+                    Text("\(activeProvider?.title ?? "This provider") does not support editable notes through KaosCal.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Toggle("Set a due date", isOn: $dueEnabled)
+                .accessibilityIdentifier("tasks.editor.dueEnabled")
+            if dueEnabled {
+                if activeCapabilities?.supportsTimedDue == false {
+                    DatePicker(
+                        "Due",
+                        selection: $dueDraft,
+                        displayedComponents: [.date]
+                    )
+                    .accessibilityIdentifier("tasks.editor.due")
+                    Text("This provider stores a date-only deadline; the time is not sent.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    DatePicker(
+                        "Due",
+                        selection: $dueDraft,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                    .accessibilityIdentifier("tasks.editor.due")
+                }
+            }
+            if activeCapabilities?.supportsReminder == true {
+                Toggle("Set a reminder", isOn: $reminderEnabled)
+                    .accessibilityIdentifier("tasks.editor.reminderEnabled")
+                if reminderEnabled {
+                    DatePicker(
+                        "Reminder",
+                        selection: $reminderDraft,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                    .accessibilityIdentifier("tasks.editor.reminder")
+                    Text("Microsoft To Do will deliver this alert using its own notification settings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Toggle("Completed", isOn: $isCompleted)
+                .accessibilityIdentifier("tasks.editor.completed")
+                .disabled(activeCapabilities?.supportsCompletion != true)
+            if activeCapabilities?.supportsPriority == true {
+                Picker("Priority", selection: $priority) {
+                    ForEach(TaskPriority.allCases, id: \.self) { value in
+                        Text(value.title).tag(value)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("tasks.editor.priority")
+            }
+        }
+        .disabled(!canEditFields || isSubmitting)
+    }
+
+    @ViewBuilder
+    private var statusMessage: some View {
+        if let errorMessage {
+            VStack(alignment: .leading, spacing: 10) {
+                Label(errorMessage, systemImage: "exclamationmark.circle")
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                if hasConflict {
+                    Button("Reload Latest") {
+                        Task { await reloadLatest() }
+                    }
+                    .accessibilityIdentifier("tasks.editor.reloadLatest")
+                } else if editingItem != nil {
+                    Button("Refresh") {
+                        Task { await refreshAndReload() }
+                    }
+                }
+                if editingItem?.provider == .appleReminders,
+                   coordinator.authorizationState(for: .appleReminders)
+                    != .authorized {
+                    Button("Open Reminders Privacy Settings") {
+                        openRemindersPrivacySettings()
+                    }
+                }
+            }
+        }
+    }
+
+    private var actionBar: some View {
+        HStack {
+            if editingItem != nil && !hasConflict {
+                Button("Delete", role: .destructive) {
+                    confirmsDeletion = true
+                }
+                .disabled(!canSaveEdit || isSubmitting)
+                .accessibilityIdentifier("tasks.editor.delete")
+            }
+            Spacer()
+            Button("Cancel") { dismiss() }
+                .keyboardShortcut(.cancelAction)
+            if !hasConflict {
+                Button("Save") { saveTask() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(saveDisabled)
+                    .accessibilityIdentifier("tasks.editor.save")
+            }
+        }
+    }
+
+    private var sheetTitle: String {
+        editingItem == nil ? "New Task" : "Task Details"
+    }
+
+    private var editingItem: ProviderTaskListItem? {
+        guard case let .edit(item) = mode else { return nil }
+        return item
+    }
+
+    private var selectedCreateList: RemoteTaskList? {
+        writableLists.first {
+            $0.destinationSelectionKey == selectedListKey
+        }
+    }
+
+    private var selectedEditList: RemoteTaskList? {
+        guard editingItem != nil else { return nil }
+        return writableLists.first {
+            $0.destinationSelectionKey == selectedListKey
+        }
+    }
+
+    private var activeProvider: TaskProviderKind? {
+        editingItem?.provider ?? selectedCreateList?.provider
+    }
+
+    private var activeCapabilities: TaskProviderCapabilities? {
+        activeProvider.flatMap { coordinator.capabilities(for: $0) }
+    }
+
+    private var editableDestinationLists: [RemoteTaskList] {
+        guard let item = editingItem else { return writableLists }
+        return writableLists.filter {
+            $0.provider == item.provider
+                && (item.provider == .appleReminders
+                    || $0.accountKey == item.accountKey)
+        }
+    }
+
+    private var canEditFields: Bool {
+        if let editingItem {
+            return coordinator.isSidebarTaskWritable(editingItem)
+                && baseline != nil
+                && !hasConflict
+        }
+        return true
+    }
+
+    private var canSaveEdit: Bool {
+        guard let editingItem else { return false }
+        return coordinator.isSidebarTaskWritable(editingItem)
+            && baseline != nil
+            && !hasConflict
+            && selectedEditList != nil
+    }
+
+    private var saveDisabled: Bool {
+        isLoading
+            || isSubmitting
+            || hasConflict
+            || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (editingItem == nil && selectedCreateList == nil)
+            || (editingItem != nil && !canSaveEdit)
+    }
+
+    private var deleteConfirmationMessage: String {
+        guard let item = editingItem else { return "" }
+        return "Delete ‘\(item.title)’ from \(item.provider.title) · \(item.accountTitle) · \(item.listTitle)? A linked KaosCal task will be kept and marked as needing attention."
+    }
+
+    private func createListTitle(_ list: RemoteTaskList) -> String {
+        let duplicateLists = writableLists.filter {
+            $0.sourceTitle == list.sourceTitle && $0.title == list.title
+        }.sorted { $0.id < $1.id }
+        guard duplicateLists.count > 1,
+              let index = duplicateLists.firstIndex(where: {
+                  $0.accountKey == list.accountKey && $0.id == list.id
+              }) else {
+            return "\(list.provider.title) · \(list.title) — \(list.sourceTitle)"
+        }
+        return "\(list.provider.title) · \(list.title) — \(list.sourceTitle) · List \(index + 1)"
+    }
+
+    private func reloadLatest() async {
+        guard let item = editingItem else { return }
+        isLoading = baseline == nil
+        isSubmitting = true
+        errorMessage = nil
+        hasConflict = false
+        do {
+            let remote = try await coordinator.loadSidebarTask(item)
+            baseline = remote
+            title = remote.title
+            notes = remote.notes
+            dueEnabled = remote.dueAt != nil
+            if let dueAt = remote.dueAt { dueDraft = dueAt }
+            reminderEnabled = remote.reminderAt != nil
+            if let reminderAt = remote.reminderAt {
+                reminderDraft = reminderAt
+            }
+            isCompleted = remote.isCompleted
+            priority = remote.priority
+        } catch {
+            baseline = nil
+            errorMessage = error.localizedDescription
+        }
+        isLoading = false
+        isSubmitting = false
+    }
+
+    private func refreshAndReload() async {
+        coordinator.refresh()
+        await reloadLatest()
+    }
+
+    private func saveTask() {
+        guard !saveDisabled else { return }
+        isSubmitting = true
+        errorMessage = nil
+        hasConflict = false
+        Task {
+            do {
+                if let item = editingItem, let baseline {
+                    _ = try await coordinator.updateSidebarTask(
+                        item,
+                        baseline: baseline,
+                        title: title,
+                        notes: notes,
+                        dueAt: dueEnabled ? dueDraft : nil,
+                        reminderAt: reminderEnabled ? reminderDraft : nil,
+                        isCompleted: isCompleted,
+                        priority: priority,
+                        destination: selectedEditList
+                    )
+                } else if let list = selectedCreateList {
+                    _ = try await coordinator.createSidebarTask(
+                        in: list,
+                        title: title,
+                        notes: notes,
+                        dueAt: dueEnabled ? dueDraft : nil,
+                        reminderAt: reminderEnabled ? reminderDraft : nil,
+                        priority: priority
+                    )
+                }
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                hasConflict = (error as? TaskProviderError) == .conflict
+                isSubmitting = false
+            }
+        }
+    }
+
+    private func deleteTask() {
+        guard let item = editingItem, let baseline, !isSubmitting else {
+            return
+        }
+        isSubmitting = true
+        errorMessage = nil
+        hasConflict = false
+        Task {
+            do {
+                try await coordinator.deleteSidebarTask(
+                    item,
+                    baseline: baseline
+                )
+                dismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                hasConflict = (error as? TaskProviderError) == .conflict
+                isSubmitting = false
+            }
+        }
+    }
+
+    private func openRemindersPrivacySettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders"
+        ) else { return }
+        NSWorkspace.shared.open(url)
     }
 }
 

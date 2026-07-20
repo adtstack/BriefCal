@@ -38,14 +38,15 @@ OAuth 기반 provider 두 종류를 같은 계정·Keychain·동기화 경계로
   `client_secret`을 넣지 않는다.
 - Google Tasks REST v1 request builder는 list/get/create/update/delete와 ETag
   `If-Match` write를, Todoist API v1 builder는 project/section routing과
-  create/update/close/reopen/delete를 각각 계약 테스트로 고정한다.
+  create/update/move/close/reopen/delete를 각각 계약 테스트로 고정한다.
 - 기존 Apple 전용 coordinator는 provider account가 가리키는 adapter로 create/update/delete를
   route한다. Settings Picker는 `(provider, account, list)` 복합 key로 선택하므로 서로 다른
   provider의 같은 raw list ID가 섞이지 않는다.
 - Google task list의 `nextPageToken`, Todoist project/section의 cursor page를 끝까지
   순회한다. Todoist Settings destination은 Inbox/project뿐 아니라 section도 표시한다.
-- Todoist active task GET이 404인 경우, 최근 90일의 completion-date archive를 같은
-  project/section으로 bounded 조회해 외부 완료를 `missing`으로 잘못 처리하지 않는다.
+- Todoist는 최근 90일의 completion-date archive를 같은 project/section으로 bounded 조회해
+  `Completed` projection에 포함한다. active task GET이 404인 경우에도 같은 archive를 확인해
+  외부 완료를 `missing`으로 잘못 처리하지 않는다.
   archive에 없는 task는 삭제와 장기 보관 완료를 확정할 수 없으므로 기존처럼 `missing`으로
   남기며 local task를 자동 삭제하지 않는다.
 - Google loopback redirect와 HTTP `localhost`로 등록한 개발용 provider는 시스템 browser
@@ -100,7 +101,7 @@ Google Calendar event를 다시 수집해 duplicate event를 만들지 않기 �
 
 - Todoist API v1 기준 OAuth 연결
 - Inbox/project/section 선택
-- title, description, due, completed, project 표시·동기화
+- title, description, due, completed, priority, project/section 표시·동기화와 같은 account 이동
 - webhook을 사용할 수 있는 환경에서는 webhook, 그렇지 않으면 bounded refresh
 - 상세 project/label/filter 관리가 아닌 linked task와 source 표시
 

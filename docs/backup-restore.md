@@ -26,7 +26,7 @@ KaosCal-Backup-YYYY-MM-DD-HHmm.zip
 
 하위 폴더, symlink, 중복 이름, `-wal`/`-shm`, Finder metadata와 다른 payload는
 허용하지 않는다. archive format version은 SQLite schema version과 별도다.
-현재 DB schema의 마지막 migration은 `v10_task_provider_recovery`이며 import는
+현재 DB schema의 마지막 migration은 `v11_local_task_planning`이며 import는
 manifest에 기록된 migration 목록과 실제 SQLite migration table을 함께 확인한다.
 
 format v1 제한은 다음과 같다.
@@ -142,6 +142,8 @@ reset은 한 SQLite transaction에서 다음 current user-data table의 active r
 - `provider_accounts`
 - `context_references`
 - `event_change_log`
+- `task_checklist_items`
+- `task_planning_metadata`
 - `event_tasks`
 - `event_links`
 - `event_contexts`

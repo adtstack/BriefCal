@@ -1,6 +1,10 @@
 # KaosCal
 
 KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 각 일정의 준비물·메모·후속 작업을 로컬에 보존하는 macOS 앱이다.
+AI와 KaosCal 계정·서버·Cloud 없이 이 Mac에서 실행되며, Calendar는 EventKit, 사용자가
+연결한 event task는 해당 provider와 이 Mac이 직접 동기화한다.
+제품의 영구 local-only 경계는
+[ADR-019](docs/adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)를 따른다.
 
 현행 제품 동작, 시스템 불변식과 요구사항별 인수 기준은
 [제품·시스템 스펙](docs/specification.md)을 기준으로 한다.
@@ -19,7 +23,11 @@ provider와 통합 캘린더 작업은 [v2 실행계획](docs/v2-execution-plan.
 - macOS Calendar에 구성된 Exchange 캘린더를 우선 검증 대상으로 하는 EventKit 앱
 - Day, Week, Agenda 캘린더, Sidebar mini month와 Task Center
 - 종일 일정, 시간대, 반복 일정의 안전한 표시·편집
-- active Event Brief와 KaosCal 작업은 로컬 SQLite에 저장. 명시적 export ZIP은 사용자가 고른 로컬·외장·cloud 폴더에 plaintext로 저장 가능
+- Apple Reminders, Google Tasks, Todoist와 Microsoft To Do의 capability-aware 작업 관리,
+  Apple 목록 이동·Todoist project/section 이동, 통합 검색·planning과 Calendar time block
+- active Event Brief와 KaosCal 작업은 이 Mac의 로컬 SQLite에만 저장. 명시적 export ZIP은
+  사용자가 고른 위치에 plaintext로 저장하며, cloud-mounted 폴더를 고른 경우 동기화는
+  macOS/해당 제공자가 수행하고 KaosCal은 이를 Cloud 기능으로 관리하지 않음
 
 상세 범위와 제외 범위는 [v1-scope.md](docs/v1-scope.md)를, 결정 근거는 [ADR](docs/adr/README.md)을 확인한다.
 

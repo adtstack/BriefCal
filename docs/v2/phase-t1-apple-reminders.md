@@ -18,7 +18,28 @@ macOS native Reminders를 첫 외부 task provider로 연결한다. Calendar 권
 - Reminders entitlement와 `NSRemindersFullAccessUsageDescription`을 target에 반영했다.
 - 실제 iCloud/On My Mac list fixture, permission revoke, cleanup은 아직 실행하지 않았다.
 
-따라서 현재 판정은 `implemented / live pending`이며, T2 이후 작업은 시작하지 않는다.
+## Tasks 직접 관리 checkpoint (2026-07-20)
+
+- 오른쪽 `Tasks`의 완료 원을 실제 Apple Reminders 완료/미완료 명령으로 연결했다.
+- `+`와 상세 sheet에서 writable list 선택, 제목·전체 notes·기한 설정/제거·완료·삭제를
+  지원한다. 상세 진입은 최신 remote snapshot을 다시 읽는다.
+- SwiftUI row ID와 remote task ID를 분리하고 provider/account/list/task/version을 모두
+  확인한다. read-only 또는 list metadata 실패 상태에서는 조회만 허용한다.
+- version mismatch는 자동 재시도나 덮어쓰기 없이 draft를 보존한 conflict로 중단한다.
+- 성공 후 provider 목록과 linked Event Task projection을 다시 읽는다. remote 삭제는 local
+  Event Task를 지우지 않고 missing/Needs attention으로 남긴다.
+- 일반 Reminders task의 notes는 SQLite·backup에 저장하지 않는다. 이 checkpoint 뒤 공통
+  mutation route, Event Brief 연결과 calendar time block이 별도 Tasks 완성 트랙에서 구현됐다.
+- 상세 sheet에서 writable Apple list를 바꿔 목록·계정 사이로 이동할 수 있다. 이미 Event
+  Brief에 연결된 reminder는 remote move와 durable binding parent/account를 함께 갱신한다.
+- 선택 모드는 여러 Apple reminder의 완료·미완료와 list 이동을 제공한다. 생성·수정·이동·
+  삭제·일괄 변경 뒤에는 fresh version이 그대로일 때만 실행되는 process-local Undo를 표시한다.
+  삭제 Undo로 ID가 바뀌면 local Event Task를 새 remote ID에 재연결한다.
+- EventKit reminder의 `url`은 사용자가 넣은 내용일 수 있어 Reminders.app deep link로 노출하지
+  않는다. Microsoft Graph가 task 원본 URL을 반환한 경우만 조회 행에서 연다.
+
+따라서 T1 판정은 `implemented / live pending`이다. 아래 범위는 T1 당시 계약이며, 이후
+T2/T3와 Tasks 완성 트랙은 공통 스펙과 Current Status에서 별도로 추적한다.
 
 ## 제공 범위
 

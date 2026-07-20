@@ -1,6 +1,6 @@
 # KaosCal 사용자 가이드
 
-> 기준 구현: 2026-07-12, Phase 10
+> 기준 구현: 2026-07-20, Tasks 통합 관리·planning·Calendar 결합
 >
 > 이 문서는 현재 저장소의 코드와 승인된 설계 문서를 기준으로 한다. KaosCal은 아직
 > 외부 베타 배포 준비 단계이며, 공개 다운로드 위치·최종 설치 패키지·자동 업데이트·
@@ -112,14 +112,17 @@ notes는 잠시 후 자동 저장된다. `Not saved`가 나타나면 내용을 �
 Task Center에는 일정에 연결된 작업과 일정 없이 만드는 Personal task가 함께
 표시된다.
 
-- `Today`: 오늘까지의 미완료 작업과 날짜 없는 Personal task
-- `Upcoming`: 미래 기한 작업
+- `Today`: 오늘 기한인 미완료 작업
+- `Upcoming`: 내일 이후 기한 작업
+- `Overdue`: 오늘보다 이전 기한인 미완료 작업
+- `No Date`: 기한이 없는 미완료 작업
 - `After Review`: 종료된 일정의 미완료 After 작업
 - `Completed`: 완료된 event/personal 작업
 
 Personal task는 항상 KaosCal 로컬에만 저장된다. Event Brief 작업은 해당 calendar에
 Task Provider destination을 설정한 경우 Apple Reminders, Google Tasks, Todoist 또는
-Microsoft To Do의 선택 list/project로 연결될 수 있다. Task Center는 provider·계정·list와
+Microsoft To Do의 선택 list/project로 연결될 수 있다. Task Center는 아직 Event Brief에
+연결되지 않은 provider task도 같은 날짜 filter와 검색에 함께 표시한다. provider·계정·list와
 Linked/Syncing/Needs attention 상태를 표시한다. missing은 다시 확인하거나 local 작업으로
 remote를 재생성할 수 있고, conflict는 remote 또는 local 버전을 명시적으로 선택한다.
 
@@ -128,7 +131,7 @@ remote를 재생성할 수 있고, conflict는 remote 또는 local 버전을 명
 표시되고, task가 없어도 상단의 초록 연결 표시가 보인다. 이전에 거부했다면
 `Open System Settings`로 Reminders 권한을 허용한 뒤 Tasks의 새로고침을 사용한다.
 
-`All Lists`를 누르면 현재 읽을 수 있는 목록을 Apple Reminders와 Microsoft To Do
+`All Lists`를 누르면 현재 읽을 수 있는 목록을 Apple Reminders, Google Tasks, Todoist와 Microsoft To Do
 source별로 나눠 보여 준다. 각 항목에는 list 이름, account와 불러온 전체 task 수가 표시된다.
 특정 list를 선택하면 다른 list의 작업은 숨기고 그 list만 평면 목록으로 표시한다.
 선택한 list가 계정에서 삭제되면 다음 authoritative reload 뒤 `All Lists`로 돌아간다.
@@ -137,8 +140,50 @@ source별로 나눠 보여 준다. 각 항목에는 list 이름, account와 불�
 
 - `Open`, `Completed`, `All`: 완료 상태 필터
 - `Search tasks`: 제목과 설명을 즉시 검색
-- `Due date`, `Title`: 현재 결과의 정렬 기준
+- `Due date`, `Priority`, `Title`: 현재 결과의 정렬 기준
 - `All Lists`: source·account·list section으로 다시 표시
+
+Todoist의 `Completed`는 provider archive를 bounded 조회해 최근 90일 완료 작업을 보여 준다.
+그보다 오래된 Todoist 완료 이력을 전체 로컬 기록처럼 약속하지 않는다.
+
+writable provider 항목은 체크 원을 눌러 바로 완료하거나 미완료로 바꿀 수 있다. 행을 누르면
+최신 원격 내용을 다시 읽은 상세 창에서 제목, notes, 기한과 완료 상태를 수정한다. Apple
+Reminders, Microsoft To Do와 Todoist는 priority도 편집할 수 있고 Google Tasks의 due는
+날짜만 저장된다. Microsoft To Do는 due와 별도로 reminder 시각을 켜거나 끌 수 있으며 알림
+전달은 Microsoft To Do의 알림 설정을 따른다. Apple Reminders는 writable list 사이 이동도
+지원하며 Todoist는 같은 account 안에서 project/section 사이를 이동할 수 있다. 상단 `+`는 선택한
+writable provider list/project에 새 task를 만든다. `All Lists`에서는 destination을 먼저 고른다.
+
+상단 선택 아이콘을 누르면 여러 작업을 고르는 모드가 열린다. 이 모드에서는 선택한 writable
+작업을 한 번에 완료·미완료로 바꿀 수 있다. 목록 이동은 Apple Reminders와 Todoist처럼
+provider가 안전한 move를 지원하는 동일 provider/account 작업에만 나타난다. Apple Reminders만
+서로 다른 Apple account 사이 이동을 허용한다. read-only 작업이
+섞이면 일괄 write를 실행하지 않는다. 행의 버튼은 Tab으로 이동하고
+Return/Space로 실행하며 포커스된 작업은 위·아래 방향키로 옮길 수 있다.
+
+생성·수정·완료·이동·삭제가 성공하면 Tasks 안에 `Undo`가 나타난다. Undo는 현재 앱 실행 중
+마지막 변경에만 적용되며, 그 뒤 원본 provider에서 작업이 바뀌었다면 conflict로 중단하고
+덮어쓰지 않는다. 삭제 Undo는 같은 내용의 새 provider task를 만들기 때문에 원격 ID는
+달라질 수 있지만 연결된 KaosCal Event Task는 새 ID에 다시 연결된다.
+
+삭제 확인에는 task 이름과 provider·account·list가 표시된다. 연결된 Event Task의 원격
+Reminder를 삭제해도 KaosCal의 로컬 task는 삭제되지 않고 `Needs attention`으로 남는다.
+저장 전에 Reminders.app에서 같은 task가 바뀌었으면 draft를 자동 덮어쓰지 않는다.
+`Reload Latest`로 원격 최신본을 불러오거나 `Cancel`로 닫는다. 권한 철회나 목록 오류에는
+새로고침 또는 Reminders 개인정보 설정 이동을 사용한다. Microsoft To Do/Todoist가 신뢰할
+수 있는 원본 URL을 제공한 행에는 원본 열기 아이콘이 나타난다. 특정 Apple
+Reminder를 여는 신뢰할 수 있는 EventKit URL은 제공하지 않는다.
+
+Task Center의 깃발/별/슬라이더에서는 local Event/Personal task의 priority, 중요 표시,
+반복 간격, 예상 시간, 실제 수행 timer와 checklist를 관리한다. 반복 task를 완료하면 다음
+occurrence가 로컬에 생성되고 checklist는 미완료로 복사되며 실제 시간은 0부터 시작한다.
+이 planning metadata는 이 Mac의 KaosCal DB에만 저장되며 provider가 지원하지 않는 필드로
+조용히 전송되지 않는다. `Task views`에서 role·날짜 filter·grouping·검색을 이름 붙여 저장할 수 있다.
+
+오른쪽 provider task를 캘린더 시간 칸으로 끌면 15분 단위, 기본 1시간의 일정 block과 During
+Event Task를 만들고 원본 task를 연결한다. Event Brief에서는 기존 provider task 연결과
+Before/During/After task의 fixed 또는 event start/end 상대 기한을 설정할 수 있다. 현재
+Calendar Set 관련 task만 보고 싶으면 오른쪽 Tasks의 해당 toggle을 켠다.
 
 Event Brief task를 Reminders에 생성·수정하려면 Settings의
 `Task Providers > Calendar Destinations`에서 해당 calendar의 destination list도 선택한다.
@@ -292,9 +337,11 @@ restore/reset과 rollback까지 실패하면 그 session의 로컬 변경과 캘
 현재 구현에서 다음 기능은 제공하지 않거나 지원 범위를 제한한다.
 
 - KaosCal 계정, KaosCal Cloud, 모바일 앱, 직접 Microsoft Graph/EWS/CalDAV sync
-- AI 자동 스케줄링·자동 이동·자동 수락·자동 삭제
+- AI/LLM/ML 기반 생성·요약·분류·추천·검색·자동 스케줄링·자동 이동·자동 수락·자동 삭제
 - 초대 RSVP, 참석자/주최자 관리, 참석자가 있는 meeting 원본 편집
-- 프로젝트·팀 작업·Kanban, Apple Reminders/Exchange Tasks 동기화
+- 프로젝트·팀 작업·Kanban, Personal task의 provider sync와 legacy Exchange Tasks sync.
+  Event Brief task와 오른쪽의 일반 provider task만 Apple Reminders, Google Tasks, Todoist,
+  Microsoft To Do에 직접 연결할 수 있다.
 - 복잡한 반복 규칙의 강제 변환, linked `This and future`, 일반적인 반복/delete Undo,
   앱 재실행 뒤 Undo
 - Calendar Set의 cloud/device sync·시간/위치 자동 전환, role별 색/이름 override,
@@ -302,6 +349,14 @@ restore/reset과 rollback까지 실패하면 그 session의 로컬 변경과 캘
 - backup record merge, 예약 backup, 자동 retention/pruning
 - schema가 다른 backup migration/downgrade, 임의 SQLite 복구와 backup 없는 bootstrap reset
 - exact Release에서 실제 export 파일 작성·backup import·reset mutation의 live gate
+
+알림·일정 검색·전체 Month부터 시작하는 후속 기능 순서와 현재 상용 기능 격차는
+[상용 기능 로드맵](commercial-feature-roadmap.md)을 따른다.
+
+KaosCal 고유의 notes, task, history, Calendar Set과 설정은 이 Mac에만 저장된다. Calendar는
+macOS EventKit, 연결한 Event Brief task는 이 Mac과 사용자가 선택한 provider 사이에서
+직접 동기화되며 KaosCal 계정·중계 서버·Cloud를 사용하지 않는다. 자세한 영구 경계는
+[ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)를 따른다.
 
 Exchange 관련 지원 문구는 macOS Calendar에 구성된 Exchange Online 캘린더로
 한정한다. 온프레미스 Exchange는 검증 전까지 지원을 약속하지 않는다. 또한 현재

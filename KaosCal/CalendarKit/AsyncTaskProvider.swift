@@ -8,12 +8,22 @@ protocol AsyncTaskProviding: AnyObject {
     func listTaskLists() async throws -> [RemoteTaskList]
     func createTask(_ draft: RemoteTaskDraft) async throws -> RemoteTaskSnapshot
     func updateTask(_ task: RemoteTaskSnapshot, with patch: RemoteTaskPatch) async throws -> RemoteTaskSnapshot
+    func moveTask(_ task: RemoteTaskSnapshot, to list: RemoteTaskList) async throws -> RemoteTaskSnapshot
     func deleteTask(_ task: RemoteTaskSnapshot, expectedVersion: String?) async throws
     func lookupTask(id: String, parentID: String) async throws -> RemoteTaskSnapshot?
     func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot]
 }
 
 extension AsyncTaskProviding {
+    func moveTask(
+        _ task: RemoteTaskSnapshot,
+        to list: RemoteTaskList
+    ) async throws -> RemoteTaskSnapshot {
+        throw TaskProviderError.unsupported(
+            "This provider does not support moving tasks between lists."
+        )
+    }
+
     func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
         []
     }
@@ -153,7 +163,9 @@ final class TodoistTasksProvider: AsyncTaskProviding {
     let provider: TaskProviderKind = .todoist
     let capabilities = TaskProviderCapabilities(
         supportsNotes: true, supportsTimedDue: true, supportsCompletion: true,
-        supportsDeletion: true, supportsDeepLink: true
+        supportsDeletion: true, supportsDeepLink: true,
+        supportsListMove: true,
+        supportsPriority: true
     )
     private let session: OAuthTaskProviderSession
     private let accountKey: String
@@ -205,18 +217,67 @@ final class TodoistTasksProvider: AsyncTaskProviding {
 
     func createTask(_ draft: RemoteTaskDraft) async throws -> RemoteTaskSnapshot {
         let (data, _) = try await session.send {
-            try TodoistAPI.createTaskRequest(parentID: draft.parentID, title: draft.title, description: draft.notes, dueAt: draft.dueAt, accessToken: $0)
+            try TodoistAPI.createTaskRequest(parentID: draft.parentID, title: draft.title, description: draft.notes, dueAt: draft.dueAt, priority: draft.priority, accessToken: $0)
         }
         return try snapshot(from: data, fallbackParentID: draft.parentID)
     }
 
     func updateTask(_ task: RemoteTaskSnapshot, with patch: RemoteTaskPatch) async throws -> RemoteTaskSnapshot {
-        if let completed = patch.isCompleted {
-            _ = try await session.send { TodoistAPI.completionRequest(id: task.id, completed: completed, accessToken: $0) }
+        let editsFields = patch.title != nil || patch.notes != nil
+            || patch.dueAt != nil || patch.priority != nil
+        var updated = task
+        if editsFields {
+            let (data, _) = try await session.send {
+                try TodoistAPI.updateTaskRequest(
+                    id: task.id,
+                    patch: patch,
+                    accessToken: $0
+                )
+            }
+            updated = try snapshot(from: data, fallbackParentID: task.parentID)
         }
-        guard patch.title != nil || patch.notes != nil || patch.dueAt != nil else { return task }
-        let (data, _) = try await session.send { try TodoistAPI.updateTaskRequest(id: task.id, patch: patch, accessToken: $0) }
-        return try snapshot(from: data, fallbackParentID: task.parentID)
+        guard let completed = patch.isCompleted,
+              completed != updated.isCompleted else {
+            return updated
+        }
+        // Apply ordinary fields while the task is active, then close it. A
+        // completed task is no longer available from Todoist's active endpoint.
+        _ = try await session.send {
+            TodoistAPI.completionRequest(
+                id: task.id,
+                completed: completed,
+                accessToken: $0
+            )
+        }
+        // The completion endpoint has no task body. Prefer the provider's new
+        // version when it is already visible, but do not report a successful
+        // close/reopen as failed solely because archive projection is delayed.
+        if let refreshed = try? await lookupTask(
+            id: task.id,
+            parentID: task.parentID
+        ), refreshed.isCompleted == completed {
+            return refreshed
+        }
+        return replacingCompletion(in: updated, with: completed)
+    }
+
+    func moveTask(
+        _ task: RemoteTaskSnapshot,
+        to list: RemoteTaskList
+    ) async throws -> RemoteTaskSnapshot {
+        guard list.provider == .todoist,
+              list.accountKey == accountKey,
+              list.isWritable else {
+            throw TaskProviderError.listUnavailable
+        }
+        let (data, _) = try await session.send {
+            try TodoistAPI.moveTaskRequest(
+                id: task.id,
+                parentID: list.id,
+                accessToken: $0
+            )
+        }
+        return try snapshot(from: data, fallbackParentID: list.id)
     }
 
     func deleteTask(_ task: RemoteTaskSnapshot, expectedVersion: String?) async throws {
@@ -249,14 +310,29 @@ final class TodoistTasksProvider: AsyncTaskProviding {
             snapshots.append(contentsOf: tasks.map {
                 snapshot($0, fallbackParentID: list.id)
             })
+            snapshots.append(contentsOf: try await recentCompletedTasks(
+                parentID: list.id
+            ))
         }
-        return snapshots
+        var seen = Set<String>()
+        return snapshots.filter {
+            seen.insert("\($0.parentAccountKey ?? accountKey)\u{1F}\($0.parentID)\u{1F}\($0.id)")
+                .inserted
+        }
     }
 
     private func completedTask(
         id: String,
         parentID: String
     ) async throws -> RemoteTaskSnapshot? {
+        try await recentCompletedTasks(parentID: parentID).first {
+            $0.id == id
+        }
+    }
+
+    private func recentCompletedTasks(
+        parentID: String
+    ) async throws -> [RemoteTaskSnapshot] {
         let until = now()
         let since = Calendar(identifier: .gregorian).date(
             byAdding: .day,
@@ -265,6 +341,7 @@ final class TodoistTasksProvider: AsyncTaskProviding {
         ) ?? until
         var cursor: String?
         var seenCursors = Set<String>()
+        var snapshots = [RemoteTaskSnapshot]()
         repeat {
             let (data, _) = try await session.send {
                 TodoistAPI.completedTasksRequest(
@@ -276,9 +353,9 @@ final class TodoistTasksProvider: AsyncTaskProviding {
                 )
             }
             let page = try JSONDecoder().decode(CompletedTaskPage.self, from: data)
-            if let task = page.items.first(where: { $0.id == id }) {
-                return snapshot(task, fallbackParentID: parentID)
-            }
+            snapshots.append(contentsOf: page.items.map {
+                snapshot($0, fallbackParentID: parentID)
+            })
             cursor = page.nextCursor
             if let cursor, !seenCursors.insert(cursor).inserted {
                 throw TaskProviderError.providerFailure(
@@ -286,7 +363,7 @@ final class TodoistTasksProvider: AsyncTaskProviding {
                 )
             }
         } while cursor != nil
-        return nil
+        return snapshots
     }
 
     private func allPages<Page: CursorPage>(
@@ -334,6 +411,7 @@ final class TodoistTasksProvider: AsyncTaskProviding {
                     formatter.date(from: $0 + "T00:00:00Z")
                 },
             isCompleted: task.completedAt != nil,
+            priority: taskPriority(task.priority),
             version: task.updatedAt,
             deepLink: URL(string: "https://app.todoist.com/app/task/\(task.id)")
         )
@@ -375,9 +453,37 @@ final class TodoistTasksProvider: AsyncTaskProviding {
         enum CodingKeys: String, CodingKey { case items; case nextCursor = "next_cursor" }
     }
     private struct Task: Decodable {
-        let id: String; let content: String; let description: String?; let projectID: String?; let sectionID: String?; let due: Due?; let completedAt: String?; let updatedAt: String?
-        enum CodingKeys: String, CodingKey { case id, content, description, due; case projectID = "project_id"; case sectionID = "section_id"; case completedAt = "completed_at"; case updatedAt = "updated_at" }
+        let id: String; let content: String; let description: String?; let projectID: String?; let sectionID: String?; let due: Due?; let completedAt: String?; let updatedAt: String?; let priority: Int?
+        enum CodingKeys: String, CodingKey { case id, content, description, due, priority; case projectID = "project_id"; case sectionID = "section_id"; case completedAt = "completed_at"; case updatedAt = "updated_at" }
         struct Due: Decodable { let date: String?; let dateTime: String?; enum CodingKeys: String, CodingKey { case date; case dateTime = "datetime" } }
+    }
+
+    private func taskPriority(_ value: Int?) -> TaskPriority {
+        switch value {
+        case 4: .high
+        case 3: .medium
+        case 2: .low
+        default: .none
+        }
+    }
+
+    private func replacingCompletion(
+        in task: RemoteTaskSnapshot,
+        with isCompleted: Bool
+    ) -> RemoteTaskSnapshot {
+        RemoteTaskSnapshot(
+            id: task.id,
+            parentID: task.parentID,
+            parentAccountKey: task.parentAccountKey,
+            title: task.title,
+            notes: task.notes,
+            dueAt: task.dueAt,
+            reminderAt: task.reminderAt,
+            isCompleted: isCompleted,
+            priority: task.priority,
+            version: task.version,
+            deepLink: task.deepLink
+        )
     }
 }
 
@@ -401,7 +507,8 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
     let provider: TaskProviderKind = .microsoftToDo
     let capabilities = TaskProviderCapabilities(
         supportsNotes: true, supportsTimedDue: true, supportsCompletion: true,
-        supportsDeletion: true, supportsDeepLink: true
+        supportsDeletion: true, supportsDeepLink: true,
+        supportsPriority: true, supportsReminder: true
     )
     private let session: OAuthTaskProviderSession
     private let accountKey: String
@@ -456,6 +563,8 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
                 title: draft.title,
                 body: draft.notes,
                 dueAt: draft.dueAt,
+                reminderAt: draft.reminderAt,
+                priority: draft.priority,
                 deepLink: draft.deepLink,
                 accessToken: $0
             )
@@ -603,7 +712,11 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
             title: task.title ?? "",
             notes: task.body?.content ?? "",
             dueAt: task.dueDateTime.flatMap(date(from:)),
+            reminderAt: task.isReminderOn == true
+                ? task.reminderDateTime.flatMap(date(from:))
+                : nil,
             isCompleted: task.status == "completed",
+            priority: taskPriority(task.importance),
             version: task.etag ?? task.lastModifiedDateTime,
             deepLink: task.linkedResources?
                 .compactMap { $0.webURL.flatMap(URL.init(string:)) }
@@ -659,15 +772,19 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
         let title: String?
         let body: Body?
         let dueDateTime: DateTimeTimeZone?
+        let reminderDateTime: DateTimeTimeZone?
+        let isReminderOn: Bool?
         let status: String?
+        let importance: String?
         let etag: String?
         let lastModifiedDateTime: String?
         let removed: Removed?
         let linkedResources: [LinkedResource]?
         enum CodingKeys: String, CodingKey {
-            case id, title, body, status
+            case id, title, body, status, importance, isReminderOn
             case etag = "@odata.etag"
             case dueDateTime = "dueDateTime"
+            case reminderDateTime = "reminderDateTime"
             case linkedResources = "linkedResources"
             case lastModifiedDateTime = "lastModifiedDateTime"
             case removed = "@removed"
@@ -680,5 +797,13 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
     private struct LinkedResource: Decodable {
         let webURL: String?
         enum CodingKeys: String, CodingKey { case webURL = "webUrl" }
+    }
+
+    private func taskPriority(_ value: String?) -> TaskPriority {
+        switch value {
+        case "high": .high
+        case "low": .low
+        default: .none
+        }
     }
 }

@@ -338,6 +338,35 @@ struct CalendarTimelineView: View {
             }
         }
         .frame(width: contentWidth, height: canvasHeight, alignment: .topLeading)
+        .dropDestination(for: String.self) { references, location in
+            guard let reference = references.first(where: {
+                $0.hasPrefix("kaoscal-task:")
+            }), location.x >= gutterWidth else {
+                return false
+            }
+            let dayIndex = Int((location.x - gutterWidth) / dayWidth)
+            guard layout.dates.indices.contains(dayIndex) else {
+                return false
+            }
+            let rawMinute = max(
+                0,
+                min(23 * 60 + 45, Double(location.y / hourHeight) * 60)
+            )
+            let snappedMinute = Int(rawMinute / 15) * 15
+            guard let start = appState.calendar.date(
+                byAdding: .minute,
+                value: snappedMinute,
+                to: appState.calendar.startOfDay(
+                    for: layout.dates[dayIndex]
+                )
+            ) else {
+                return false
+            }
+            return appState.beginCreatingTaskTimeBlock(
+                sidebarTaskReference: reference,
+                startAt: start
+            )
+        } isTargeted: { _ in }
         .accessibilityIdentifier("calendar.timeGrid")
     }
 

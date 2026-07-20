@@ -447,7 +447,8 @@ final class CalendarClarityTests: XCTestCase {
                 "v7_microsoft_to_do_provider",
                 "v8_calendar_usage",
                 "v9_saved_calendar_sets",
-                "v10_task_provider_recovery"
+                "v10_task_provider_recovery",
+                "v11_local_task_planning"
             ]
         )
         XCTAssertEqual(

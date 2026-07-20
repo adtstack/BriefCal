@@ -397,7 +397,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 절차:
 1. Before/After event task와 Personal task를 만든다.
-2. 오늘, 예정, After Review, 완료 목록을 차례로 연다.
+2. Today, Upcoming, Overdue, No Date, After Review와 Completed를 차례로 연다.
 3. personal due를 미래 날짜로 바꿨다가 제거한다.
 4. event task 제목을 편집한 채 연결 일정을 연다.
 5. 자정 또는 system time zone 변경 알림 뒤 목록을 확인한다.
@@ -405,28 +405,56 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
    version conflict와 권한 철회 disconnected를 차례로 만든다. 각 Resolve 메뉴를 실행한다.
 7. 오른쪽 `Tasks`를 처음 열어 Reminders 권한 요청을 허용한다. 별도 test user에서는 먼저
    거부한 뒤 같은 화면의 `Open System Settings`로 복구한다.
-8. `All Lists`를 열어 Apple Reminders와 Microsoft To Do의 source/account/list 구분과
+8. `All Lists`를 열어 Apple Reminders, Google Tasks, Todoist와 Microsoft To Do의 source/account/list 구분과
    불러온 전체 task 수를 확인한다. 서로 raw list ID가 같은 두 provider list와 같은
    provider에서 account만 다른 같은 raw list ID도 번갈아 선택한다.
-9. 선택한 list에서 Open/Completed/All, 제목·설명 검색과 Due date/Title 정렬을 조합한다.
+9. 선택한 list에서 Open/Completed/All, 제목·설명 검색과 Due date/Priority/Title 정렬을 조합한다.
    선택한 list를 provider에서 삭제한 뒤 authoritative reload도 실행한다.
 10. inspector를 300pt와 360pt 폭으로 줄여 긴 제목·설명·list/account 이름을 확인한다.
 11. list, Completed와 Title 정렬을 선택한 채 Details로 갔다 돌아오고 앱을 재실행한다.
-12. linked task의 local 제목과 remote 제목을 각각 다르게 수정한 뒤 refresh한다. 이어 remote
+12. `All Lists`에서 `+`를 누르고 iCloud와 `On My Mac` writable list를 각각 선택해
+    생성→제목·notes·기한 수정→완료→미완료→삭제한다. 종료 뒤 두 list에 residue가 없는지
+    Reminders.app에서 확인한다.
+13. writable Apple Reminder 행의 완료 원을 빠르게 두 번 누르고, 행을 열어 상세 source와
+    전체 notes·기한·완료를 확인한다. 같은 이름의 list가 있으면 account/source를 구분한다.
+14. 상세 draft를 연 채 Reminders.app에서 같은 task를 수정하고 Save한다. conflict에서 draft가
+    남고 `Reload Latest`/`Cancel`만 보이는지 확인한다. 이어 list를 read-only로 바꾸거나
+    삭제하고, Reminders 권한도 철회했다가 복구한다.
+15. inspector를 300pt와 360pt, 상세 sheet를 keyboard와 VoiceOver로 순회한다. 완료 버튼,
+    list picker, title/notes/due/completed, Save/Delete/Cancel, 오류·복구 문구를 확인한다.
+16. linked task의 local 제목과 remote 제목을 각각 다르게 수정한 뒤 refresh한다. 이어 remote
     task를 삭제하고 다시 refresh한다.
-13. provider write가 실패하도록 네트워크를 끊어 pending create/update/delete를 만든 뒤 앱을
+17. 연결된 Event Brief task의 provider write가 실패하도록 네트워크를 끊어 durable pending
+    create/update/delete를 만든 뒤 앱을
     재실행한다. Retry를 반복해 세 번째 실패와 이후 비활성 상태를 확인한다.
-14. Resolve 또는 provider action menu에서 `Link to Existing Remote Task…`를 열고 서로 다른
+18. Resolve 또는 provider action menu에서 `Link to Existing Remote Task…`를 열고 서로 다른
     provider/account/list의 같은 이름 task를 번갈아 선택한다. 검색과 source 문구도 확인한다.
-15. linked task에서 `Keep Local Only`를 선택하고 앱을 재실행한 뒤 local task를 수정한다.
+19. linked task에서 `Keep Local Only`를 선택하고 앱을 재실행한 뒤 local task를 수정한다.
     원격 task는 그대로인지 확인하고 `Use Calendar Default Provider`로 다시 연결한다.
-16. calendar의 기본 destination을 다른 provider/list로 바꾼다. 기존 linked task와 변경 당시
+20. calendar의 기본 destination을 다른 provider/list로 바꾼다. 기존 linked task와 변경 당시
     unbound task를 수정하고, 변경 뒤 새로 만든 task도 수정한다.
+21. Google Tasks, Todoist와 Microsoft To Do의 writable test list에서 각각 생성→제목·notes·
+    기한→완료→미완료→삭제를 실행한다. Google due의 시간 미지원, Todoist/Microsoft의 원본
+    열기, Todoist project↔section 이동·Undo, Apple/Microsoft/Todoist priority와 Microsoft
+    reminder 설정/제거를 함께 확인한다.
+22. local Event/Personal task에 priority·중요 표시·반복 간격·예상 시간을 설정하고 timer를
+    시작/정지한다. checklist를 만들고 반복 task를 완료한다.
+23. role, 날짜 filter, 날짜/list grouping과 검색을 조합해 이름 있는 Task view를 저장하고
+    다시 선택한다. 같은 검색어로 Calendar와 아직 연결하지 않은 provider task가 함께
+    검색되는지 확인한다.
+24. provider task를 Day/Week의 시간 칸으로 끌어 놓는다. 생성된 1시간 event block과 During
+    task, provider binding을 확인한다. 현재 Calendar Set에 writable calendar가 없을 때도 확인한다.
+25. Event Brief에서 `Link Existing Provider Task…`를 사용하고 Before/During/After 기한을
+    fixed, event start 전/후, event end 전/후로 바꾼다. 원본 일정을 이동하고 연결 영향
+    미리보기를 확인한다.
+26. 오른쪽 Tasks의 `Current Calendar Set Only`를 켜고 Set을 바꾼다. 연결 일정 열기와 task
+    reschedule을 실행하고 완료되지 않은 task의 대상 날짜를 바꾼다.
 
 기대 결과:
 - event task와 personal task가 출처를 잃지 않고 한 목록에 표시된다.
 - event task에는 task due와 별도로 section·원본 일정 시간·calendar/source가 표시된다.
-- personal due 변경에 따라 Today/Upcoming으로 이동하고 due 없음은 Today에 포함된다.
+- personal due 변경에 따라 Today/Upcoming/Overdue/No Date가 정확히 분리되며 due 없음은
+  Today가 아니라 No Date에만 포함된다.
 - 종료 일정의 열린 Before/During은 Today/Upcoming에서 숨기되 삭제·자동 완료하지 않고, After만 After Review에서 처리할 수 있다.
 - target range 밖 일정은 해당 범위를 fetch한 뒤 강한 occurrence match일 때만 열린다.
 - weak/ambiguous/not-found이면 다른 일정을 열지 않고 local task와 오류 안내를 유지한다.
@@ -456,6 +484,26 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 선택 list·상태·정렬은 Details 왕복과 재실행 뒤 복원되고, 검색어는 초기화된다. OAuth
   list 조회 중에는 선택이 사라지지 않으며 일시 오류에는 마지막 metadata/loaded task
   fallback을 유지한다.
+- writable provider task는 지원 capability 범위에서 완료 원, `+`와 상세 sheet의 생성·제목·
+  notes·기한 설정/제거·완료·삭제를 원본에 반영하며 Open filter에서는 성공한 완료 행만
+  사라진다. Google Tasks의 due는 날짜만 저장되고 Apple/Microsoft/Todoist priority는 의미를
+  보존한다. Microsoft reminder는 due와 독립적으로 설정·제거된다. 목록 이동은 Apple
+  Reminders의 writable list/account와 같은 Todoist account의 project/section에서만 노출한다.
+- version conflict는 원격을 자동 덮어쓰거나 재시도하지 않고 draft, `Reload Latest`, Cancel을
+  유지한다. read-only, metadata 실패, 외부 삭제와 권한 철회는 write 없이 Refresh 또는
+  Reminders 개인정보 설정 복구를 제공한다. 연결 remote 삭제는 local Event Task를
+  Needs attention으로 보존한다.
+- Microsoft To Do와 Todoist는 provider가 반환한 신뢰 가능한 URL이 있을 때만 원본 열기를
+  제공한다. Apple EventKit에는 task별 신뢰 가능한 Reminders URL이 없으므로 약속하지 않는다.
+  각 실제 provider fixture cleanup 뒤 생성한 remote residue가 남지 않는다.
+- local planning metadata와 checklist는 v11 SQLite/backup/reset에 포함되고 provider가 지원하지
+  않는 field로 전송되지 않는다. 반복 완료는 다음 local occurrence를 만들고 checklist를
+  미완료로 복사하며 실제 수행 시간을 초기화한다.
+- task drag는 현재 Set의 writable calendar에 15분 단위, 기본 1시간 block을 만들고 During
+  task와 exact provider identity를 연결한다. 연결 일정 이동은 상대 기한을 다시 계산하며
+  삭제는 provider task나 local Event Task를 조용히 삭제하지 않는다.
+- saved Task view와 list/status/sort 선택은 재실행 뒤 복원되며, Task Center는 linked local
+  projection과 연결되지 않은 provider task를 중복 없이 함께 검색한다.
 - Personal task와 Event Brief 원문은 EventKit/Exchange calendar에 쓰이지 않는다.
   configured event task의 provider mutation만 선택한 task provider로 전달된다.
 

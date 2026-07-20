@@ -1,12 +1,26 @@
 # Known Issues and Current Limits
 
-> 마지막 갱신: 2026-07-17
+> 마지막 갱신: 2026-07-20
 >
 > 이 문서는 현재 코드와 검증 기록에서 확인된 사용자 관점의 제한만 다룬다. 구현됐지만 live 검증이 끝나지 않은 항목과 의도적으로 지원하지 않는 항목을 구분한다.
 
 ## 설치·권한·동기화
 
-### v2 Apple Reminders 연동은 아직 live fixture 전이다
+### AI·KaosCal Cloud·기기 간 local data sync는 제공하지 않는다
+
+KaosCal의 Event Brief, local notes/tasks, history, Calendar Set과 설정은 이 Mac에만
+저장된다. AI/LLM/ML 기능, KaosCal 계정·backend·cloud database, telemetry, 모바일·웹
+companion과 다른 기기로의 자동 local-data sync는 제품 범위가 아니다.
+
+Calendar 동기화는 macOS EventKit과 Internet Accounts가 담당한다. 사용자가 연결한 event
+task는 이 Mac의 client가 Apple Reminders, Google Tasks, Todoist 또는 Microsoft To Do와
+직접 동기화하며 KaosCal 중계 서버를 사용하지 않는다. Provider 연결은 local-only 기능의
+필수 조건이 아니다.
+
+**데이터 이전:** KaosCal 고유 데이터를 다른 Mac으로 옮기려면 사용자가 명시적으로 만든
+plaintext ZIP export/import를 사용한다. 자동 cloud sync로 표현하지 않는다.
+
+### Tasks provider 직접 관리와 calendar 결합은 아직 live fixture 전이다
 
 v2 Phase 1에는 Reminders 권한 요청, writable list destination, event task의 생성·수정·완료·삭제
 및 외부 변경 projection이 구현되어 있다. 그러나 현재 자동 테스트는 실제 iCloud/On My Mac
@@ -19,16 +33,33 @@ iCloud/On My Mac 목록 표시는 아직 수동 gate다. Apple/Microsoft list �
 구분, Open/Completed/All·검색·정렬은 fake provider와 300/360pt offscreen에서 검증했지만
 실계정 menu·keyboard·VoiceOver는 아직 수동 gate다. 다른 remote task를 provider/account/list
 source와 함께 직접 고르는 relink와 원격 task를 지우지 않는 durable task별 local-only unlink는
-2026-07-17 코드에 구현됐다. 다만 새 회귀 테스트는 컴파일만 했고 실제 Apple/Google/Todoist/
-Microsoft 계정의 재실행·충돌·삭제·retry limit까지는 아직 실행 검증하지 않았다.
+2026-07-17 코드에 구현됐다. 2026-07-20에는 오른쪽 `Tasks`에서 Apple Reminders, Google Tasks,
+Todoist와 Microsoft To Do의 capability-aware 생성·완료·상세 수정·삭제와 일괄 완료,
+version-aware session Undo를 추가했다. Apple Reminders는 목록·계정 간 이동과 일괄 이동도
+지원하고 Todoist는 같은 account의 project/section 간 단일·일괄 이동을 지원한다. 연결 task의
+move/delete Undo는 local Event Task binding을 보존한다. Apple,
+Microsoft와 Todoist는 priority, Microsoft는 별도 reminder 시각을 지원하고 Google due는
+날짜만 저장한다. Microsoft/Todoist가
+실제 원본 URL을 준 작업만 원본 열기를 제공한다.
+Todoist `Completed`는 최근 90일 completion archive만 bounded 조회하므로 그보다 오래된 완료
+작업은 오른쪽 provider 목록에 나타나지 않을 수 있다. KaosCal local Task Center의 완료 이력과
+같은 범위로 해석하면 안 된다.
+
+Task Center에는 exact Today/Upcoming/Overdue/No Date/Completed, grouping, 저장 Task view,
+Calendar+Tasks 검색과 local priority·중요 표시·반복·예상/실제 시간·checklist가 구현됐다.
+provider task의 calendar drag, 기존 task와 Event Brief 연결, 상대 기한, 연결 event 열기·재배치와
+현재 Calendar Set 관련 task filter도 코드에 포함된다. 새 경로는 fake provider 자동 검증과
+unsigned Debug build까지만 확인했으며 실제 각 provider create/update/complete/delete, Apple
+Apple/Todoist 목록 이동·Undo, 외부 변경 conflict, 권한 철회, residue cleanup, calendar drag와 실창
+keyboard·VoiceOver는 아직 수동 gate다.
 
 pending create는 원격 성공과 local binding 저장 사이에 프로세스가 종료되면 원격 ID를 알 수
 없다. 자동 무한 재시도는 하지 않으며, 재실행 뒤 exact remote relink 또는 local-only 선택으로
 복구해야 한다. Microsoft task 설명은 개인정보 경계를 위해 SQLite/backup에 저장하지 않으므로
 재실행 뒤 첫 full delta가 끝나기 전에는 설명이 잠시 비어 있을 수 있다.
 
-**현재 권장:** Reminders destination을 설정하기 전 v1 local-only task 흐름을 사용하고, live
-검증 전에는 중요한 원격 task를 단독 정본으로 두지 않는다.
+**현재 권장:** 실제 provider별 live gate 전에는 중요한 원격 task 변경 후 원본 앱에서 결과를
+확인하고, 충돌·실패 상태를 해소하기 전 같은 task를 양쪽에서 계속 편집하지 않는다.
 
 ### 외부 배포용 build가 아직 없다
 
@@ -220,4 +251,8 @@ rollback fault는 실행하지 않았다. 온보딩과 recovery 화면은 offscr
 
 이 제한의 최신 판정과 남은 gate는 [Current Status](current-status.md), 상세 복구 계약은
 [Backup, Restore, and Local Reset](backup-restore.md), 사용자별 검증 절차는
-[QA checklist](qa-checklist.md)를 따른다.
+[QA checklist](qa-checklist.md)를 따른다. 상용 캘린더 대비 기능 격차와 알림·일정 검색·
+전체 Month부터 시작하는 후속 구현 순서는
+[상용 기능 로드맵](commercial-feature-roadmap.md)을 따른다.
+AI·KaosCal Cloud 영구 제외와 허용되는 직접 동기화 경계는
+[ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)를 따른다.

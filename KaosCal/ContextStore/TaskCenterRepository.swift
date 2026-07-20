@@ -50,6 +50,20 @@ final class TaskCenterRepository {
                     .filter { $0.linkMode == .localOnly }
                     .map(\.eventTaskID)
             )
+            let planningMetadata = Dictionary(
+                uniqueKeysWithValues: try TaskPlanningMetadata.fetchAll(db)
+                    .map {
+                        (
+                            "\($0.taskKind.rawValue)\u{1F}\($0.taskID)",
+                            $0
+                        )
+                    }
+            )
+            let checklistItems = Dictionary(
+                grouping: try TaskChecklistItem.fetchAll(db)
+            ) {
+                "\($0.taskKind.rawValue)\u{1F}\($0.parentTaskID)"
+            }
             let originalDeletionContextIDs = Set(try String.fetchAll(
                 db,
                 sql: """
@@ -86,7 +100,7 @@ final class TaskCenterRepository {
                         calendar: calendar
                     )
                     switch list {
-                    case .today, .upcoming:
+                    case .today, .upcoming, .overdue, .noDate:
                         if lifecycleStatus == .completed,
                            task.section != .after {
                             return nil
@@ -165,7 +179,17 @@ final class TaskCenterRepository {
                         eventLinkStatus: link.linkStatus,
                         eventLifecycleStatus: context.lifecycleStatus,
                         wasOriginalDeletedByKaosCal:
-                            originalDeletionContextIDs.contains(context.id)
+                            originalDeletionContextIDs.contains(context.id),
+                        planning: planningMetadata["event\u{1F}\(task.id)"]
+                            ?? TaskPlanningRepository.defaultMetadata(
+                                for: .eventTask(
+                                    taskID: task.id,
+                                    contextID: context.id
+                                ),
+                                now: currentDate
+                            ),
+                        checklistItems: (checklistItems["event\u{1F}\(task.id)"] ?? [])
+                            .sorted(by: Self.checklistOrder)
                     )
                 }
             let personalItems: [TaskCenterItem]
@@ -187,7 +211,14 @@ final class TaskCenterRepository {
                             isProviderLocalOnly: false,
                             eventLinkStatus: nil,
                             eventLifecycleStatus: nil,
-                            wasOriginalDeletedByKaosCal: false
+                            wasOriginalDeletedByKaosCal: false,
+                            planning: planningMetadata["personal\u{1F}\(task.id)"]
+                                ?? TaskPlanningRepository.defaultMetadata(
+                                    for: .personalTask(taskID: task.id),
+                                    now: currentDate
+                                ),
+                            checklistItems: (checklistItems["personal\u{1F}\(task.id)"] ?? [])
+                                .sorted(by: Self.checklistOrder)
                         )
                     }
             }
@@ -199,15 +230,25 @@ final class TaskCenterRepository {
             value: 1,
             to: calendar.startOfDay(for: currentDate)
         ) ?? currentDate
+        let today = calendar.startOfDay(for: currentDate)
 
         switch list {
         case .today:
             return items.filter {
-                !$0.isCompleted && ($0.dueAt.map { $0 < tomorrow } ?? true)
+                !$0.isCompleted
+                    && ($0.dueAt.map { $0 >= today && $0 < tomorrow } ?? false)
             }.sorted(by: Self.openItemOrder)
         case .upcoming:
             return items.filter {
                 !$0.isCompleted && ($0.dueAt.map { $0 >= tomorrow } ?? false)
+            }.sorted(by: Self.openItemOrder)
+        case .overdue:
+            return items.filter {
+                !$0.isCompleted && ($0.dueAt.map { $0 < today } ?? false)
+            }.sorted(by: Self.openItemOrder)
+        case .noDate:
+            return items.filter {
+                !$0.isCompleted && $0.dueAt == nil
             }.sorted(by: Self.openItemOrder)
         case .afterReview:
             return items.filter { !$0.isCompleted }
@@ -222,6 +263,12 @@ final class TaskCenterRepository {
         _ lhs: TaskCenterItem,
         _ rhs: TaskCenterItem
     ) -> Bool {
+        if lhs.planning.isImportant != rhs.planning.isImportant {
+            return lhs.planning.isImportant
+        }
+        if lhs.planning.priority != rhs.planning.priority {
+            return lhs.planning.priority.rawValue > rhs.planning.priority.rawValue
+        }
         if lhs.dueAt != rhs.dueAt {
             return (lhs.dueAt ?? .distantFuture) < (rhs.dueAt ?? .distantFuture)
         }
@@ -238,6 +285,19 @@ final class TaskCenterRepository {
         if lhs.completedAt != rhs.completedAt {
             return (lhs.completedAt ?? .distantPast)
                 > (rhs.completedAt ?? .distantPast)
+        }
+        return lhs.id < rhs.id
+    }
+
+    private static func checklistOrder(
+        _ lhs: TaskChecklistItem,
+        _ rhs: TaskChecklistItem
+    ) -> Bool {
+        if lhs.sortOrder != rhs.sortOrder {
+            return lhs.sortOrder < rhs.sortOrder
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt < rhs.createdAt
         }
         return lhs.id < rhs.id
     }

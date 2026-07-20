@@ -65,6 +65,8 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
     let eventLinks: Int
     let eventTasks: Int
     let personalTasks: Int
+    let taskPlanningMetadata: Int
+    let taskChecklistItems: Int
     let eventChangeLog: Int
     let calendarPreferences: Int
     let calendarUsagePreferences: Int
@@ -85,6 +87,8 @@ struct LocalDataDeletedRowCounts: Equatable, Sendable {
             + eventLinks
             + eventTasks
             + personalTasks
+            + taskPlanningMetadata
+            + taskChecklistItems
             + eventChangeLog
             + calendarPreferences
             + calendarUsagePreferences
@@ -329,6 +333,14 @@ struct LocalDataBackupService: Sendable {
                 eventLinks: Int.fetchOne(db, sql: "SELECT COUNT(*) FROM event_links") ?? 0,
                 eventTasks: Int.fetchOne(db, sql: "SELECT COUNT(*) FROM event_tasks") ?? 0,
                 personalTasks: Int.fetchOne(db, sql: "SELECT COUNT(*) FROM personal_tasks") ?? 0,
+                taskPlanningMetadata: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM task_planning_metadata"
+                ) ?? 0,
+                taskChecklistItems: Int.fetchOne(
+                    db,
+                    sql: "SELECT COUNT(*) FROM task_checklist_items"
+                ) ?? 0,
                 eventChangeLog: Int.fetchOne(db, sql: "SELECT COUNT(*) FROM event_change_log") ?? 0,
                 calendarPreferences: Int.fetchOne(
                     db,
@@ -396,6 +408,8 @@ struct LocalDataBackupService: Sendable {
             try db.execute(sql: "DELETE FROM provider_accounts")
             try db.execute(sql: "DELETE FROM context_references")
             try db.execute(sql: "DELETE FROM event_change_log")
+            try db.execute(sql: "DELETE FROM task_checklist_items")
+            try db.execute(sql: "DELETE FROM task_planning_metadata")
             try db.execute(sql: "DELETE FROM event_tasks")
             try db.execute(sql: "DELETE FROM event_links")
             try db.execute(sql: "DELETE FROM event_contexts")

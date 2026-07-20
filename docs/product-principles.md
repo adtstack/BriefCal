@@ -2,8 +2,10 @@
 
 ## 제품 진실
 
-KaosCal은 사용자를 대신해서 하루를 결정하는 AI 스케줄러가 아니다.
-KaosCal은 사용자가 직접 일정을 관리할 때 준비물, 체크리스트, 메모, 후속 작업, 변경 기록, 개인 할 일, 캘린더 출처를 잃지 않게 해주는 macOS-first local-first calendar다.
+KaosCal은 AI 기능을 제공하지 않는다. 사용자를 대신해 생성·요약·분류·추천하거나 하루를
+결정하지 않는다.
+KaosCal은 사용자가 직접 일정을 관리할 때 준비물, 체크리스트, 메모, 후속 작업, 변경 기록,
+개인 할 일과 캘린더 출처를 잃지 않게 해주는 macOS-only local calendar다.
 
 ## 한 줄 정의
 
@@ -31,8 +33,10 @@ KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일
 | 3 | 일정의 시간보다 맥락을 더 오래 보존한다. | 원본 일정이 삭제되어도 Event Brief는 즉시 삭제하지 않는다. |
 | 4 | 캘린더 출처와 권한을 숨기지 않는다. | source, calendar role, editable/read-only 상태를 명확히 표시한다. |
 | 5 | 일정 중심이되 할 일 목록을 숨기지 않는다. | Event task와 가벼운 Personal task를 Task Center에 모으되, 프로젝트·팀 협업·Kanban은 넣지 않는다. |
-| 6 | 구독 없이 살 수 있는 앱이어야 한다. | 서버 의존 기능은 v1 범위 밖으로 둔다. |
-| 7 | 로컬 우선이다. | KaosCal 맥락 데이터는 이 Mac의 Application Support 아래 SQLite에 저장한다. |
+| 6 | 구독 없이 살 수 있는 앱이어야 한다. | KaosCal 계정·backend·cloud sync를 만들지 않는다. |
+| 7 | 이 Mac이 유일한 실행·저장 경계다. | KaosCal 맥락 데이터와 설정은 이 Mac의 Application Support 아래 SQLite에만 저장한다. |
+| 8 | AI를 제품에 넣지 않는다. | local/remote AI·LLM·ML SDK/API, 생성·요약·분류·추천·자동 배치를 도입하지 않는다. |
+| 9 | 동기화는 기존 정본과 직접 연결한다. | Calendar는 EventKit, task는 사용자가 선택한 provider와 이 Mac이 직접 연결하며 KaosCal 중계 서버를 사용하지 않는다. |
 
 ## v1에 반드시 들어가는 것
 
@@ -64,6 +68,12 @@ KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일
 - 초대 일정 RSVP·참석자·주최자 관리
 - 서버 기반 KaosCal Cloud
 
+이 목록은 동결된 v1의 제외 범위다. 동결 후 v2는 Event Brief task에 한해 Apple Reminders,
+Google Tasks, Todoist와 Microsoft To Do provider 연결을 추가했다. Personal task는 계속
+local-only이며, 후속 기능은 [상용 기능 로드맵](commercial-feature-roadmap.md)을 따른다.
+AI·KaosCal Cloud·cross-device sync는
+[ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 영구 제외한다.
+
 ## 핵심 데모
 
 1. 사용자가 "치과 진료" 일정을 만든다.
@@ -84,7 +94,8 @@ KaosCal v1은 macOS Calendar에 연결된 일정을 읽고 편집하며, 각 일
 - Event Brief가 일정과 함께 안전하게 유지되는 데 기여하는가?
 - 멀티 캘린더 출처와 권한을 더 명확하게 만드는가?
 - Task Center에서 오늘 해야 할 일을 더 명확하게 만드는가?
-- local-first, no account, no subscription 포지션을 해치지 않는가?
+- local-only, no account, no subscription 포지션과 ADR-019를 지키는가?
+- 이 Mac 밖으로 KaosCal 소유 데이터를 자동 전송하거나 AI/cloud 의존성을 추가하지 않는가?
 - v1을 더 빨리 검증하게 만드는가?
 
 ## 브랜드 톤

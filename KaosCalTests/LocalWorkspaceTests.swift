@@ -156,8 +156,9 @@ final class LocalWorkspaceTests: XCTestCase {
         let state = makeState(events: [], store: store)
 
         state.createPersonalTask(title: "Inbox item", dueAt: nil)
-        guard case let .loaded(todayItems) = state.taskCenterState,
-              let item = todayItems.first else {
+        XCTAssertEqual(state.selectedTaskFilter, .noDate)
+        guard case let .loaded(noDateItems) = state.taskCenterState,
+              let item = noDateItems.first else {
             return XCTFail("Expected personal task")
         }
         guard case let .personalTask(taskID) = item.id else {
@@ -186,9 +187,10 @@ final class LocalWorkspaceTests: XCTestCase {
         let store = ContextStore(database: try AppDatabase.inMemory())
         let state = makeState(events: [], store: store)
         XCTAssertTrue(state.createPersonalTask(title: "Move by due", dueAt: nil))
-        guard case let .loaded(todayItems) = state.taskCenterState,
-              let item = todayItems.first else {
-            return XCTFail("Expected Today item")
+        XCTAssertEqual(state.selectedTaskFilter, .noDate)
+        guard case let .loaded(noDateItems) = state.taskCenterState,
+              let item = noDateItems.first else {
+            return XCTFail("Expected No Date item")
         }
         let future = date(2026, 7, 12, 9)
 
@@ -200,11 +202,61 @@ final class LocalWorkspaceTests: XCTestCase {
         XCTAssertEqual(upcomingItems.first?.dueAt, future)
 
         XCTAssertTrue(state.updatePersonalTaskDue(item.id, dueAt: nil))
-        XCTAssertEqual(state.selectedTaskFilter, .today)
-        guard case let .loaded(returnedTodayItems) = state.taskCenterState else {
-            return XCTFail("Expected Today items")
+        XCTAssertEqual(state.selectedTaskFilter, .noDate)
+        guard case let .loaded(returnedNoDateItems) = state.taskCenterState else {
+            return XCTFail("Expected No Date items")
         }
-        XCTAssertNil(returnedTodayItems.first?.dueAt)
+        XCTAssertNil(returnedNoDateItems.first?.dueAt)
+    }
+
+    func testCompletingRepeatingTaskCreatesNextOccurrenceAndStopsTimer() throws {
+        var current = date(2026, 7, 10, 12)
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { current }
+        )
+        let state = makeState(events: [], store: store)
+        let original = try store.personalTasks.create(
+            title: "Daily review",
+            dueAt: date(2026, 7, 10, 18)
+        )
+        let id = TaskCenterItemID.personalTask(taskID: original.id)
+        XCTAssertTrue(state.saveTaskPlanning(
+            id,
+            priority: .medium,
+            isImportant: true,
+            repeatFrequency: .daily,
+            repeatInterval: 1,
+            estimatedMinutes: 20
+        ))
+        XCTAssertTrue(state.addTaskChecklistItem(id, title: "Open notes"))
+        XCTAssertTrue(state.toggleTaskTimer(id))
+        current = date(2026, 7, 10, 12).addingTimeInterval(120)
+
+        state.setTaskCenterItemCompleted(id, isCompleted: true)
+
+        let originalPlanning = try store.taskPlanning.snapshot(for: id).0
+        XCTAssertFalse(originalPlanning.isTimerRunning)
+        XCTAssertEqual(originalPlanning.actualSeconds, 120)
+        let repeated = try XCTUnwrap(
+            store.personalTasks.fetch(
+                list: .upcoming,
+                now: date(2026, 7, 10, 12),
+                calendar: testCalendar
+            ).first
+        )
+        XCTAssertEqual(repeated.title, "Daily review")
+        XCTAssertEqual(repeated.dueAt, date(2026, 7, 11, 18))
+        let repeatedSnapshot = try store.taskPlanning.snapshot(
+            for: .personalTask(taskID: repeated.id)
+        )
+        XCTAssertEqual(repeatedSnapshot.0.priority, .medium)
+        XCTAssertTrue(repeatedSnapshot.0.isImportant)
+        XCTAssertEqual(repeatedSnapshot.0.repeatFrequency, .daily)
+        XCTAssertEqual(repeatedSnapshot.0.actualSeconds, 0)
+        XCTAssertNil(repeatedSnapshot.0.startedAt)
+        XCTAssertEqual(repeatedSnapshot.1.map(\.title), ["Open notes"])
+        XCTAssertEqual(repeatedSnapshot.1.map(\.isCompleted), [false])
     }
 
     func testUpcomingQuickAddRejectsTodayDueDate() throws {
@@ -442,10 +494,16 @@ final class LocalWorkspaceTests: XCTestCase {
         XCTAssertEqual(
             Set(today.map(\.id)),
             Set([
-                .eventTask(taskID: after.id, contextID: after.contextID),
-                .personalTask(taskID: personal.id)
+                .eventTask(taskID: after.id, contextID: after.contextID)
             ])
         )
+        state.selectTaskFilter(.noDate)
+        guard case let .loaded(noDate) = state.taskCenterState else {
+            return XCTFail("Expected No Date items")
+        }
+        XCTAssertEqual(noDate.map(\.id), [
+            .personalTask(taskID: personal.id)
+        ])
         XCTAssertFalse(today.contains {
             $0.id == .eventTask(
                 taskID: before.id,

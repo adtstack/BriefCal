@@ -154,6 +154,22 @@ struct EventEditorView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    if let source = session.taskBlockSourceTitle {
+                        Label(
+                            "Task time block · \(source). Saving creates the calendar event and links a local During task to the original provider task.",
+                            systemImage: "calendar.badge.clock"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            KaosCalTheme.accentSoft,
+                            in: RoundedRectangle(cornerRadius: 9)
+                        )
+                        .accessibilityIdentifier("eventEditor.taskTimeBlockSource")
+                    }
                     if let message = validationMessage {
                         editorError(message) {
                             validationMessage = nil
@@ -639,6 +655,14 @@ struct EventEditorView: View {
                     .font(.callout)
                     Text("Tasks: \(impact.taskCount)")
                         .font(.callout)
+                    if impact.providerLinkedTaskCount > 0 {
+                        Label(
+                            "Provider-linked tasks: \(impact.providerLinkedTaskCount). Relative due times will be recalculated after the event moves.",
+                            systemImage: "arrow.triangle.2.circlepath"
+                        )
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    }
 
                     ForEach(impact.taskSections, id: \.section) { section in
                         VStack(alignment: .leading, spacing: 3) {
@@ -739,6 +763,14 @@ struct EventEditorView: View {
                 }
                 Text("Local tasks: \(deletion.impact.taskCount)")
                     .font(.callout)
+                if deletion.impact.providerLinkedTaskCount > 0 {
+                    Label(
+                        "Provider-linked tasks: \(deletion.impact.providerLinkedTaskCount). Their local tasks are retained for recovery; no remote task is silently deleted.",
+                        systemImage: "link.badge.plus"
+                    )
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                }
 
                 ForEach(
                     deletion.impact.taskSections,

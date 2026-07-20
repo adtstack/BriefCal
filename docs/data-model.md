@@ -359,6 +359,25 @@ pending, local-only preference와 새 binding 및 remote projection을 한 SQLit
 그 시점의 unbound task는 local-only로 고정해 다음 edit에서 새 destination으로 조용히 생성되지
 않게 한다.
 
+### 구현된 V11 local task planning
+
+`v11_local_task_planning`은 Event/Personal task의 원래 행을 바꾸지 않고 local planning
+metadata와 checklist를 additive overlay로 저장한다. 일반 provider task 본문이나 notes를
+이 table에 복제하지 않는다.
+
+| table/field | 계약 |
+| --- | --- |
+| `task_planning_metadata.(task_kind, task_id)` | `event` 또는 `personal` typed identity의 composite PK |
+| `priority`, `important` | none/low/medium/high와 별도 중요 표시 |
+| `repeat_frequency`, `repeat_interval` | none/daily/weekly/monthly/yearly와 1~365 간격 |
+| `estimated_minutes` | optional 1~525,600분 계획값 |
+| `actual_seconds`, `started_at` | 누적 실제 수행 시간과 process를 넘어 보존되는 실행 시작 시각 |
+| `task_checklist_items` | typed parent, 제목, 완료, sort order와 timestamp |
+
+Event/Personal 원본 task 삭제 trigger는 두 planning table의 해당 typed row를 정리한다.
+반복 task 완료는 새 원본 task occurrence를 만든 뒤 metadata를 복사하되 actual time과 timer를
+초기화하고 checklist 완료 상태를 false로 만든다.
+
 duplicate candidate는 fetch 시 `CalendarDuplicateCandidateDetector.candidateIndex`로 한 번 계산해 AppState memory에 event ID별로 보관한다. 카드·Agenda·Inspector는 이 index를 O(1)로 조회하고 DB에 candidate row나 dismissal 상태를 저장하지 않는다. 다음 EventKit refresh에서 index 전체를 새 snapshot으로 교체하고 권한 회수 시 비운다.
 
 ## Status values
@@ -443,7 +462,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 ## Repository 책임
 
 `AppDatabase`:
-- `DatabaseQueue` open과 `v1_context_store`, `v2_event_change_log`, `v3_calendar_clarity` additive migration
+- `DatabaseQueue` open과 v1~v11 additive migration
 - foreign key 활성화
 - production Application Support, test in-memory/temporary-file 경계
 
@@ -524,6 +543,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - Phase 9 archive manifest와 Local Data settings는 schema table이 아니며 migration을 추가하지 않는다.
 - saved Set은 기존 v1~v8 SQL을 바꾸지 않고 `v9_saved_calendar_sets`로만 추가한다.
 - task provider recovery는 `v10_task_provider_recovery`로만 추가하며 v4/v5 table SQL을 고쳐 쓰지 않는다.
+- local task planning은 `v11_local_task_planning`으로만 추가하며 v1/v10 table SQL을 고쳐 쓰지 않는다.
 - destructive migration은 v1에서 금지한다.
 - import/reset은 active data를 바꾸기 전에 현재 DB의 자동 recovery backup을 만든다.
 
@@ -553,7 +573,7 @@ extra/comment/attribute, trailing/gapped/overlapping payload와 WAL/SHM은 거�
 - `is_encrypted = false`
 
 archive format version은 DB schema와 별도다. 현재 마지막 migration은
-`v10_task_provider_recovery`이며 manifest의 전체 migration 목록과 SQLite 내부 migration table이
+`v11_local_task_planning`이며 manifest의 전체 migration 목록과 SQLite 내부 migration table이
 맞아야 한다. 기기 이름과 `source_machine_name`은 저장하지 않는다.
 SHA-256은 manifest와 DB entry의 byte 일치 확인이며 제작자 서명은 아니다. Phase 9은
 실행 중인 앱과 application identifier, current schema object와 migration 목록이
@@ -564,6 +584,8 @@ Import는 archive/manifest/hash/schema/migration을 검사한 뒤 추출 DB의 S
 Reset은 사전 자동 ZIP 뒤 KaosCal이 소유한 active user-data table을 한 transaction에서 비운다.
 
 - `event_change_log`
+- `task_checklist_items`
+- `task_planning_metadata`
 - `event_tasks`
 - `event_links`
 - `event_contexts`

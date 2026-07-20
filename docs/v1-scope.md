@@ -80,6 +80,12 @@ Task Center는 프로젝트 관리 도구가 아니다.
 - Personal task: 일정 없이 빠르게 적는 개인 작업
 - 제공하지 않는 것: 프로젝트, 팀 공유, Kanban, 우선순위 매트릭스, Apple Reminders·Exchange Tasks 동기화
 
+위 목록은 동결된 v1 Task Center의 범위다. 이후 v2 provider 확장은 Event Brief task에만
+Apple Reminders, Google Tasks, Todoist와 Microsoft To Do 연결을 추가했고 Personal task는
+계속 local-only로 유지한다. 동결 후 local planning overlay는 priority·반복·checklist·실제
+수행 시간을 추가하며, 오른쪽 `Tasks`와 Task Center는 연결되지 않은 provider task의 직접
+CRUD도 capability 범위에서 제공한다. 이는 위 v1 제외 목록을 소급 변경하지 않는다.
+
 ## 명시적 제외 범위
 
 - AI 자동 스케줄링, 자동 재배치, 자동 수락
@@ -99,6 +105,11 @@ v1 동결 뒤 additive `v8_calendar_usage`에서 calendar별 visibility와 avail
 `v9_saved_calendar_sets`에서 사용자 saved Set·exact membership·현재 선택 persistence를
 구현했다. 이는 frozen v1 제공 범위를 소급 변경하지 않는다. saved Set cloud/device sync와
 시간·위치 기반 자동 전환, role color/name override는 계속 제외한다.
+
+동결 이후에도 KaosCal 소유 Event Brief/task/Set 데이터는 이 Mac에만 저장한다. AI와
+KaosCal 계정·backend·Cloud·cross-device sync는
+[ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 영구 제외하고, Calendar는
+EventKit, 연결한 event task는 이 Mac과 선택 provider 사이의 직접 동기화만 사용한다.
 
 ## 범위 변경 규칙
 

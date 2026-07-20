@@ -35,6 +35,10 @@
 	<string>public.app-category.productivity</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>KaosCalMicrosoftToDoClientID</key>
+	<string>0ec3584c-d466-4e8c-b193-f78d8165fe2a</string>
+	<key>KaosCalMicrosoftToDoRedirectURI</key>
+	<string>http://localhost:43891/oauth/callback</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>KaosCal은 Day, Week, Agenda에 일정을 표시하고 사용자가 승인한 변경을 저장하기 위해 캘린더 접근이 필요합니다.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

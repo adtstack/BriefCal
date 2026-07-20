@@ -601,6 +601,122 @@ enum TaskCenterItemSource: Equatable {
     case personal
 }
 
+enum LocalTaskKind: String, Codable, DatabaseValueConvertible {
+    case event
+    case personal
+}
+
+enum TaskPriority: Int, Codable, CaseIterable, DatabaseValueConvertible {
+    case none = 0
+    case low = 1
+    case medium = 2
+    case high = 3
+
+    var title: String {
+        switch self {
+        case .none: "None"
+        case .low: "Low"
+        case .medium: "Medium"
+        case .high: "High"
+        }
+    }
+}
+
+enum TaskRepeatFrequency: String, Codable, CaseIterable,
+    DatabaseValueConvertible {
+    case none
+    case daily
+    case weekly
+    case monthly
+    case yearly
+
+    var title: String {
+        switch self {
+        case .none: "Does not repeat"
+        case .daily: "Daily"
+        case .weekly: "Weekly"
+        case .monthly: "Monthly"
+        case .yearly: "Yearly"
+        }
+    }
+}
+
+struct TaskPlanningMetadata: Equatable {
+    let taskKind: LocalTaskKind
+    let taskID: String
+    var priority: TaskPriority
+    var isImportant: Bool
+    var repeatFrequency: TaskRepeatFrequency
+    var repeatInterval: Int
+    var estimatedMinutes: Int?
+    var actualSeconds: Int
+    var startedAt: Date?
+    let createdAt: Date
+    var updatedAt: Date
+
+    var isTimerRunning: Bool { startedAt != nil }
+}
+
+extension TaskPlanningMetadata: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "task_planning_metadata"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy { .deferredToDate }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy { .deferredToDate }
+
+    enum CodingKeys: String, CodingKey {
+        case taskKind = "task_kind"
+        case taskID = "task_id"
+        case priority
+        case isImportant = "important"
+        case repeatFrequency = "repeat_frequency"
+        case repeatInterval = "repeat_interval"
+        case estimatedMinutes = "estimated_minutes"
+        case actualSeconds = "actual_seconds"
+        case startedAt = "started_at"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+struct TaskChecklistItem: Equatable, Identifiable {
+    let id: String
+    let taskKind: LocalTaskKind
+    let parentTaskID: String
+    var title: String
+    var isCompleted: Bool
+    var sortOrder: Int
+    let createdAt: Date
+    var updatedAt: Date
+}
+
+extension TaskChecklistItem: Codable, FetchableRecord, PersistableRecord {
+    static let databaseTableName = "task_checklist_items"
+
+    static func databaseDateEncodingStrategy(
+        for column: String
+    ) -> DatabaseDateEncodingStrategy { .deferredToDate }
+
+    static func databaseDateDecodingStrategy(
+        for column: String
+    ) -> DatabaseDateDecodingStrategy { .deferredToDate }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case taskKind = "task_kind"
+        case parentTaskID = "parent_task_id"
+        case title
+        case isCompleted = "completed"
+        case sortOrder = "sort_order"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
 struct TaskCenterProviderLink: Equatable {
     let bindingID: String
     let provider: TaskProviderKind
@@ -660,6 +776,8 @@ struct TaskCenterItem: Equatable, Identifiable {
     let eventLinkStatus: EventLinkStatus?
     let eventLifecycleStatus: EventLifecycleStatus?
     let wasOriginalDeletedByKaosCal: Bool
+    let planning: TaskPlanningMetadata
+    let checklistItems: [TaskChecklistItem]
 }
 
 enum TaskCenterCompletionResult: Equatable {
@@ -670,6 +788,8 @@ enum TaskCenterCompletionResult: Equatable {
 enum TaskCenterList: Equatable {
     case today
     case upcoming
+    case overdue
+    case noDate
     case afterReview
     case completed
 }
@@ -878,6 +998,7 @@ struct EventMutationImpact: Equatable {
     let hasNotes: Bool
     let notesCharacterCount: Int
     let taskCount: Int
+    let providerLinkedTaskCount: Int
     let taskSections: [EventMutationTaskSummary]
     let recentHistory: [EventChangeLog]
 }

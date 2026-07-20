@@ -809,6 +809,79 @@ enum DatabaseMigrations {
                 );
             """)
         }
+        migrator.registerMigration("v11_local_task_planning") { db in
+            try db.execute(sql: """
+                CREATE TABLE task_planning_metadata (
+                    task_kind TEXT NOT NULL
+                        CHECK (task_kind IN ('event', 'personal')),
+                    task_id TEXT NOT NULL
+                        CHECK (length(trim(task_id)) > 0),
+                    priority INTEGER NOT NULL DEFAULT 0
+                        CHECK (priority BETWEEN 0 AND 3),
+                    important BOOLEAN NOT NULL DEFAULT 0
+                        CHECK (important IN (0, 1)),
+                    repeat_frequency TEXT NOT NULL DEFAULT 'none'
+                        CHECK (repeat_frequency IN (
+                            'none', 'daily', 'weekly', 'monthly', 'yearly'
+                        )),
+                    repeat_interval INTEGER NOT NULL DEFAULT 1
+                        CHECK (repeat_interval BETWEEN 1 AND 365),
+                    estimated_minutes INTEGER
+                        CHECK (estimated_minutes IS NULL
+                            OR estimated_minutes BETWEEN 1 AND 525600),
+                    actual_seconds INTEGER NOT NULL DEFAULT 0
+                        CHECK (actual_seconds >= 0),
+                    started_at TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (task_kind, task_id),
+                    CHECK (repeat_frequency != 'none' OR repeat_interval = 1)
+                );
+                CREATE INDEX task_planning_priority
+                    ON task_planning_metadata(important DESC, priority DESC);
+                CREATE INDEX task_planning_running
+                    ON task_planning_metadata(started_at)
+                    WHERE started_at IS NOT NULL;
+
+                CREATE TABLE task_checklist_items (
+                    id TEXT PRIMARY KEY NOT NULL,
+                    task_kind TEXT NOT NULL
+                        CHECK (task_kind IN ('event', 'personal')),
+                    parent_task_id TEXT NOT NULL
+                        CHECK (length(trim(parent_task_id)) > 0),
+                    title TEXT NOT NULL
+                        CHECK (length(trim(title)) BETWEEN 1 AND 500),
+                    completed BOOLEAN NOT NULL DEFAULT 0
+                        CHECK (completed IN (0, 1)),
+                    sort_order INTEGER NOT NULL DEFAULT 0
+                        CHECK (sort_order >= 0),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX task_checklist_parent_order
+                    ON task_checklist_items(
+                        task_kind, parent_task_id, sort_order, created_at, id
+                    );
+
+                CREATE TRIGGER task_planning_event_cleanup
+                AFTER DELETE ON event_tasks
+                BEGIN
+                    DELETE FROM task_checklist_items
+                    WHERE task_kind = 'event' AND parent_task_id = OLD.id;
+                    DELETE FROM task_planning_metadata
+                    WHERE task_kind = 'event' AND task_id = OLD.id;
+                END;
+
+                CREATE TRIGGER task_planning_personal_cleanup
+                AFTER DELETE ON personal_tasks
+                BEGIN
+                    DELETE FROM task_checklist_items
+                    WHERE task_kind = 'personal' AND parent_task_id = OLD.id;
+                    DELETE FROM task_planning_metadata
+                    WHERE task_kind = 'personal' AND task_id = OLD.id;
+                END;
+            """)
+        }
         return migrator
     }
 }

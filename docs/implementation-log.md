@@ -1109,6 +1109,155 @@
   실제 provider 계정 fixture는 수행하지 않았다.
 - 결과: **code complete through P2 / user test pending**.
 
+## 2026-07-18 — 상용 기능 격차와 C0~C4 후속 스펙
+
+- 관련 요구사항: `COM-001`~`COM-014`
+- Fantastical, Apple Calendar, Google Calendar, Outlook, Notion Calendar와 Akiflow의
+  공식 기능 문서를 기준으로 현재 KaosCal의 일상 캘린더·협업·task planning·플랫폼·배포
+  격차를 분리했다.
+- `commercial-feature-roadmap.md`를 Active Product Specification으로 추가했다. 과거 review
+  우선순위 `P*`, Phase 0~10, provider `T0~T5`와 혼동하지 않도록 후속 순서를 `C0~C4`로
+  고정했다.
+- C0는 현재 T0~T5/v10의 test·실계정·접근성·Release gate, C1은 notification, event search,
+  full Month, Quick Add/template, conference Join으로 정했다. C2는 수동 task time blocking,
+  Command Bar/menu bar, 다중 시간대, Mac-local Set 자동 전환과 EventKit capability 개선,
+  C3는 reference/legacy backup과 선택적 확장 재평가다.
+- AI 자동 스케줄링, scheduling server, 모바일/Cloud, 직접 Calendar sync, RSVP/attendee write와
+  팀 프로젝트는 C4 제외로 분리했다.
+- 제품·시스템 스펙, Current Status, Known Issues, User Guide, v1 역사적 범위·제품 원칙과
+  문서 인덱스가 새 로드맵을 정본으로 연결하도록 갱신했다. v1의 Apple Reminders 미지원
+  문구는 역사적 범위로 보존하되 현재 Event Brief task provider와 Personal task local-only
+  경계를 명시했다.
+- 검증: 문서 링크·요구사항 ID·Markdown whitespace 정합성 검사. 코드와 schema 변경 없음,
+  앱 build/test는 실행 대상이 아니다.
+- 결과: **roadmap specified / implementation pending from C0 and C1**.
+
+## 2026-07-18 — 이 Mac 단일 실행·저장, AI·KaosCal Cloud 영구 제외
+
+- 관련 결정: [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)
+- AI/LLM/ML 기반 생성·요약·분류·추천·검색·자동 배치와 local/remote model 사용을 모두
+  제품 범위에서 영구 제외했다.
+- KaosCal 계정·backend·cloud database·sync relay·remote config·telemetry, 모바일·웹
+  companion과 Event Brief/Task/Calendar Set cross-device sync를 만들지 않는다.
+- Calendar는 macOS EventKit, 사용자가 연결한 event task는 이 Mac의 client와 Apple
+  Reminders/Google Tasks/Todoist/Microsoft To Do provider 사이에서 직접 동기화한다. KaosCal
+  중계 서버는 없고 OAuth token은 Keychain에만 둔다.
+- C1 Quick Add는 구조화 입력과 local deterministic template만 남겼다. C3 Reference는
+  remote preview 대신 저장 metadata의 local 정리, 선택적 요약은 remote analytics/weather/
+  AI 없이 현재 snapshot 기반 local 기능으로 제한했다. C4는 보류가 아니라 영구 제외다.
+- Product Principles, Specification, Commercial Roadmap, Architecture, Privacy, Security,
+  Distribution, Current Status, Known Issues, User Guide와 README를 같은 경계로 갱신했다.
+- 검증: 문서 링크·용어·Markdown 정합성 검사. source/dependency audit에서 AI·analytics
+  SDK와 KaosCal backend endpoint는 없고 Swift package는 GRDB 하나임을 확인했다. 코드의
+  고정 network endpoint는 Google Tasks, Todoist, Microsoft To Do OAuth/API 범위다. 코드와
+  schema 변경 없음, 앱 build/test는 실행 대상이 아니다.
+- 결과: **Accepted / local-only product boundary fixed**.
+
+## 2026-07-20 — 오른쪽 Tasks의 Apple Reminders 직접 관리 1차 완성
+
+- 관련 요구사항: `TASK-006`, `PRV-004`, `PRV-009`
+- `ProviderTaskListItem`에 SwiftUI용 합성 ID와 분리된 remote task ID/version을 추가했다.
+  모든 write는 Apple Reminders의 exact provider/account/list/task identity, 최신 snapshot과
+  authoritative writable-list metadata를 확인한다.
+- 행 완료 원을 실제 완료/미완료 버튼으로 바꾸고 per-row progress·중복 입력 방지를 넣었다.
+  상단 `+`와 상세 sheet는 list 선택, 제목·전체 notes·기한 설정/제거·완료, Save/Delete/Cancel을
+  제공한다. 상세 진입은 최신 원격 snapshot을 다시 읽는다.
+- version mismatch는 draft를 보존하고 `Reload Latest`/`Cancel`만 남긴다. read-only, 권한 철회,
+  list metadata 실패와 외부 삭제는 write를 차단하고 refresh/설정 복구 메시지를 표시한다.
+- 성공 뒤 provider 목록과 linked Event Task projection을 다시 읽는다. 원격 삭제는 local task를
+  지우지 않고 missing/Needs attention으로 남긴다. 일반 Reminders notes는 SQLite에 저장하지
+  않았고 schema migration도 추가하지 않았다.
+- 원격 no-due를 수락한 Event Task가 재연결 때 암묵적 section due 때문에 거짓 conflict가 되던
+  비교를 보정해 기존 provider recovery 회귀도 복구했다.
+- 검증:
+  - focused CRUD/conflict/read-only/revoke/external-delete/local-preservation + 300/360pt render
+    **5 tests / 0 failures**
+  - `ContextStoreTests` **88 tests / 0 failures**
+  - 전체 **268 executed / 267 passed / 1 intentional `ManualEventKitQATests` skip /
+    0 failures**, `TEST SUCCEEDED`
+  - result bundle:
+    `/tmp/KaosCalTasksInteractionBuild/Logs/Test/Test-KaosCal-2026.07.20_12-07-42-+0900.xcresult`
+  - unsigned Debug app:
+    `/tmp/KaosCalTasksInteractionBuild/Build/Products/Debug/KaosCal.app`
+- 결과: **implemented / signed iCloud·On My Mac live fixture pending**.
+- 남은 위험: Microsoft To Do mutation, list 이동·capability 확장, Event Brief 연결, calendar
+  time blocking과 bulk action은 후속 범위다. 실제 TCC 철회, 동일 이름 계정/list, 외부 동시
+  수정 conflict, residue cleanup, keyboard·VoiceOver는 수동 검증해야 한다.
+
+## 2026-07-20 — Tasks 상호작용 2차: 이동·일괄 작업·Undo·원본 열기
+
+- 관련 요구사항: `TASK-006`, `TASK-007`, `PRV-004`, `PRV-009`
+- Apple Reminders adapter에 writable destination 검증과 version preflight를 거치는 list move를
+  추가했다. 상세 sheet에서 제목·notes·기한·완료 수정과 list move를 한 mutation/Undo 단위로
+  처리한다.
+- 연결 reminder를 같은 계정 또는 다른 Apple account list로 옮기면 provider item의 account와
+  parent, binding version/hash를 한 SQLite transaction에서 옮긴다. 다음 refresh가 이전 parent를
+  조회해 local Event Task를 missing으로 오판하지 않는다.
+- 명시적 선택 모드와 여러 Apple reminder의 일괄 완료·미완료·list 이동을 추가했다. read-only나
+  Microsoft task가 섞이면 bulk write를 시작하지 않는다.
+- 생성·수정·완료·이동·삭제와 bulk mutation은 마지막 성공 동작의 process-local Undo를 만든다.
+  Undo 직전 모든 after-version을 preflight하며 외부 변경에는 conflict로 멈춘다. 삭제 복원은
+  새 remote ID를 생성하고 기존 missing Event Task binding을 새 item에 재연결한다.
+- Tasks에 per-mutation Syncing과 마지막 성공 시각, Undo 상태·오류를 표시했다. 행은 focusable하고
+  위·아래 방향키로 포커스를 이동하며 Tab/Return/Space의 표준 button 조작을 유지한다.
+- Microsoft To Do delta의 신뢰 가능한 Graph deep link는 프로세스 메모리에만 보관해 원본 열기
+  버튼에 사용한다. Apple `EKReminder.url`은 사용자 필드라 Reminders deep link로 노출하지 않는다.
+- 검증:
+  - 새 focused test: 계정 간 move의 binding 보존+Undo, linked delete의 recreate/relink Undo,
+    bulk completion composite Undo
+  - 전체 **271 executed / 270 passed / 1 intentional `ManualEventKitQATests` skip /
+    0 failures**, `TEST SUCCEEDED`
+  - result bundle:
+    `/tmp/KaosCalTasksInteractionBuild/Logs/Test/Test-KaosCal-2026.07.20_12-32-46-+0900.xcresult`
+  - unsigned Debug app:
+    `/tmp/KaosCalTasksInteractionBuild/Build/Products/Debug/KaosCal.app`
+- 결과: **implemented / live interaction pending**.
+- 남은 위험: 실제 iCloud↔On My Mac move·Undo와 residue cleanup, narrow live window의 bulk/Undo
+  밀도, keyboard focus·VoiceOver, 외부 변경과 Undo 경쟁은 수동 gate다. offline queue와 durable
+  retry/cancel, Microsoft mutation, Calendar 연결·time blocking은 다음 단계다.
+
+## 2026-07-20 — Tasks 통합 관리·planning·Calendar 결합
+
+- 관련 요구사항: `TASK-005`~`TASK-011`, `COM-006`, `COM-011`, `PRV-*`
+- 오른쪽 `Tasks`의 공통 mutation route를 Apple Reminders, Google Tasks, Todoist와 Microsoft
+  To Do로 확장했다. exact provider/account/list/remote ID와 version을 검증하고 provider
+  capability에 따라 notes·완료·due·priority·reminder·원본 URL을 노출한다. Microsoft Graph의
+  `isReminderOn`/`reminderDateTime`은 due와 독립적으로 설정·제거한다. Apple 목록·계정 이동과
+  Todoist 같은 account의 project/section 이동·일괄 이동을 지원하며 공통 완료·CRUD·process-local
+  Undo를 제공한다.
+- `v11_local_task_planning`과 `TaskPlanningRepository`를 추가해 local Event/Personal task의
+  priority·중요 표시·반복·예상/실제 시간·timer·checklist를 backup/reset과 함께 보존한다.
+  반복 완료는 다음 local occurrence를 만들고 checklist와 timer 상태를 안전하게 초기화한다.
+- Task Center를 Today/Upcoming/Overdue/No Date/After Review/Completed, 날짜/source grouping,
+  role, named local view와 Calendar+Tasks 검색으로 확장했다. Event Brief에 이미 투영된 provider
+  task는 중복 표시하지 않는다.
+- provider task를 calendar canvas로 drag하면 15분 단위·기본 1시간 event와 During task를
+  만들고 exact provider binding을 연결한다. Event Brief의 기존 task 연결, fixed/상대 기한,
+  event 이동 뒤 due 재계산, 연결 event 열기·reschedule과 Calendar Set 관련 task filter를
+  추가했다.
+- 동기화 경계는 두 층으로 유지한다. Event Brief provider write는 v10 durable pending,
+  bounded Retry와 cancel-and-local-only를 사용한다. 일반 provider task의 notes는 SQLite에
+  복제하지 않으므로 직접 편집 실패는 sheet draft를 보존하고 자동/무한 재시도하지 않는다.
+- 최종 감사에서 이동 route와 Undo를 provider capability 기반으로 일반화했다. Apple 계정 간
+  목록 이동을 유지하면서 Todoist 공식 move endpoint의 project/section body, exact account
+  제한, 연결 Event Task binding 재배치와 Undo를 계약·coordinator 테스트로 고정했다.
+- Todoist 완료와 일반 field 편집이 함께 있으면 active task field를 먼저 저장한 뒤 close한다.
+  body가 없는 completion 응답 뒤 active/archive를 다시 조회해 최신 완료 상태·version을 반환하고,
+  오른쪽 `Completed`에는 최근 90일 completion archive를 포함하되 project/section 중복 identity를
+  제거한다.
+- 검증:
+  - 전체 **280 executed / 279 passed / 1 intentional `ManualEventKitQATests` skip /
+    0 failures**, `TEST SUCCEEDED`
+  - result bundle:
+    `/tmp/KaosCalUnifiedTasksCompleteBuild/Logs/Test/Test-KaosCal-2026.07.20_14-16-19-+0900.xcresult`
+  - local ad-hoc Debug app:
+    `/tmp/KaosCalUnifiedTasksCompleteBuild/Build/Products/Debug/KaosCal.app`
+- 결과: **implemented / four-provider·signed interaction live pending**.
+- 남은 위험: 실제 provider 계정 CRUD와 permission revoke, provider별 field round-trip,
+  Apple 계정 간 및 Todoist project/section move/Undo, deep link, calendar drag의 provider/EventKit
+  부분 성공, residue 0,
+  좁은 실창 keyboard·VoiceOver는 수동 검증해야 한다.
+
 ## 다음 항목 템플릿
 
 ```markdown

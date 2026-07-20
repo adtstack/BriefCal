@@ -10,33 +10,38 @@ KaosCal 문서는 제품 판단, 기술 결정, 구현 단계, QA 기준과 실�
 2. [current-status.md](current-status.md)
    - 현재 phase, 최신 검증 결과와 열린 manual/live gate의 단일 상태 기준이다.
 
-3. [user-guide.md](user-guide.md)
+3. [commercial-feature-roadmap.md](commercial-feature-roadmap.md)
+   - 상용 캘린더 대비 현재 격차, C0~C4 후속 순서와 `COM-*` 인수 기준이다.
+
+4. [user-guide.md](user-guide.md)
    - 설치, 권한, 주요 기능, backup/reset과 사용자 데이터 경계를 설명한다.
 
-4. [v1-scope.md](v1-scope.md)
+5. [v1-scope.md](v1-scope.md)
    - 현재 v1의 필수·제외 범위와 Exchange 지원 경계를 정의한다.
 
-5. [v1-freeze.md](v1-freeze.md)
+6. [v1-freeze.md](v1-freeze.md)
    - v1 기능 개발 종료선, 유지보수 예외와 v2 전환 기준을 정의한다.
 
-6. [v2-execution-plan.md](v2-execution-plan.md)
+7. [v2-execution-plan.md](v2-execution-plan.md)
    - v1 이후 T0~T5 단계의 순서, 공통 계약과 완료 게이트를 정의한다.
 
-7. [adr/README.md](adr/README.md)
+8. [adr/README.md](adr/README.md)
    - Accepted 결정의 근거와 대체 이력을 관리한다.
 
-8. [implementation-log.md](implementation-log.md)
+9. [implementation-log.md](implementation-log.md)
    - 실제 변경, 검증 결과, 미해결 위험을 시간순으로 남긴다.
 
-9. [developer-setup.md](developer-setup.md)
+10. [developer-setup.md](developer-setup.md)
    - Xcode와 Exchange 테스트 환경 준비물을 정리한다.
 
-10. [exchange-compatibility.md](exchange-compatibility.md)
+11. [exchange-compatibility.md](exchange-compatibility.md)
    - 추측이 아닌 실계정 검증 결과로 Exchange 지원 범위를 선언한다.
 
 ## 제품·기술 기준 문서
 
 - [product-principles.md](product-principles.md): 제품의 역할과 사용자 가치
+- [commercial-feature-roadmap.md](commercial-feature-roadmap.md): 상용 기능 격차와 C0~C4 후속 구현 순서
+- [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md): 무AI·무KaosCal Cloud와 이 Mac 단일 데이터 경계
 - [architecture.md](architecture.md): SwiftUI, EventKit, SQLite/GRDB, local-first 경계
 - [data-model.md](data-model.md): Event Brief, Task Center, calendar usage/saved Set와 identity lifecycle의 로컬 모델
 - [eventkit-decisions.md](eventkit-decisions.md): 권한, read-only, 반복, 변경 알림의 구현 규칙

@@ -63,13 +63,17 @@ enum MicrosoftToDoAPI {
         title: String,
         body: String,
         dueAt: Date?,
+        reminderAt: Date? = nil,
+        priority: TaskPriority = .none,
         deepLink: URL?,
         accessToken: String
     ) throws -> URLRequest {
         var request = tasksRequest(listID: listID, accessToken: accessToken)
         request.httpMethod = "POST"
         var payload = taskBody(
-            title: title, body: body, dueAt: dueAt, completed: nil
+            title: title, body: body, dueAt: dueAt, completed: nil,
+            priority: priority == .none ? nil : priority,
+            reminderAt: reminderAt
         )
         if let deepLink {
             payload["linkedResources"] = [[
@@ -109,12 +113,24 @@ enum MicrosoftToDoAPI {
         return request
     }
 
-    private static func taskBody(title: String?, body: String?, dueAt: Date?, completed: Bool?) -> [String: Any] {
+    private static func taskBody(
+        title: String?,
+        body: String?,
+        dueAt: Date?,
+        completed: Bool?,
+        priority: TaskPriority? = nil,
+        reminderAt: Date? = nil
+    ) -> [String: Any] {
         var result = [String: Any]()
         if let title { result["title"] = title }
         if let body { result["body"] = ["contentType": "text", "content": body] }
         if let dueAt { result["dueDateTime"] = graphDateTime(dueAt) }
         if let completed { result["status"] = completed ? "completed" : "notStarted" }
+        if let priority { result["importance"] = graphImportance(priority) }
+        if let reminderAt {
+            result["isReminderOn"] = true
+            result["reminderDateTime"] = graphDateTime(reminderAt)
+        }
         return result
     }
 
@@ -123,12 +139,18 @@ enum MicrosoftToDoAPI {
             title: patch.title,
             body: patch.notes,
             dueAt: nil,
-            completed: patch.isCompleted
+            completed: patch.isCompleted,
+            priority: patch.priority,
+            reminderAt: nil
         )
         // A double optional distinguishes no due-date change from a requested
         // clear. Graph requires JSON null for the latter.
         if let dueAt = patch.dueAt {
             result["dueDateTime"] = dueAt.map(graphDateTime) ?? NSNull()
+        }
+        if let reminderAt = patch.reminderAt {
+            result["isReminderOn"] = reminderAt != nil
+            result["reminderDateTime"] = reminderAt.map(graphDateTime) ?? NSNull()
         }
         return result
     }
@@ -140,6 +162,14 @@ enum MicrosoftToDoAPI {
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
         formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
         return ["dateTime": formatter.string(from: date), "timeZone": "UTC"]
+    }
+
+    private static func graphImportance(_ priority: TaskPriority) -> String {
+        switch priority {
+        case .none, .medium: "normal"
+        case .low: "low"
+        case .high: "high"
+        }
     }
 
     private static func component(_ value: String) -> String {

@@ -54,6 +54,7 @@ final class ContextStore {
     let eventTasks: EventTaskRepository
     let personalTasks: PersonalTaskRepository
     let taskCenter: TaskCenterRepository
+    let taskPlanning: TaskPlanningRepository
     let taskProviders: TaskProviderRepository
     let calendarRoles: CalendarRoleRepository
     let calendarUsage: CalendarUsagePreferenceRepository
@@ -89,6 +90,11 @@ final class ContextStore {
             makeID: makeID
         )
         taskCenter = TaskCenterRepository(database: database)
+        taskPlanning = TaskPlanningRepository(
+            database: database,
+            now: now,
+            makeID: makeID
+        )
         taskProviders = TaskProviderRepository(
             database: database,
             now: now,
@@ -475,11 +481,19 @@ final class ContextStore {
                     titles: tasks.map(\.title)
                 )
             }
+            let eventTaskIDs = Set(brief.tasks.map(\.id))
+            let providerLinkedTaskCount = try TaskBindingRecord.fetchAll(db)
+                .reduce(into: 0) { count, binding in
+                    if binding.eventTaskID.map(eventTaskIDs.contains) == true {
+                        count += 1
+                    }
+                }
             return EventMutationImpact(
                 contextID: contextID,
                 hasNotes: !trimmedNotes.isEmpty,
                 notesCharacterCount: trimmedNotes.count,
                 taskCount: brief.tasks.count,
+                providerLinkedTaskCount: providerLinkedTaskCount,
                 taskSections: taskSections,
                 recentHistory: try Self.fetchChangeHistory(
                     contextID: contextID,
@@ -515,11 +529,19 @@ final class ContextStore {
                     titles: tasks.map(\.title)
                 )
             }
+            let eventTaskIDs = Set(brief.tasks.map(\.id))
+            let providerLinkedTaskCount = try TaskBindingRecord.fetchAll(db)
+                .reduce(into: 0) { count, binding in
+                    if binding.eventTaskID.map(eventTaskIDs.contains) == true {
+                        count += 1
+                    }
+                }
             let impact = EventMutationImpact(
                 contextID: contextID,
                 hasNotes: !trimmedNotes.isEmpty,
                 notesCharacterCount: trimmedNotes.count,
                 taskCount: brief.tasks.count,
+                providerLinkedTaskCount: providerLinkedTaskCount,
                 taskSections: taskSections,
                 recentHistory: try Self.fetchChangeHistory(
                     contextID: contextID,
@@ -903,9 +925,28 @@ final class ContextStore {
                 taskID: taskID,
                 in: db
             )
+            try Self.deleteTaskPlanning(
+                kind: .event,
+                taskID: taskID,
+                in: db
+            )
             guard try eventTasks.delete(task: task, in: db) else {
                 throw ContextStoreError.missingEventTask(taskID)
             }
+        }
+    }
+
+    func deletePersonalTask(taskID: String) throws {
+        try database.write { db in
+            guard try personalTasks.fetch(id: taskID, in: db) != nil else {
+                throw ContextStoreError.missingPersonalTask(taskID)
+            }
+            try Self.deleteTaskPlanning(
+                kind: .personal,
+                taskID: taskID,
+                in: db
+            )
+            _ = try PersonalTask.deleteOne(db, key: taskID)
         }
     }
 
@@ -922,6 +963,31 @@ final class ContextStore {
                 isCompleted: isCompleted,
                 in: db
             )
+        }
+    }
+
+    func repeatEventTask(
+        taskID: String,
+        due: EventTaskDue
+    ) throws -> EventTask {
+        try database.write { db in
+            guard let source = try eventTasks.fetch(id: taskID, in: db) else {
+                throw ContextStoreError.missingEventTask(taskID)
+            }
+            let nextOrder = try eventTasks.nextSortOrder(
+                contextID: source.contextID,
+                section: source.section,
+                in: db
+            )
+            let repeated = try eventTasks.makeTask(
+                contextID: source.contextID,
+                section: source.section,
+                title: source.title,
+                sortOrder: nextOrder,
+                due: due
+            )
+            try eventTasks.insert(task: repeated, in: db)
+            return repeated
         }
     }
 
@@ -946,6 +1012,21 @@ final class ContextStore {
                 )
             )
         }
+    }
+
+    private static func deleteTaskPlanning(
+        kind: LocalTaskKind,
+        taskID: String,
+        in db: Database
+    ) throws {
+        try db.execute(
+            sql: "DELETE FROM task_checklist_items WHERE task_kind = ? AND parent_task_id = ?",
+            arguments: [kind.rawValue, taskID]
+        )
+        try db.execute(
+            sql: "DELETE FROM task_planning_metadata WHERE task_kind = ? AND task_id = ?",
+            arguments: [kind.rawValue, taskID]
+        )
     }
 
     private func persistEventTask(

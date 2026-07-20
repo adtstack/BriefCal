@@ -287,6 +287,139 @@ final class AppStateTests: XCTestCase {
 
 @MainActor
 final class Phase6AppStateTests: XCTestCase {
+    func testDraggingProviderTaskCreatesSnappedTimeBlockAndLinkedDuringTask() async throws {
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let reminderList = RemoteTaskList(
+            provider: .appleReminders,
+            id: "reminders-work",
+            accountKey: "icloud",
+            title: "Work",
+            sourceTitle: "iCloud",
+            isWritable: true
+        )
+        let remote = RemoteTaskSnapshot(
+            id: "schedule-me",
+            parentID: reminderList.id,
+            parentAccountKey: reminderList.accountKey,
+            title: "Write launch brief",
+            notes: "Remote notes stay transient",
+            dueAt: nil,
+            isCompleted: false,
+            version: "schedule-v1",
+            deepLink: nil
+        )
+        let taskProvider = StubAppleTaskListingProvider(
+            lists: [reminderList],
+            tasks: [remote]
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: store,
+            provider: taskProvider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        let calendarProvider = makeProvider(events: [])
+        calendarProvider.defaultNewEventCalendarIdentifier = "calendar"
+        let state = AppState(
+            calendar: calendar,
+            now: { self.date(2026, 7, 10, 8) },
+            calendarProvider: calendarProvider,
+            contextStore: store,
+            taskProviderCoordinator: coordinator,
+            localContextStoreState: .ready
+        )
+        await state.loadCalendarStatus()
+        for _ in 0..<30 {
+            if case .loaded = coordinator.appleRemindersTaskState { break }
+            await Task.yield()
+        }
+        let sidebarID = TaskProviderCoordinator.sidebarTaskItemID(
+            provider: .appleReminders,
+            accountKey: reminderList.accountKey,
+            listID: reminderList.id,
+            taskID: remote.id
+        )
+
+        XCTAssertTrue(state.beginCreatingTaskTimeBlock(
+            sidebarTaskReference: "kaoscal-task:\(sidebarID)",
+            startAt: date(2026, 7, 10, 10, 7)
+        ))
+        let session = try XCTUnwrap(state.eventEditorSession)
+        XCTAssertEqual(session.initialDraft.title, remote.title)
+        XCTAssertEqual(session.initialDraft.startDate, date(2026, 7, 10, 10))
+        XCTAssertEqual(session.initialDraft.endDate, date(2026, 7, 10, 11))
+        XCTAssertNotNil(session.taskBlockSourceTitle)
+
+        let didSave = await state.saveEventEditor(session.initialDraft)
+        XCTAssertTrue(didSave)
+
+        XCTAssertEqual(calendarProvider.createCallCount, 1)
+        let binding = try XCTUnwrap(store.taskProviders.fetchBindings().first)
+        XCTAssertEqual(binding.syncState, .linked)
+        let cached = try XCTUnwrap(
+            store.taskProviders.fetchProviderItem(id: binding.providerItemID)
+        )
+        XCTAssertEqual(cached.remoteID, remote.id)
+        let eventTaskID = try XCTUnwrap(binding.eventTaskID)
+        let eventTask = try XCTUnwrap(store.eventTasks.fetch(id: eventTaskID))
+        XCTAssertEqual(eventTask.section, .during)
+        XCTAssertEqual(eventTask.title, remote.title)
+        let linkedSidebarItem = try XCTUnwrap(
+            coordinator.sidebarTaskItem(id: sidebarID)
+        )
+        let calendarLink = try XCTUnwrap(
+            coordinator.calendarLink(for: linkedSidebarItem)
+        )
+        XCTAssertEqual(calendarLink.eventTaskID, eventTask.id)
+        XCTAssertEqual(calendarLink.contextID, eventTask.contextID)
+        XCTAssertEqual(calendarLink.calendarIdentifier, "calendar")
+        XCTAssertEqual(calendarLink.eventTitle, remote.title)
+        XCTAssertNil(state.eventEditorError)
+    }
+
+    func testSelectedEventTaskSupportsRelativeAndFixedDuePolicies() async throws {
+        let event = makeEvent(
+            id: "relative-due",
+            start: date(2026, 7, 10, 10)
+        )
+        let provider = makeProvider(events: [event])
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let task = try store.appendEventTask(
+            for: event,
+            section: .before,
+            title: "Prepare room"
+        )
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        state.selectEvent(event.id)
+
+        XCTAssertTrue(state.setSelectedEventTaskDue(
+            id: task.id,
+            due: .relative(anchor: .beforeStart, offsetMinutes: 30)
+        ))
+        let relative = try XCTUnwrap(store.eventTasks.fetch(id: task.id))
+        XCTAssertEqual(
+            relative.due,
+            .relative(anchor: .beforeStart, offsetMinutes: 30)
+        )
+        XCTAssertEqual(
+            relative.effectiveDueDate(
+                eventStart: event.startDate,
+                eventEnd: event.endDate
+            ),
+            date(2026, 7, 10, 9, 30)
+        )
+
+        let fixed = date(2026, 7, 11, 15)
+        XCTAssertTrue(state.setSelectedEventTaskDue(
+            id: task.id,
+            due: .fixed(fixed)
+        ))
+        XCTAssertEqual(
+            try XCTUnwrap(store.eventTasks.fetch(id: task.id)).due,
+            .fixed(fixed)
+        )
+    }
+
     func testTaskDeepLinkUsesLocalBindingThenStrongCalendarLookup() async throws {
         let event = makeEvent(id: "deep-link")
         let provider = makeProvider(events: [event])

@@ -237,6 +237,55 @@ final class TaskProviderRepository {
         }
     }
 
+    /// Projects provider tasks that are linked to Event Brief tasks. This is
+    /// intentionally assembled from the existing normalized records so the
+    /// sidebar can filter by Calendar Set without introducing another source
+    /// of truth or a schema migration.
+    func fetchProviderTaskCalendarLinks() throws -> [ProviderTaskCalendarLink] {
+        try database.read { db in
+            let accounts = Dictionary(
+                uniqueKeysWithValues: try ProviderAccountRecord.fetchAll(db)
+                    .map { ($0.id, $0) }
+            )
+            let items = Dictionary(
+                uniqueKeysWithValues: try ProviderItemRecord.fetchAll(db)
+                    .map { ($0.id, $0) }
+            )
+            let tasks = Dictionary(
+                uniqueKeysWithValues: try EventTask.fetchAll(db)
+                    .map { ($0.id, $0) }
+            )
+            let links = Dictionary(
+                uniqueKeysWithValues: try EventLink.fetchAll(db)
+                    .map { ($0.contextID, $0) }
+            )
+
+            return try TaskBindingRecord.fetchAll(db).compactMap { binding in
+                guard let eventTaskID = binding.eventTaskID,
+                      let item = items[binding.providerItemID],
+                      let account = accounts[item.accountID],
+                      let task = tasks[eventTaskID],
+                      let link = links[task.contextID] else {
+                    return nil
+                }
+                return ProviderTaskCalendarLink(
+                    provider: account.provider,
+                    accountKey: account.accountKey,
+                    listID: item.remoteParentID,
+                    remoteTaskID: item.remoteID,
+                    eventTaskID: eventTaskID,
+                    contextID: task.contextID,
+                    calendarIdentifier: link.calendarIdentifier,
+                    calendarTitle: link.calendarTitleSnapshot,
+                    eventTitle: link.titleSnapshot,
+                    eventStart: link.startSnapshot,
+                    eventEnd: link.endSnapshot,
+                    linkStatus: link.linkStatus
+                )
+            }
+        }
+    }
+
     func fetchPendingOperation(
         eventTaskID: String
     ) throws -> ProviderPendingOperationRecord? {
@@ -479,6 +528,115 @@ final class TaskProviderRepository {
                 return
             }
             try item.delete(db)
+        }
+    }
+
+    /// Moves a durable Event Brief binding with a provider task whose list or
+    /// account changed. Unlinked sidebar tasks never enter this cache. Keeping
+    /// the item and binding update in one transaction prevents the next
+    /// provider refresh from treating a successfully moved task as missing.
+    @discardableResult
+    func relocateLinkedTask(
+        fromAccountID: String,
+        remoteID: String,
+        toAccountID: String,
+        remote: RemoteTaskSnapshot,
+        syncHash: String
+    ) throws -> Bool {
+        let timestamp = now()
+        return try database.write { db in
+            guard let sourceItem = try ProviderItemRecord
+                .filter(
+                    Column("account_id") == fromAccountID
+                        && Column("remote_id") == remoteID
+                )
+                .fetchOne(db),
+                  var binding = try TaskBindingRecord
+                    .filter(Column("provider_item_id") == sourceItem.id)
+                    .fetchOne(db) else {
+                return false
+            }
+
+            let destinationItem = try ProviderItemRecord
+                .filter(
+                    Column("account_id") == toAccountID
+                        && Column("remote_id") == remote.id
+                )
+                .fetchOne(db)
+
+            let targetItemID: String
+            if let destinationItem, destinationItem.id != sourceItem.id {
+                if let owner = try TaskBindingRecord
+                    .filter(Column("provider_item_id") == destinationItem.id)
+                    .fetchOne(db), owner.id != binding.id {
+                    throw TaskProviderError.providerFailure(
+                        "The moved remote task is already linked to a different KaosCal task."
+                    )
+                }
+                try db.execute(
+                    sql: """
+                        UPDATE provider_items
+                        SET remote_parent_id = ?, remote_version = ?, cached_title = ?,
+                            cached_notes = '', cached_due_at = ?, cached_completed = ?,
+                            last_seen_at = ?, updated_at = ?
+                        WHERE id = ?
+                        """,
+                    arguments: [
+                        remote.parentID,
+                        remote.version,
+                        remote.title,
+                        remote.dueAt,
+                        remote.isCompleted,
+                        timestamp,
+                        timestamp,
+                        destinationItem.id
+                    ]
+                )
+                targetItemID = destinationItem.id
+            } else {
+                try db.execute(
+                    sql: """
+                        UPDATE provider_items
+                        SET account_id = ?, remote_id = ?, remote_parent_id = ?,
+                            remote_version = ?, cached_title = ?, cached_notes = '',
+                            cached_due_at = ?, cached_completed = ?, last_seen_at = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                    arguments: [
+                        toAccountID,
+                        remote.id,
+                        remote.parentID,
+                        remote.version,
+                        remote.title,
+                        remote.dueAt,
+                        remote.isCompleted,
+                        timestamp,
+                        timestamp,
+                        sourceItem.id
+                    ]
+                )
+                targetItemID = sourceItem.id
+            }
+
+            binding = TaskBindingRecord(
+                id: binding.id,
+                providerItemID: targetItemID,
+                eventTaskID: binding.eventTaskID,
+                personalTaskID: binding.personalTaskID,
+                occurrenceKey: binding.occurrenceKey,
+                syncState: .linked,
+                lastSyncedHash: syncHash,
+                remoteVersion: remote.version,
+                createdAt: binding.createdAt,
+                updatedAt: timestamp
+            )
+            try binding.update(db)
+
+            if targetItemID != sourceItem.id {
+                _ = try sourceItem.delete(db)
+            }
+            return true
         }
     }
 

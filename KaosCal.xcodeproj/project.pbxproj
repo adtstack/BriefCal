@@ -43,6 +43,7 @@
 		C1000000000000000000000B /* TaskProviderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000B /* TaskProviderModels.swift */; };
 		C1000000000000000000000C /* TaskProviderRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000C /* TaskProviderRepository.swift */; };
 		C1000000000000000000000D /* ContextReferenceRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000D /* ContextReferenceRepository.swift */; };
+		C1000000000000000000000E /* TaskPlanningRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2000000000000000000000E /* TaskPlanningRepository.swift */; };
 		D10000000000000000000001 /* EventBriefView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000001 /* EventBriefView.swift */; };
 		D10000000000000000000002 /* TaskCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000002 /* TaskCenterView.swift */; };
 		D10000000000000000000003 /* LocalWorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000003 /* LocalWorkspaceTests.swift */; };
@@ -109,6 +110,7 @@
 		C2000000000000000000000B /* TaskProviderModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskProviderModels.swift; sourceTree = "<group>"; };
 		C2000000000000000000000C /* TaskProviderRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskProviderRepository.swift; sourceTree = "<group>"; };
 		C2000000000000000000000D /* ContextReferenceRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextReferenceRepository.swift; sourceTree = "<group>"; };
+		C2000000000000000000000E /* TaskPlanningRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskPlanningRepository.swift; sourceTree = "<group>"; };
 		D20000000000000000000001 /* EventBriefView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventBriefView.swift; sourceTree = "<group>"; };
 		D20000000000000000000002 /* TaskCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskCenterView.swift; sourceTree = "<group>"; };
 		D20000000000000000000003 /* LocalWorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalWorkspaceTests.swift; sourceTree = "<group>"; };
@@ -279,6 +281,7 @@
 				C2000000000000000000000B /* TaskProviderModels.swift */,
 				C2000000000000000000000C /* TaskProviderRepository.swift */,
 				C2000000000000000000000D /* ContextReferenceRepository.swift */,
+				C2000000000000000000000E /* TaskPlanningRepository.swift */,
 			);
 			path = ContextStore;
 			sourceTree = "<group>";
@@ -436,6 +439,7 @@
 				C1000000000000000000000B /* TaskProviderModels.swift in Sources */,
 				C1000000000000000000000C /* TaskProviderRepository.swift in Sources */,
 				C1000000000000000000000D /* ContextReferenceRepository.swift in Sources */,
+				C1000000000000000000000E /* TaskPlanningRepository.swift in Sources */,
 				A1000000000000000000000C /* CalendarEventDateFormatting.swift in Sources */,
 				G10000000000000000000001 /* CalendarClarity.swift in Sources */,
 				A1000000000000000000000D /* CalendarEventLayout.swift in Sources */,

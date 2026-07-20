@@ -40,6 +40,8 @@ enum SettingsPane: String, Hashable {
 enum TaskFilter: String, CaseIterable, Hashable, Identifiable {
     case today
     case upcoming
+    case overdue
+    case noDate
     case afterReview
     case completed
 
@@ -49,6 +51,8 @@ enum TaskFilter: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .today: "Today"
         case .upcoming: "Upcoming"
+        case .overdue: "Overdue"
+        case .noDate: "No Date"
         case .afterReview: "After Review"
         case .completed: "Completed"
         }
@@ -187,19 +191,22 @@ struct CalendarEventEditorSession: Equatable, Identifiable {
     let writableCalendars: [CalendarSource]
     let mutationContext: EventMutationContext
     let mutationImpact: EventMutationImpact?
+    let taskBlockSourceTitle: String?
 
     init(
         target: CalendarEventEditorTarget,
         initialDraft: CalendarEventDraft,
         writableCalendars: [CalendarSource],
         mutationContext: EventMutationContext,
-        mutationImpact: EventMutationImpact? = nil
+        mutationImpact: EventMutationImpact? = nil,
+        taskBlockSourceTitle: String? = nil
     ) {
         self.target = target
         self.initialDraft = initialDraft
         self.writableCalendars = writableCalendars
         self.mutationContext = mutationContext
         self.mutationImpact = mutationImpact
+        self.taskBlockSourceTitle = taskBlockSourceTitle
     }
 
     var id: String {
@@ -210,6 +217,10 @@ struct CalendarEventEditorSession: Equatable, Identifiable {
             "edit-\(event.id)"
         }
     }
+}
+
+private struct PendingTaskTimeBlock: Equatable {
+    let sidebarItem: ProviderTaskListItem
 }
 
 enum CalendarEventEditorOperationState: Equatable {
@@ -372,6 +383,7 @@ final class AppState: ObservableObject {
     private var calendarSetMembershipIndex: [String: Set<String>] = [:]
     private var miniMonthSummaryEvents: [DisplayEvent] = []
     private var miniMonthSummaryRequestGeneration = 0
+    private var pendingTaskTimeBlock: PendingTaskTimeBlock?
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
@@ -794,6 +806,20 @@ final class AppState: ObservableObject {
         includes source: CalendarSource
     ) -> Bool {
         set.calendarIdentifiers.contains(source.id)
+    }
+
+    /// Returns whether a calendar belongs to the active, normally visible
+    /// Calendar Set. Tasks use this to scope only durable event relationships;
+    /// unlinked provider tasks are not guessed into a Set by list name.
+    func currentCalendarSetIncludes(
+        calendarIdentifier: String
+    ) -> Bool {
+        guard let source = calendarSources.first(where: {
+            $0.id == calendarIdentifier
+        }), calendarUsagePolicy(for: source).isVisible else {
+            return false
+        }
+        return selectedCalendarSetIncludes(source)
     }
 
     func unavailableMemberships(
@@ -1744,6 +1770,28 @@ final class AppState: ObservableObject {
     }
 
     @discardableResult
+    func setSelectedEventTaskDue(
+        id taskID: String,
+        due: EventTaskDue
+    ) -> Bool {
+        let didUpdate = performSelectedEventTaskMutation(taskID: taskID) {
+            contextStore, contextID, task in
+            _ = try contextStore.updateEventTask(
+                contextID: contextID,
+                taskID: task.id,
+                section: task.section,
+                title: task.title,
+                sortOrder: task.sortOrder,
+                due: due
+            )
+        }
+        if didUpdate {
+            scheduleTaskProviderSync(eventTaskID: taskID)
+        }
+        return didUpdate
+    }
+
+    @discardableResult
     func addSelectedReference(urlString: String, title: String) -> Bool {
         let didAdd = performLocalMutation {
             guard let contextStore,
@@ -1815,10 +1863,11 @@ final class AppState: ObservableObject {
 
     @discardableResult
     func createPersonalTask(title: String, dueAt: Date?) -> Bool {
+        let today = calendar.startOfDay(for: now())
         let tomorrow = calendar.date(
             byAdding: .day,
             value: 1,
-            to: calendar.startOfDay(for: now())
+            to: today
         ) ?? now()
         if selectedTaskFilter == .upcoming,
            dueAt.map({ $0 < tomorrow }) ?? true {
@@ -1835,9 +1884,16 @@ final class AppState: ObservableObject {
                 dueAt: dueAt
             )
         }
-        if didCreate, let dueAt, dueAt >= tomorrow,
-           selectedTaskFilter == .today {
-            selectTaskFilter(.upcoming)
+        if didCreate {
+            if dueAt == nil {
+                selectTaskFilter(.noDate)
+            } else if dueAt.map({ $0 < today }) == true {
+                selectTaskFilter(.overdue)
+            } else if dueAt.map({ $0 >= tomorrow }) == true {
+                selectTaskFilter(.upcoming)
+            } else {
+                selectTaskFilter(.today)
+            }
         }
         return didCreate
     }
@@ -2098,17 +2154,169 @@ final class AppState: ObservableObject {
         _ id: TaskCenterItemID,
         isCompleted: Bool
     ) {
+        var repeatedEventTaskID: String?
         let didUpdate = performLocalMutation {
             guard let contextStore else {
                 throw ContextStoreError.missingPersonalTask("local-store")
             }
-            _ = try contextStore.setTaskCenterItemCompleted(
+            var planning = try contextStore.taskPlanning.snapshot(for: id).0
+            let wasCompleted: Bool
+            switch id {
+            case let .eventTask(taskID, _):
+                wasCompleted = try contextStore.eventTasks.fetch(id: taskID)?
+                    .isCompleted ?? false
+            case let .personalTask(taskID):
+                wasCompleted = try contextStore.personalTasks.fetch(id: taskID)?
+                    .isCompleted ?? false
+            }
+            let result = try contextStore.setTaskCenterItemCompleted(
+                id: id,
+                isCompleted: isCompleted
+            )
+            if isCompleted, !wasCompleted, planning.isTimerRunning {
+                planning = try contextStore.taskPlanning.toggleTimer(for: id)
+            }
+            guard isCompleted,
+                  !wasCompleted,
+                  planning.repeatFrequency != .none else {
+                return
+            }
+            switch result {
+            case let .personalTask(task):
+                let next = try contextStore.personalTasks.create(
+                    title: task.title,
+                    notes: task.notes,
+                    dueAt: Self.nextRepeatingDate(
+                        task.dueAt,
+                        frequency: planning.repeatFrequency,
+                        interval: planning.repeatInterval,
+                        calendar: calendar
+                    ),
+                    sortOrder: task.sortOrder
+                )
+                try contextStore.taskPlanning.copyPlanning(
+                    from: id,
+                    to: .personalTask(taskID: next.id)
+                )
+            case let .eventTask(task):
+                let nextDue: EventTaskDue = switch task.due {
+                case .none:
+                    .none
+                case let .relative(anchor, offsetMinutes):
+                    .relative(anchor: anchor, offsetMinutes: offsetMinutes)
+                case let .fixed(date):
+                    .fixed(Self.nextRepeatingDate(
+                        date,
+                        frequency: planning.repeatFrequency,
+                        interval: planning.repeatInterval,
+                        calendar: calendar
+                    ) ?? date)
+                }
+                let next = try contextStore.repeatEventTask(
+                    taskID: task.id,
+                    due: nextDue
+                )
+                try contextStore.taskPlanning.copyPlanning(
+                    from: id,
+                    to: .eventTask(
+                        taskID: next.id,
+                        contextID: next.contextID
+                    )
+                )
+                repeatedEventTaskID = next.id
+            }
+        }
+        if didUpdate, case let .eventTask(taskID, _) = id {
+            scheduleTaskProviderSync(eventTaskID: taskID)
+            if let repeatedEventTaskID {
+                scheduleTaskProviderSync(eventTaskID: repeatedEventTaskID)
+            }
+        }
+    }
+
+    @discardableResult
+    func saveTaskPlanning(
+        _ id: TaskCenterItemID,
+        priority: TaskPriority,
+        isImportant: Bool,
+        repeatFrequency: TaskRepeatFrequency,
+        repeatInterval: Int,
+        estimatedMinutes: Int?
+    ) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            _ = try contextStore.taskPlanning.save(
+                for: id,
+                priority: priority,
+                isImportant: isImportant,
+                repeatFrequency: repeatFrequency,
+                repeatInterval: repeatInterval,
+                estimatedMinutes: estimatedMinutes
+            )
+        }
+    }
+
+    @discardableResult
+    func toggleTaskImportant(_ id: TaskCenterItemID) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            _ = try contextStore.taskPlanning.toggleImportant(for: id)
+        }
+    }
+
+    @discardableResult
+    func toggleTaskTimer(_ id: TaskCenterItemID) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            _ = try contextStore.taskPlanning.toggleTimer(for: id)
+        }
+    }
+
+    @discardableResult
+    func addTaskChecklistItem(
+        _ id: TaskCenterItemID,
+        title: String
+    ) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            _ = try contextStore.taskPlanning.addChecklistItem(
+                to: id,
+                title: title
+            )
+        }
+    }
+
+    @discardableResult
+    func setTaskChecklistItemCompleted(
+        id: String,
+        isCompleted: Bool
+    ) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            try contextStore.taskPlanning.setChecklistItemCompleted(
                 id: id,
                 isCompleted: isCompleted
             )
         }
-        if didUpdate, case let .eventTask(taskID, _) = id {
-            scheduleTaskProviderSync(eventTaskID: taskID)
+    }
+
+    @discardableResult
+    func deleteTaskChecklistItem(id: String) -> Bool {
+        performLocalMutation {
+            guard let contextStore else {
+                throw ContextStoreError.missingPersonalTask("local-store")
+            }
+            try contextStore.taskPlanning.deleteChecklistItem(id: id)
         }
     }
 
@@ -2181,12 +2389,17 @@ final class AppState: ObservableObject {
         }
         guard didUpdate else { return false }
 
+        let start = calendar.startOfDay(for: now())
         let tomorrow = calendar.date(
             byAdding: .day,
             value: 1,
-            to: calendar.startOfDay(for: now())
+            to: start
         ) ?? now()
-        if dueAt.map({ $0 >= tomorrow }) ?? false {
+        if dueAt == nil {
+            selectTaskFilter(.noDate)
+        } else if dueAt.map({ $0 < start }) == true {
+            selectTaskFilter(.overdue)
+        } else if dueAt.map({ $0 >= tomorrow }) == true {
             selectTaskFilter(.upcoming)
         } else {
             selectTaskFilter(.today)
@@ -2210,10 +2423,7 @@ final class AppState: ObservableObject {
                     taskID: taskID
                 )
             case let .personalTask(taskID):
-                guard try contextStore.personalTasks.fetch(id: taskID) != nil else {
-                    throw ContextStoreError.missingPersonalTask(taskID)
-                }
-                try contextStore.personalTasks.delete(id: taskID)
+                try contextStore.deletePersonalTask(taskID: taskID)
             }
         }
     }
@@ -2642,6 +2852,7 @@ final class AppState: ObservableObject {
     }
 
     func beginCreatingEvent() {
+        pendingTaskTimeBlock = nil
         guard localDataOperationState == .idle else {
             eventEditorError = Self.message(
                 for: localDataMaintenanceBlockError
@@ -2705,6 +2916,121 @@ final class AppState: ObservableObject {
             mutationContext: .none
         )
         eventEditorOperationState = .idle
+    }
+
+    @discardableResult
+    func beginCreatingTaskTimeBlock(
+        sidebarTaskReference: String,
+        startAt proposedStart: Date
+    ) -> Bool {
+        guard sidebarTaskReference.hasPrefix("kaoscal-task:"),
+              let coordinator = taskProviderCoordinator,
+              let item = coordinator.sidebarTaskItem(
+                id: String(sidebarTaskReference.dropFirst("kaoscal-task:".count))
+              ) else {
+            eventEditorError = "The dropped task is no longer available. Refresh Tasks and try again."
+            return false
+        }
+        guard !item.isCompleted else {
+            eventEditorError = "Reopen the completed task before scheduling a time block."
+            return false
+        }
+        guard localDataOperationState == .idle else {
+            eventEditorError = Self.message(for: localDataMaintenanceBlockError)
+            return false
+        }
+        guard eventEditorSession == nil,
+              eventEditorOperationState == .idle else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.editorAlreadyOpen
+            )
+            return false
+        }
+        guard calendarAuthorizationState.canReadEvents else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.fullAccessRequired
+            )
+            return false
+        }
+
+        let allWritable = calendarSources.filter {
+            CalendarWriteRestriction.restriction(for: $0) == nil
+        }
+        let setWritable = allWritable.filter {
+            calendarUsagePolicy(for: $0).isVisible
+                && selectedCalendarSetIncludes($0)
+        }
+        let writableCalendars: [CalendarSource]
+        switch selectedCalendarSet {
+        case .all:
+            writableCalendars = allWritable
+        case .role, .saved:
+            guard !setWritable.isEmpty else {
+                eventEditorError = "The current Calendar Set has no enabled writable calendar for this time block. Choose another Set or enable a writable calendar."
+                return false
+            }
+            writableCalendars = setWritable
+        }
+        guard !writableCalendars.isEmpty else {
+            eventEditorError = Self.message(
+                for: CalendarEventWriteError.noWritableCalendar
+            )
+            return false
+        }
+
+        let providerDefault = calendarProvider
+            .defaultCalendarIdentifierForNewEvents()
+        let calendarIdentifier = [providerDefault, selectedEvent?.calendarIdentifier]
+            .compactMap { $0 }
+            .first { identifier in
+                writableCalendars.contains { $0.id == identifier }
+            } ?? writableCalendars[0].id
+        let start = snappedTaskBlockStart(proposedStart)
+        let end = calendar.date(byAdding: .hour, value: 1, to: start)
+            ?? start.addingTimeInterval(3_600)
+
+        eventEditorError = nil
+        pendingTaskTimeBlock = PendingTaskTimeBlock(sidebarItem: item)
+        eventEditorSession = CalendarEventEditorSession(
+            target: .newEvent,
+            initialDraft: CalendarEventDraft(
+                title: item.title,
+                calendarIdentifier: calendarIdentifier,
+                startDate: start,
+                endDate: end,
+                isAllDay: false,
+                timeZoneIdentifier: calendar.timeZone.identifier,
+                referenceTimeZoneIdentifier: calendar.timeZone.identifier
+            ),
+            writableCalendars: writableCalendars,
+            mutationContext: .none,
+            taskBlockSourceTitle: "\(item.provider.title) · \(item.accountTitle) · \(item.listTitle)"
+        )
+        eventEditorOperationState = .idle
+        return true
+    }
+
+    private func selectedCalendarSetIncludes(_ source: CalendarSource) -> Bool {
+        switch selectedCalendarSet {
+        case .all:
+            true
+        case let .role(role):
+            calendarRole(for: source) == role
+        case let .saved(setID):
+            calendarSetMembershipIndex[setID]?.contains(source.id) == true
+        }
+    }
+
+    private func snappedTaskBlockStart(_ date: Date) -> Date {
+        let minute = calendar.component(.minute, from: date)
+        let remainder = minute % 15
+        return calendar.date(
+            byAdding: .minute,
+            value: -remainder,
+            to: date
+        ).flatMap {
+            calendar.date(bySetting: .second, value: 0, of: $0)
+        } ?? date
     }
 
     func originalEventWriteRestriction(
@@ -2798,6 +3124,7 @@ final class AppState: ObservableObject {
         pendingLinkedOriginalDeletion = nil
         eventEditorSession = nil
         eventEditorError = nil
+        pendingTaskTimeBlock = nil
     }
 
     func cancelPendingEventMutation() {
@@ -2870,7 +3197,13 @@ final class AppState: ObservableObject {
                 pendingLinkedOriginalDeletion = nil
                 eventEditorSession = nil
                 eventEditorOperationState = .idle
+                let taskBlockError = await attachPendingTaskTimeBlock(
+                    to: created
+                )
                 await focusWrittenEvent(created)
+                if let taskBlockError {
+                    eventEditorError = taskBlockError
+                }
                 return true
             case let .existing(original):
                 try validateOriginalWritePolicy(original)
@@ -3251,6 +3584,7 @@ final class AppState: ObservableObject {
                 to: receipt.event,
                 scope: .single
             )
+            syncEventTasksForContext(candidate.contextID)
         } catch {
             invalidateEventUndoCandidate()
             await refreshCalendarData()
@@ -3359,6 +3693,7 @@ final class AppState: ObservableObject {
                     ),
                     undoState: undoState
                 )
+                syncEventTasksForContext(contextID)
                 if undoState == .available {
                     let beforeDraft = try CalendarEventDraft(
                         event: preview.original,
@@ -3703,6 +4038,8 @@ final class AppState: ObservableObject {
             let list: TaskCenterList = switch selectedTaskFilter {
             case .today: .today
             case .upcoming: .upcoming
+            case .overdue: .overdue
+            case .noDate: .noDate
             case .afterReview: .afterReview
             case .completed: .completed
             }
@@ -3904,11 +4241,63 @@ final class AppState: ObservableObject {
         )
     }
 
+    private func syncEventTasksForContext(_ contextID: String) {
+        guard let contextStore,
+              let taskProviderCoordinator,
+              let brief = try? contextStore.eventContexts.fetchBrief(
+                contextID: contextID
+              ) else {
+            return
+        }
+        for task in brief.tasks {
+            taskProviderCoordinator.syncEventTask(
+                in: contextStore,
+                contextID: contextID,
+                task: task
+            )
+        }
+    }
+
     private func scheduleTaskProviderRefresh() {
         guard let contextStore, let taskProviderCoordinator else { return }
         taskProviderCoordinator.refreshLinkedTasks(in: contextStore)
+        taskProviderCoordinator.reloadSidebarCalendarLinks()
         refreshTaskCenter()
         loadSelectedEventBrief()
+    }
+
+    /// Completes the second half of an explicitly approved task time block.
+    /// EventKit is written first; if local/provider linking then fails, the
+    /// calendar event and a local During task are kept and the user is told
+    /// how to finish the link instead of retrying event creation.
+    private func attachPendingTaskTimeBlock(
+        to event: DisplayEvent
+    ) async -> String? {
+        guard let pending = pendingTaskTimeBlock else { return nil }
+        pendingTaskTimeBlock = nil
+        guard let contextStore, let taskProviderCoordinator else {
+            return "The calendar time block was created, but local Task linking is unavailable. The provider task was not changed."
+        }
+        do {
+            let eventTask = try contextStore.appendEventTask(
+                for: event,
+                section: .during,
+                title: pending.sidebarItem.title
+            )
+            do {
+                try await taskProviderCoordinator.linkSidebarTask(
+                    pending.sidebarItem,
+                    toEventTaskID: eventTask.id
+                )
+                refreshTaskCenter()
+                return nil
+            } catch {
+                refreshTaskCenter()
+                return "The calendar time block and its local During task were created, but the original \(pending.sidebarItem.provider.title) task could not be linked. Open the During task’s provider menu and choose Link to Existing Remote Task. The remote task was not overwritten. \(Self.message(for: error))"
+            }
+        } catch {
+            return "The calendar time block was created, but its local During task could not be saved. Do not create the event again; add a During task from the Event Brief. \(Self.message(for: error))"
+        }
     }
 
     @discardableResult
@@ -3925,6 +4314,7 @@ final class AppState: ObservableObject {
         flushPendingEventNotes()
         do {
             try operation()
+            taskProviderCoordinator?.reloadSidebarCalendarLinks()
             loadSelectedEventBrief()
             refreshTaskCenter()
             return true
@@ -4007,6 +4397,7 @@ final class AppState: ObservableObject {
         storeRefreshTask = nil
         calendarRefreshDeferredByLocalDataOperation = false
         invalidateEventUndoCandidate()
+        pendingTaskTimeBlock = nil
 
         let operationName = operation.lowercased()
         let message = "\(operation) failed, and KaosCal could not restore the previous local database. Local data changes, calendar changes, and refresh are locked for this session. Quit KaosCal before recovery. The automatic pre-\(operationName) recovery ZIP is in \(automaticBackupDirectory.path(percentEncoded: false)). \(Self.message(for: error))"
@@ -4058,6 +4449,7 @@ final class AppState: ObservableObject {
         pendingLinkedOriginalDeletion = nil
         eventEditorOperationState = .idle
         eventEditorError = nil
+        pendingTaskTimeBlock = nil
         invalidateEventUndoCandidate()
         eventUndoError = nil
         isUndoingEventMutation = false
@@ -4112,6 +4504,33 @@ final class AppState: ObservableObject {
             }
             return .fixed(fixedDueAt)
         }
+    }
+
+    private static func nextRepeatingDate(
+        _ date: Date?,
+        frequency: TaskRepeatFrequency,
+        interval: Int,
+        calendar: Calendar
+    ) -> Date? {
+        guard let date else { return nil }
+        let component: Calendar.Component
+        switch frequency {
+        case .none:
+            return date
+        case .daily:
+            component = .day
+        case .weekly:
+            component = .weekOfYear
+        case .monthly:
+            component = .month
+        case .yearly:
+            component = .year
+        }
+        return calendar.date(
+            byAdding: component,
+            value: max(1, interval),
+            to: date
+        )
     }
 
     private func visiblePeriodDidChange() {
@@ -4214,6 +4633,7 @@ final class AppState: ObservableObject {
         eventEditorSession = nil
         eventEditorOperationState = .idle
         eventEditorError = nil
+        pendingTaskTimeBlock = nil
         invalidateEventUndoCandidate()
         eventUndoError = nil
         isUndoingEventMutation = false

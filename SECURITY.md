@@ -1,6 +1,6 @@
 # KaosCal 보안 정책
 
-> 마지막 갱신: 2026-07-15
+> 마지막 갱신: 2026-07-20
 >
 > KaosCal은 현재 외부 베타 준비 단계다. 모니터링되는 security 이메일, 공개 bug
 > bounty, 응답 SLA 또는 GitHub private vulnerability reporting의 활성화 여부가 아직
@@ -26,7 +26,7 @@
 
 현재는 접수 확인 기한, 수정 기한, 포상 또는 coordinated-disclosure embargo를 약속하지
 않는다. 실제 피해가 진행 중이면 소속 조직의 incident-response 절차와 Apple 또는
-영향받은 Calendar/cloud 제공자의 공식 지원 경로도 사용한다.
+영향받은 Calendar/task 제공자의 공식 지원 경로도 사용한다.
 
 ## 첫 신고에 포함할 내용
 
@@ -64,11 +64,18 @@ KaosCal은 credential을 전용 필드로 수집하지 않지만 사용자가 no
 - App Sandbox와 macOS의 Full Calendar Access 권한을 사용한다.
 - Exchange/iCloud 등 캘린더 로그인은 macOS Internet Accounts가 담당하며 KaosCal은
   account password, MFA 또는 OAuth token을 요청하지 않는다.
-- 원본 일정 입출력은 EventKit만 사용한다. 현재 앱에는 자체 Microsoft Graph/EWS/
-  CalDAV sync 또는 일반 network client entitlement가 없다.
+- 원본 일정 입출력은 EventKit만 사용하며 자체 Microsoft Graph/EWS/CalDAV Calendar sync를
+  만들지 않는다.
+- 사용자가 연결한 Google Tasks, Todoist와 Microsoft To Do는 이 Mac의 provider client가
+  공식 endpoint로 직접 통신한다. Apple Reminders는 EventKit을 사용한다. OAuth token은
+  Keychain에만 저장하고 SQLite/ZIP/log 또는 KaosCal 중계 서버에 넣지 않는다.
+- AI SDK/API, KaosCal account/backend/cloud database, telemetry·광고·remote analytics와
+  background content upload를 사용하지 않는다.
+- 이 Mac 단일 실행·저장과 허용되는 외부 동기화 경계는
+  [ADR-019](docs/adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)을 따른다.
 - Sandbox 밖의 manual backup 파일은 사용자가 Open/Save panel에서 명시적으로 고른
   위치만 읽거나 쓴다.
-- Event Brief/task/role·usage/saved Calendar Set/change history는 로컬 SQLite에 저장된다. 앱은 live SQLite에
+- Event Brief/task/planning/checklist/role·usage/saved Calendar Set/change history는 로컬 SQLite에 저장된다. 앱은 live SQLite에
   별도의 애플리케이션 수준 암호화를 추가하지 않는다.
 - Import는 엄격한 ZIP 구조, application identifier, 현재 schema/migration, byte
   count/SHA-256, SQLite integrity와 foreign key를 확인한다. 이 검증은 우발적 손상과
@@ -84,7 +91,7 @@ Sandbox, hash, schema 검증은 악성 software, 탈취된 사용자 계정, 물
 Manual export와 자동 recovery backup은 `manifest.json`과 `kaoscal.sqlite`를 포함한
 plaintext ZIP이다. 암호화나 제작자 서명이 없고, 다음 민감정보가 포함될 수 있다.
 
-- Event Brief notes와 Before/During/After task, Personal task
+- Event Brief notes와 Before/During/After task, Personal task와 local planning/checklist
 - 일정 제목·시간·위치와 calendar/source/EventKit identifier
 - change snapshot과 원본 event notes snapshot
 - calendar role·usage preference, saved Calendar Set 이름·membership·selection과 local lifecycle/link history

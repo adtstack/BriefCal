@@ -1,16 +1,29 @@
 # Current Status
 
-> 기준 시각: 2026-07-17, Asia/Seoul
+> 기준 시각: 2026-07-20, Asia/Seoul
 >
 > 용도: 현재 진행 상태의 요약. 범위·판정·실행 증거의 원문은 아래 근거 문서를 따른다.
 
 ## 요약
 
-- **현재 위치:** v1 기능 개발은 종료·동결했다. v2 T0/T1, OAuth task provider T2/T3, T4의 EventKit 유지 결정, T5 reference-only 계층과 동결 후 calendar visibility/availability blocking, saved Calendar Set v9, Task Center provider recovery, mini month event dot, Tasks의 Apple Reminders 직접 연결과 list/source 필터·가독성 개선까지 저장소와 UI를 확장했다. 2026-07-17에는 task provider P1/P2 상태기계·durable pending/local-only·exact remote relink를 v10으로 추가했다. 직전 257-test suite는 통과했지만 이 후속 변경은 요청에 따라 test target 컴파일만 확인했고 테스트 실행은 사용자 수동 gate로 남겼다.
+- **현재 위치:** v1 기능 개발은 종료·동결했다. v2 T0~T5, calendar visibility/availability,
+  saved Calendar Set v9, provider recovery v10과 mini month event dot을 구현했다. 2026-07-20에는
+  오른쪽 `Tasks`의 네 provider capability-aware CRUD, Task Center planning v11, provider task와
+  Event Brief 연결, calendar time block, Calendar Set filter와 안정화 경로까지 확장했다.
 - **다음 기준:** v1 유지보수 예외는 [v1 동결 결정](v1-freeze.md)을 따르고, 새 동작은 [제품·시스템 스펙](specification.md)의 요구사항 ID와 [v2 실행계획](v2-execution-plan.md)을 먼저 갱신한다.
-- **최신 완료 자동 결과:** 257 tests executed, 256 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
-- **중간 체크포인트:** 이전 254-test와 Tasks 300/360pt offscreen·filter focused test도 통과했으며 최종 판정은 257-test 결과를 따른다.
-- **새 구현 / live 대기:** Task Center의 provider/account/list 상태, remote/local 동시 변경 conflict, remote delete missing, bounded pending retry, task별 durable local-only, exact provider/account/list remote relink, remote due projection과 destination 변경 안전성을 구현했다. Mini month `CAL-007`/`UI-005`, Tasks 안의 Apple Reminders 권한·복구·list/source 필터도 코드에 있다. 새 P1/P2 회귀 테스트는 작성·컴파일됐지만 실행하지 않았고 실제 provider·실창·VoiceOver 판정도 남아 있다.
+- **후속 구현 순서:** [상용 기능 로드맵](commercial-feature-roadmap.md)의 C0~C4를 따른다.
+  C0는 현재 T0~T5/v10 live·Release 증거, C1은 알림·일정 검색·전체 Month·Quick Add/template·
+  회의 링크 Join이다. C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, KaosCal
+  계정/backend/cloud sync, telemetry, scheduling server와 모바일·웹 companion은
+  [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 C4 영구 제외다.
+- **최신 완료 자동 결과:** 280 tests executed, 279 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
+- **중간 체크포인트:** Apple CRUD 268-test, move/bulk/Undo 271-test와 calendar/planning 집중
+  test가 각각 통과했으며 최종 판정은 아래 280-test 결과를 따른다.
+- **새 구현 / live 대기:** 네 provider 직접 CRUD, Apple 목록/account 이동과 Todoist
+  project/section 이동, priority capability, local
+  planning/checklist/repeat/timer, exact 날짜 filter·저장 view·통합 검색, provider task drag→calendar
+  block, Event Brief 연결·상대 기한과 Calendar Set filter가 전체 자동 suite를 통과했다. 실제
+  provider·signed app·실창·VoiceOver와 residue 0 판정은 남아 있다.
 - **외부 베타 판정:** v1에서는 더 이상 추진하지 않는다. final live UI/accessibility/Exchange gate, 실제 bootstrap fault와 Developer ID/notary/license/support 입력은 알려진 제한으로 보존한다.
 - **증거 경계:** 최신 Phase 10 Release는 EventKit/Exchange write나 실제 손상 DB recovery를 실행하지 않았다. 실제 Exchange 결과는 아래의 별도 과거 live run에만 귀속한다.
 
@@ -22,7 +35,7 @@
 | 1 · EventKit read-only | 실계정 부분 통과 | full access와 `KAOS-TEST`·`일정`의 Exchange/writable 표시 | 권한 거부·복구 UI, shared read-only, live all-day/recurrence 표시, Calendar.app 변경 반영 |
 | 2 · Calendar layout | 구현·자동·offscreen 검증 완료, event dot live 대기 | Day/Week/Agenda 공통 범위, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count | `CAL-007`/`UI-005` 실창·VoiceOver, 실제 고밀도 scroll·선택·inspector, live all-day/recurrence 배치 |
 | 3 · Local context DB | 구현 기준 완료 | v1 DB, repository, identity, 재열기·동시 저장 자동 회귀 | 실제 UI 재실행 유지, identifier churn·detached recurrence |
-| 4 · Event Brief / Task Center | P1/P2 코드·test target 컴파일 완료, 실행 검증 대기 | local notes, Before/During/After, personal/event task CRUD, provider source/status, durable pending/local-only, exact remote relink, remote due/conflict/missing recovery, Tasks 전체 높이·list/source 필터 | 실제 provider 계정별 create/update/delete/relink/unlink·재실행·retry limit, 창 focus/menu/검색, 긴 source 문구·VoiceOver, 작성한 P1/P2 회귀 테스트 실행 |
+| 4 · Event Brief / Task Center | 구현·280-test 자동 검증 완료, live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter | 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
 | 5 · Real event editing | 비반복 live CRUD 부분 통과 | attendee 없는 writable 단일 일정 create→restart/refetch→update→delete와 서버 residue 0 | Calendar.app 시각 round-trip, all-day, floating/zoned time, identifier churn |
 | 6 · Recurrence / safe move | 구현·자동·Release checkpoint 완료 | 명시적 scope, impact Confirm, linked safe move, change log, 좁은 session Undo | 지원 범위 내 recurrence scope/future split과 calendar move의 live 검증 |
 | 7 · Lifecycle / After Review | 7A–7C 구현, 비반복 linked delete live 통과 | lifecycle, missing/orphan/relink, linked original delete 뒤 local Brief/task 보존 | recurring `thisEvent`, 외부 삭제 지연·one-off exception, crash-window recovery, 남겨 둔 live Brief 정리 |
@@ -30,10 +43,43 @@
 | 9 · Backup / Settings | 구현·213-test·signed Release·운영 DB 격리·live visual 완료 | healthy current-schema export/import/reset, recovery ZIP, strict archive/schema 검사, 실제 Settings scroll·file panel·typed `RESET` activation | 실제 export 파일 작성·backup 선택 뒤 import/reset mutation, real rollback failure |
 | 10 · Paid beta polish | 구현·220-test·ad-hoc Release checkpoint 완료, 외부 beta blocked | onboarding, `⌘R`, empty state, bootstrap-only strict restore/quarantine/rollback, 운영 문서와 license placeholder | final exact Release UI/VoiceOver, 실제 손상 DB recovery, Developer ID/notary/package/clean user, 승인 EULA·support/privacy 연락처와 남은 live Exchange gate |
 
-표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 257-test suite,
+표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 280-test suite,
 review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
+
+### 2026-07-20 Tasks 통합 관리·계획·Calendar 결합 최종 자동 결과
+
+- 결과: **280 executed / 279 passed / 1 intentional manual-only skip / 0 failures**,
+  `TEST SUCCEEDED`
+- result bundle:
+  `/tmp/KaosCalUnifiedTasksCompleteBuild/Logs/Test/Test-KaosCal-2026.07.20_14-16-19-+0900.xcresult`
+- artifact: local ad-hoc Debug
+  `/tmp/KaosCalUnifiedTasksCompleteBuild/Build/Products/Debug/KaosCal.app`
+- 범위: Apple Reminders·Google Tasks·Todoist·Microsoft To Do 공통 조회/생성/완료/편집/삭제,
+  Apple 목록·계정 이동, Todoist project/section 이동과 일괄 이동·최근 90일 완료 projection,
+  priority/Microsoft reminder capability와 version-aware Undo, v11 local planning,
+  Today/Upcoming/Overdue/No Date/Completed, grouping·saved view·통합 검색, 기존 provider task의
+  Event Brief 연결, 상대 기한, drag→calendar block, 연결 일정 이동과 Calendar Set filter를
+  포함한다. v10 Event Brief durable pending/retry/local-only와 기존 Calendar 회귀도 함께 통과했다.
+- 한계: unsigned fake/local 중심 자동 결과다. 실제 iCloud/On My Mac, Google, Todoist와
+  Microsoft 계정의 CRUD·충돌·권한·deep link, Apple/Todoist move/Undo, calendar drag 부분 성공,
+  residue 0, signed app keyboard·VoiceOver는 수동 gate다.
+
+### 2026-07-20 Tasks Apple Reminders 직접 관리 자동 결과
+
+- 결과: **271 executed / 270 passed / 1 intentional manual-only skip / 0 failures**,
+  `TEST SUCCEEDED`
+- result bundle: `/tmp/KaosCalTasksInteractionBuild/Logs/Test/Test-KaosCal-2026.07.20_12-32-46-+0900.xcresult`
+- 범위: explicit remote task ID/version, Apple-only exact account/list/task write route, 생성,
+  완료·미완료, 제목·전체 notes·기한 수정/제거, 목록·계정 간 이동, 삭제, 단일·일괄
+  완료/이동의 version-aware session Undo, conflict, read-only, 권한 철회, metadata 실패,
+  외부 삭제, 이동 binding 보존, 삭제 Undo의 새 remote ID 재연결, 기존 provider 재연결과
+  300/360pt Tasks offscreen 회귀를 포함한다.
+- artifact: unsigned Debug `/tmp/KaosCalTasksInteractionBuild/Build/Products/Debug/KaosCal.app`
+- 한계: 실제 iCloud/On My Mac Reminders와 signed app, TCC 철회·복구, 외부 동시 수정,
+  move/Undo cleanup, keyboard·VoiceOver 실창 검증은 남아 있다. Microsoft mutation과 task의
+  Calendar 연결·시간 배치는 이 checkpoint 뒤 위 통합 결과에서 구현·자동 검증됐다.
 
 ### 2026-07-17 Task Provider P1/P2 코드 체크포인트
 

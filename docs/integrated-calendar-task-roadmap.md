@@ -1,13 +1,19 @@
 # 통합 캘린더·Task 연동 계획
 
-> 상태: Accepted for planning
-> 마지막 갱신: 2026-07-13
+> 상태: Implemented baseline / live pending
+> 마지막 갱신: 2026-07-20
 > 적용 범위: KaosCal v1 이후의 v2+ 제품·기술 로드맵
 
-이 문서는 현재 v1 범위를 즉시 변경하지 않는다. v1은 [동결 결정](v1-freeze.md)에 따라
-종료했으며, 이 문서의 실행 순서와 gate는 [v2 실행계획](v2-execution-plan.md) 및
-[단계별 세부문서](v2/README.md)로 구체화했다. 새로운 공급자 연동을 실제 범위로 승격할
-때는 관련 ADR, `v1-scope.md`, `architecture.md`, 개인정보·권한 문서를 함께 갱신한다.
+이 문서는 v1 동결 뒤 provider 통합의 출발 결정과 목표를 보존한다. T0~T5와 Tasks 완성
+트랙은 코드 기준 구현됐고 실제 계정·signed interaction은 대기 중이다. 현행 세부 계약은
+[제품·시스템 스펙](specification.md), 최신 증거와 열린 gate는
+[Current Status](current-status.md), 이후 상용 순서는
+[상용 기능 로드맵](commercial-feature-roadmap.md)을 따른다.
+
+현재 구현은 네 provider의 capability-aware 직접 CRUD, Apple 목록/account 이동과 Todoist
+project/section 이동, local planning,
+Event Brief 연결과 calendar time block까지 포함한다. AI, KaosCal Cloud, provider 간 자동
+복제와 provider가 의미를 보존하지 못하는 반복/하위 작업 강제 변환은 포함하지 않는다.
 
 ## 1. 제품 방향
 
@@ -322,12 +328,16 @@ provider가 시간대·부분 날짜·relative due를 충분히 지원하지 않
 - 여러 provider를 연결해도 Task Center에서 출처와 계정이 명확하다.
 - 로컬 DB에는 task 본문을 불필요하게 중복 저장하지 않는다.
 
-## 11. 다음 결정
+## 11. 결정 결과와 다음 gate
 
-다음 구현 착수 전 아래 세 가지를 확정한다.
+초기 결정은 다음처럼 닫혔다.
 
-1. v2 첫 provider를 Apple Reminders로 시작할지, Google Tasks와 Todoist 중 하나를 먼저 시작할지
-2. Mac EventKit 계정과 직접 OAuth 계정을 같은 provider로 볼지 별도 source로 표시할지
-3. 캘린더별 destination 변경 시 기존 task를 유지할지, 새 task부터 적용할지
+1. 첫 provider는 Apple Reminders로 구현했고 Google Tasks, Todoist, Microsoft To Do를 공통
+   capability route에 추가했다.
+2. Calendar event는 macOS EventKit을 유지하고 OAuth task 계정은 별도 source/account로
+   표시한다. Google/Microsoft Calendar 직접 API는 중복 위험 때문에 구현하지 않는다.
+3. calendar별 destination 변경은 기존 binding을 자동 이동하지 않고 변경 뒤 새 task에만
+   적용한다. 기존 unbound task도 명시적 연결 전에는 local-only로 유지한다.
 
-현재 권장 순서는 **Apple Reminders → Google Tasks → Todoist → Microsoft To Do → 직접 Calendar API → notes/reference 연동**이다. 다만 Microsoft 365 사용자 검증을 먼저 확보할 수 있으면 Microsoft To Do를 Todoist보다 앞당긴다. 모든 단계에서 사용자가 task를 만들 때 provider를 선택하지 않고, 캘린더별 Settings destination을 따른다.
+다음 gate는 새 provider 설계가 아니라 실제 네 provider 계정의 CRUD·permission·conflict,
+Apple 계정 간 move/Undo, calendar drag 부분 성공, residue 0와 signed keyboard·VoiceOver다.

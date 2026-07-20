@@ -43,12 +43,15 @@ enum TodoistAPI {
         return request(path: "tasks", query: query, accessToken: accessToken)
     }
 
-    static func createTaskRequest(parentID: String, title: String, description: String, dueAt: Date?, accessToken: String) throws -> URLRequest {
+    static func createTaskRequest(parentID: String, title: String, description: String, dueAt: Date?, priority: TaskPriority = .none, accessToken: String) throws -> URLRequest {
         var request = request(path: "tasks", accessToken: accessToken)
         request.httpMethod = "POST"
         var body: [String: Any] = ["content": title, "description": description]
         apply(parentID: parentID, to: &body)
         if let dueAt { body["due_datetime"] = ISO8601DateFormatter().string(from: dueAt) }
+        if priority != .none {
+            body["priority"] = todoistPriority(priority)
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
@@ -64,6 +67,9 @@ enum TodoistAPI {
                 ISO8601DateFormatter().string(from: $0)
             } ?? NSNull()
         }
+        if let priority = patch.priority {
+            body["priority"] = todoistPriority(priority)
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
@@ -71,6 +77,22 @@ enum TodoistAPI {
     static func completionRequest(id: String, completed: Bool, accessToken: String) -> URLRequest {
         var request = request(path: "tasks/\(component(id))/\(completed ? "close" : "reopen")", accessToken: accessToken)
         request.httpMethod = "POST"
+        return request
+    }
+
+    static func moveTaskRequest(
+        id: String,
+        parentID: String,
+        accessToken: String
+    ) throws -> URLRequest {
+        var request = request(
+            path: "tasks/\(component(id))/move",
+            accessToken: accessToken
+        )
+        request.httpMethod = "POST"
+        var body = [String: Any]()
+        apply(parentID: parentID, to: &body)
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
 
@@ -137,5 +159,14 @@ enum TodoistAPI {
 
     private static func component(_ value: String) -> String {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
+    }
+
+    private static func todoistPriority(_ priority: TaskPriority) -> Int {
+        switch priority {
+        case .none: 1
+        case .low: 2
+        case .medium: 3
+        case .high: 4
+        }
     }
 }

@@ -342,6 +342,8 @@ private struct EventTaskRow: View {
     @State private var title: String
     @State private var confirmsDeletion = false
     @State private var isDeleting = false
+    @State private var showsProviderLinkPicker = false
+    @State private var showsDueEditor = false
     @FocusState private var isEditing: Bool
 
     init(appState: AppState, event: DisplayEvent, task: EventTask) {
@@ -375,14 +377,30 @@ private struct EventTaskRow: View {
                     }
                     .strikethrough(task.isCompleted)
 
-                Text(dueDescription)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                Button {
+                    guard commitTitle() else { return }
+                    showsDueEditor = true
+                } label: {
+                    Label(dueDescription, systemImage: "calendar.badge.clock")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Edit this task’s fixed or event-relative due time")
+                .accessibilityIdentifier("eventBrief.task.\(task.id).due")
             }
 
             Spacer(minLength: 4)
 
             Menu {
+                Button("Link Existing Provider Task…") {
+                    guard commitTitle() else { return }
+                    showsProviderLinkPicker = true
+                }
+                Button("Edit Due…") {
+                    guard commitTitle() else { return }
+                    showsDueEditor = true
+                }
                 Section("Move to") {
                     ForEach(EventTaskSection.allCases, id: \.self) { section in
                         Button(section.title) {
@@ -431,6 +449,22 @@ private struct EventTaskRow: View {
         } message: {
             Text("The calendar event will not be changed.")
         }
+        .sheet(isPresented: $showsProviderLinkPicker) {
+            TaskProviderRelinkPicker(
+                appState: appState,
+                itemID: .eventTask(
+                    taskID: task.id,
+                    contextID: task.contextID
+                )
+            )
+        }
+        .sheet(isPresented: $showsDueEditor) {
+            EventTaskDueEditor(
+                appState: appState,
+                event: event,
+                task: task
+            )
+        }
     }
 
     private var dueDescription: String {
@@ -476,6 +510,218 @@ private struct EventTaskRow: View {
             .eventTask(taskID: task.id, contextID: task.contextID),
             title: cleaned
         )
+    }
+}
+
+private struct EventTaskDueEditor: View {
+    private enum Schedule: String, CaseIterable, Identifiable {
+        case followsEvent
+        case fixed
+        case beforeStart
+        case atStart
+        case atEnd
+        case afterEnd
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .followsEvent: "Follows task section"
+            case .fixed: "Fixed date and time"
+            case .beforeStart: "Before event starts"
+            case .atStart: "When event starts"
+            case .atEnd: "When event ends"
+            case .afterEnd: "After event ends"
+            }
+        }
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var appState: AppState
+    let event: DisplayEvent
+    let task: EventTask
+
+    @State private var schedule: Schedule
+    @State private var fixedDate: Date
+    @State private var offsetMinutes: Int
+    @State private var validationMessage: String?
+
+    init(appState: AppState, event: DisplayEvent, task: EventTask) {
+        self.appState = appState
+        self.event = event
+        self.task = task
+        let range = CalendarEventDateFormatting.effectiveDateRange(
+            for: event,
+            calendar: appState.calendar
+        )
+        switch task.due {
+        case .none:
+            _schedule = State(initialValue: .followsEvent)
+            _fixedDate = State(initialValue: range.start)
+            _offsetMinutes = State(initialValue: 30)
+        case let .fixed(date):
+            _schedule = State(initialValue: .fixed)
+            _fixedDate = State(initialValue: date)
+            _offsetMinutes = State(initialValue: 30)
+        case let .relative(anchor, offset):
+            switch anchor {
+            case .beforeStart:
+                _schedule = State(initialValue: .beforeStart)
+            case .atStart:
+                _schedule = State(initialValue: .atStart)
+            case .atEnd:
+                _schedule = State(initialValue: .atEnd)
+            case .afterEnd:
+                _schedule = State(initialValue: .afterEnd)
+            }
+            _fixedDate = State(initialValue: range.start)
+            _offsetMinutes = State(initialValue: max(1, offset))
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Label("Task Due", systemImage: "calendar.badge.clock")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+            }
+            .padding(20)
+
+            Divider()
+
+            Form {
+                Picker("Schedule", selection: $schedule) {
+                    ForEach(Schedule.allCases) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+
+                if schedule == .fixed {
+                    DatePicker(
+                        "Due",
+                        selection: $fixedDate,
+                        displayedComponents: [.date, .hourAndMinute]
+                    )
+                }
+
+                if schedule == .beforeStart || schedule == .afterEnd {
+                    HStack {
+                        TextField(
+                            "Minutes",
+                            value: $offsetMinutes,
+                            format: .number
+                        )
+                        .frame(width: 90)
+                        Text("minutes")
+                        Spacer()
+                        Menu("Presets") {
+                            Button("15 minutes") { offsetMinutes = 15 }
+                            Button("30 minutes") { offsetMinutes = 30 }
+                            Button("1 hour") { offsetMinutes = 60 }
+                            Button("1 day") { offsetMinutes = 1_440 }
+                        }
+                    }
+                }
+
+                LabeledContent("Result", value: previewText)
+
+                if let validationMessage {
+                    Label(validationMessage, systemImage: "exclamationmark.circle")
+                        .foregroundStyle(.red)
+                }
+            }
+            .formStyle(.grouped)
+            .padding(.horizontal, 4)
+
+            Divider()
+
+            HStack {
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 480, idealWidth: 520, minHeight: 390)
+        .accessibilityIdentifier("eventBrief.taskDueEditor")
+    }
+
+    private var due: EventTaskDue? {
+        switch schedule {
+        case .followsEvent:
+            return EventTaskDue.none
+        case .fixed:
+            return .fixed(fixedDate)
+        case .beforeStart:
+            guard offsetMinutes > 0, offsetMinutes <= 525_600 else {
+                return nil
+            }
+            return .relative(
+                anchor: .beforeStart,
+                offsetMinutes: offsetMinutes
+            )
+        case .atStart:
+            return .relative(anchor: .atStart, offsetMinutes: 0)
+        case .atEnd:
+            return .relative(anchor: .atEnd, offsetMinutes: 0)
+        case .afterEnd:
+            guard offsetMinutes > 0, offsetMinutes <= 525_600 else {
+                return nil
+            }
+            return .relative(
+                anchor: .afterEnd,
+                offsetMinutes: offsetMinutes
+            )
+        }
+    }
+
+    private var previewText: String {
+        guard let due else { return "Enter 1–525600 minutes" }
+        let range = CalendarEventDateFormatting.effectiveDateRange(
+            for: event,
+            calendar: appState.calendar
+        )
+        let date: Date?
+        switch due {
+        case .none:
+            date = task.section == .after ? range.end : range.start
+        case let .fixed(value):
+            date = value
+        case let .relative(anchor, offset):
+            switch anchor {
+            case .beforeStart:
+                date = range.start.addingTimeInterval(TimeInterval(-offset * 60))
+            case .atStart:
+                date = range.start
+            case .atEnd:
+                date = range.end
+            case .afterEnd:
+                date = range.end.addingTimeInterval(TimeInterval(offset * 60))
+            }
+        }
+        guard let date else { return "Unscheduled" }
+        return CalendarEventDateFormatting.abbreviatedDateTime(
+            date,
+            calendar: appState.calendar
+        )
+    }
+
+    private func save() {
+        guard let due else {
+            validationMessage = "Enter an offset from 1 minute to 365 days."
+            return
+        }
+        validationMessage = nil
+        if appState.setSelectedEventTaskDue(id: task.id, due: due) {
+            dismiss()
+        } else {
+            validationMessage = appState.localOperationError
+                ?? "The due time could not be saved."
+        }
     }
 }
 

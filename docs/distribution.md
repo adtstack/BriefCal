@@ -12,7 +12,7 @@ Mac App Store는 sandbox, 심사, 라이선스 정책, 업데이트 전략이 �
 
 이유:
 - 구독 없는 one-time license 모델과 직접 배포가 잘 맞는다.
-- local-first 제품이라 서버 비용을 낮출 수 있다.
+- KaosCal 계정·backend·cloud sync 없이 이 Mac에서 완결되는 제품이다.
 - 베타 사용자에게 빠르게 빌드를 전달하고 피드백을 받을 수 있다.
 
 ## 출시 단계
@@ -81,7 +81,8 @@ publisher/contact/terms 목록과 중단선이다. 승인된 실제 EULA로 대�
 KaosCal은 계정 가입 없이 작동합니다.
 일정 자체는 사용자의 기존 캘린더 계정에 저장됩니다.
 KaosCal의 체크리스트, 메모, 후속 작업, 변경 기록은 이 Mac의 로컬 데이터베이스에 저장됩니다.
-KaosCal v1은 서버로 Event Brief 데이터를 전송하지 않습니다.
+KaosCal은 AI나 자체 Cloud를 사용하지 않으며 Event Brief 데이터를 KaosCal 서버로 전송하지 않습니다.
+Calendar는 macOS EventKit, 연결한 task는 이 Mac과 해당 provider 사이에서 직접 동기화됩니다.
 ```
 
 ## 베타 릴리즈 체크리스트

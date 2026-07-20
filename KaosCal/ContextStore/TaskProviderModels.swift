@@ -198,6 +198,61 @@ struct TaskProviderCapabilities: Equatable, Codable {
     var supportsCompletion: Bool
     var supportsDeletion: Bool
     var supportsDeepLink: Bool
+    var supportsListMove: Bool
+    var supportsPriority: Bool
+    var supportsReminder: Bool
+
+    init(
+        supportsNotes: Bool,
+        supportsTimedDue: Bool,
+        supportsCompletion: Bool,
+        supportsDeletion: Bool,
+        supportsDeepLink: Bool,
+        supportsListMove: Bool = false,
+        supportsPriority: Bool = false,
+        supportsReminder: Bool = false
+    ) {
+        self.supportsNotes = supportsNotes
+        self.supportsTimedDue = supportsTimedDue
+        self.supportsCompletion = supportsCompletion
+        self.supportsDeletion = supportsDeletion
+        self.supportsDeepLink = supportsDeepLink
+        self.supportsListMove = supportsListMove
+        self.supportsPriority = supportsPriority
+        self.supportsReminder = supportsReminder
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case supportsNotes
+        case supportsTimedDue
+        case supportsCompletion
+        case supportsDeletion
+        case supportsDeepLink
+        case supportsListMove
+        case supportsPriority
+        case supportsReminder
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        supportsNotes = try container.decode(Bool.self, forKey: .supportsNotes)
+        supportsTimedDue = try container.decode(Bool.self, forKey: .supportsTimedDue)
+        supportsCompletion = try container.decode(Bool.self, forKey: .supportsCompletion)
+        supportsDeletion = try container.decode(Bool.self, forKey: .supportsDeletion)
+        supportsDeepLink = try container.decode(Bool.self, forKey: .supportsDeepLink)
+        supportsListMove = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .supportsListMove
+        ) ?? false
+        supportsPriority = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .supportsPriority
+        ) ?? false
+        supportsReminder = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .supportsReminder
+        ) ?? false
+    }
 }
 
 struct RemoteTaskList: Equatable, Identifiable {
@@ -221,15 +276,82 @@ struct RemoteTaskList: Equatable, Identifiable {
 struct ProviderTaskListItem: Equatable, Identifiable {
     /// A provider-scoped stable ID suitable for SwiftUI diffing.
     let id: String
+    /// The provider's task identifier. Never recover this value by parsing
+    /// the SwiftUI `id`, which also contains provider/account/list scope.
+    let remoteTaskID: String
+    /// The version observed while building this transient projection. Direct
+    /// mutations compare it with a fresh lookup before writing.
+    let remoteVersion: String?
     let provider: TaskProviderKind
     let accountKey: String
     let listID: String
     let title: String
     let details: String?
     let dueAt: Date?
+    let reminderAt: Date?
     let isCompleted: Bool
+    let priority: TaskPriority
     let listTitle: String
     let accountTitle: String
+    /// A provider-owned URL that is known to open the task in its original
+    /// service. Apple EventKit reminder URLs are user content, not reliable
+    /// Reminders.app task links, so Apple projections intentionally leave this
+    /// nil.
+    let originalURL: URL?
+
+    init(
+        id: String,
+        remoteTaskID: String? = nil,
+        remoteVersion: String? = nil,
+        provider: TaskProviderKind,
+        accountKey: String,
+        listID: String,
+        title: String,
+        details: String?,
+        dueAt: Date?,
+        reminderAt: Date? = nil,
+        isCompleted: Bool,
+        priority: TaskPriority = .none,
+        listTitle: String,
+        accountTitle: String,
+        originalURL: URL? = nil
+    ) {
+        self.id = id
+        // The fallback keeps existing fixture construction source-compatible;
+        // production projections always pass the remote identifier explicitly.
+        self.remoteTaskID = remoteTaskID ?? id
+        self.remoteVersion = remoteVersion
+        self.provider = provider
+        self.accountKey = accountKey
+        self.listID = listID
+        self.title = title
+        self.details = details
+        self.dueAt = dueAt
+        self.reminderAt = reminderAt
+        self.isCompleted = isCompleted
+        self.priority = priority
+        self.listTitle = listTitle
+        self.accountTitle = accountTitle
+        self.originalURL = originalURL
+    }
+}
+
+/// A transient projection of a provider task's durable Event Brief binding.
+/// The relationship is derived from the existing provider item, task binding,
+/// Event Task, and Event Link records; it is never duplicated in SQLite.
+struct ProviderTaskCalendarLink: Equatable {
+    let provider: TaskProviderKind
+    let accountKey: String
+    let listID: String
+    let remoteTaskID: String
+    let eventTaskID: String
+    let contextID: String
+    let calendarIdentifier: String
+    let calendarTitle: String
+    let eventTitle: String
+    let eventStart: Date
+    let eventEnd: Date
+    let linkStatus: EventLinkStatus
 }
 
 /// A fresh, non-persisted remote task that the user can explicitly choose as
@@ -423,7 +545,9 @@ struct RemoteTaskSnapshot: Equatable, Identifiable {
     let title: String
     let notes: String
     let dueAt: Date?
+    let reminderAt: Date?
     let isCompleted: Bool
+    let priority: TaskPriority
     let version: String?
     let deepLink: URL?
 
@@ -434,7 +558,9 @@ struct RemoteTaskSnapshot: Equatable, Identifiable {
         title: String,
         notes: String,
         dueAt: Date?,
+        reminderAt: Date? = nil,
         isCompleted: Bool,
+        priority: TaskPriority = .none,
         version: String?,
         deepLink: URL?
     ) {
@@ -444,7 +570,9 @@ struct RemoteTaskSnapshot: Equatable, Identifiable {
         self.title = title
         self.notes = notes
         self.dueAt = dueAt
+        self.reminderAt = reminderAt
         self.isCompleted = isCompleted
+        self.priority = priority
         self.version = version
         self.deepLink = deepLink
     }
@@ -457,14 +585,36 @@ struct RemoteTaskDraft: Equatable {
     let title: String
     let notes: String
     let dueAt: Date?
+    let reminderAt: Date?
+    let priority: TaskPriority
     let deepLink: URL?
+
+    init(
+        parentID: String,
+        title: String,
+        notes: String,
+        dueAt: Date?,
+        reminderAt: Date? = nil,
+        priority: TaskPriority = .none,
+        deepLink: URL?
+    ) {
+        self.parentID = parentID
+        self.title = title
+        self.notes = notes
+        self.dueAt = dueAt
+        self.reminderAt = reminderAt
+        self.priority = priority
+        self.deepLink = deepLink
+    }
 }
 
 struct RemoteTaskPatch: Equatable {
     var title: String?
     var notes: String?
     var dueAt: Date??
+    var reminderAt: Date??
     var isCompleted: Bool?
+    var priority: TaskPriority?
 }
 
 enum TaskProviderError: LocalizedError, Equatable {
