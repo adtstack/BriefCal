@@ -1,6 +1,6 @@
 # Current Status
 
-> 기준 시각: 2026-07-20, Asia/Seoul
+> 기준 시각: 2026-07-23, Asia/Seoul
 >
 > 용도: 현재 진행 상태의 요약. 범위·판정·실행 증거의 원문은 아래 근거 문서를 따른다.
 
@@ -10,20 +10,23 @@
   saved Calendar Set v9, provider recovery v10과 mini month event dot을 구현했다. 2026-07-20에는
   오른쪽 `Tasks`의 네 provider capability-aware CRUD, Task Center planning v11, provider task와
   Event Brief 연결, calendar time block, Calendar Set filter와 안정화 경로까지 확장했다.
+  2026-07-21에는 Google Tasks Desktop OAuth의 dynamic loopback, 승인 scope gate, date-only due와
+  명시적 기한 제거 계약을 자동 검증했다.
 - **다음 기준:** v1 유지보수 예외는 [v1 동결 결정](v1-freeze.md)을 따르고, 새 동작은 [제품·시스템 스펙](specification.md)의 요구사항 ID와 [v2 실행계획](v2-execution-plan.md)을 먼저 갱신한다.
 - **후속 구현 순서:** [상용 기능 로드맵](commercial-feature-roadmap.md)의 C0~C4를 따른다.
   C0는 현재 T0~T5/v10 live·Release 증거, C1은 알림·일정 검색·전체 Month·Quick Add/template·
   회의 링크 Join이다. C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, KaosCal
   계정/backend/cloud sync, telemetry, scheduling server와 모바일·웹 companion은
   [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 C4 영구 제외다.
-- **최신 완료 자동 결과:** 280 tests executed, 279 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
+- **최신 완료 자동 결과:** 292 tests executed, 291 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
 - **중간 체크포인트:** Apple CRUD 268-test, move/bulk/Undo 271-test와 calendar/planning 집중
-  test가 각각 통과했으며 최종 판정은 아래 280-test 결과를 따른다.
+  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 아래 292-test 결과를 따른다.
 - **새 구현 / live 대기:** 네 provider 직접 CRUD, Apple 목록/account 이동과 Todoist
   project/section 이동, priority capability, local
   planning/checklist/repeat/timer, exact 날짜 filter·저장 view·통합 검색, provider task drag→calendar
-  block, Event Brief 연결·상대 기한과 Calendar Set filter가 전체 자동 suite를 통과했다. 실제
-  provider·signed app·실창·VoiceOver와 residue 0 판정은 남아 있다.
+  block, Event Brief 연결·상대 기한과 Calendar Set filter, Google Tasks dynamic loopback·scope·
+  civil-date due 경계가 전체 자동 suite를 통과했다. 실제 provider·signed app·실창·VoiceOver와
+  residue 0 판정은 남아 있다. Google Cloud 준비와 Desktop client ID 주입은 완료했다.
 - **외부 베타 판정:** v1에서는 더 이상 추진하지 않는다. final live UI/accessibility/Exchange gate, 실제 bootstrap fault와 Developer ID/notary/license/support 입력은 알려진 제한으로 보존한다.
 - **증거 경계:** 최신 Phase 10 Release는 EventKit/Exchange write나 실제 손상 DB recovery를 실행하지 않았다. 실제 Exchange 결과는 아래의 별도 과거 live run에만 귀속한다.
 
@@ -35,7 +38,7 @@
 | 1 · EventKit read-only | 실계정 부분 통과 | full access와 `KAOS-TEST`·`일정`의 Exchange/writable 표시 | 권한 거부·복구 UI, shared read-only, live all-day/recurrence 표시, Calendar.app 변경 반영 |
 | 2 · Calendar layout | 구현·자동·offscreen 검증 완료, event dot live 대기 | Day/Week/Agenda 공통 범위, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count | `CAL-007`/`UI-005` 실창·VoiceOver, 실제 고밀도 scroll·선택·inspector, live all-day/recurrence 배치 |
 | 3 · Local context DB | 구현 기준 완료 | v1 DB, repository, identity, 재열기·동시 저장 자동 회귀 | 실제 UI 재실행 유지, identifier churn·detached recurrence |
-| 4 · Event Brief / Task Center | 구현·280-test 자동 검증 완료, live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter | 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
+| 4 · Event Brief / Task Center | 구현·292-test 자동 검증 완료, live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Google Cloud External/Testing Desktop client·dynamic loopback·scope/date-only due·revoke local preservation, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter | Google 실계정 consent·CRUD·revoke/reconnect/residue 0, 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
 | 5 · Real event editing | 비반복 live CRUD 부분 통과 | attendee 없는 writable 단일 일정 create→restart/refetch→update→delete와 서버 residue 0 | Calendar.app 시각 round-trip, all-day, floating/zoned time, identifier churn |
 | 6 · Recurrence / safe move | 구현·자동·Release checkpoint 완료 | 명시적 scope, impact Confirm, linked safe move, change log, 좁은 session Undo | 지원 범위 내 recurrence scope/future split과 calendar move의 live 검증 |
 | 7 · Lifecycle / After Review | 7A–7C 구현, 비반복 linked delete live 통과 | lifecycle, missing/orphan/relink, linked original delete 뒤 local Brief/task 보존 | recurring `thisEvent`, 외부 삭제 지연·one-off exception, crash-window recovery, 남겨 둔 live Brief 정리 |
@@ -43,10 +46,43 @@
 | 9 · Backup / Settings | 구현·213-test·signed Release·운영 DB 격리·live visual 완료 | healthy current-schema export/import/reset, recovery ZIP, strict archive/schema 검사, 실제 Settings scroll·file panel·typed `RESET` activation | 실제 export 파일 작성·backup 선택 뒤 import/reset mutation, real rollback failure |
 | 10 · Paid beta polish | 구현·220-test·ad-hoc Release checkpoint 완료, 외부 beta blocked | onboarding, `⌘R`, empty state, bootstrap-only strict restore/quarantine/rollback, 운영 문서와 license placeholder | final exact Release UI/VoiceOver, 실제 손상 DB recovery, Developer ID/notary/package/clean user, 승인 EULA·support/privacy 연락처와 남은 live Exchange gate |
 
-표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 280-test suite,
+표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 292-test suite,
 review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
+
+### 2026-07-23 Google Cloud 구성·pre-push 자동 gate
+
+- 결과: **292 executed / 291 passed / 1 intentional manual-only skip / 0 failures**,
+  `TEST SUCCEEDED`
+- result bundle: `/tmp/KaosCalGooglePrePushFinal.xcresult`
+- 실계정 테스트용 local ad-hoc Debug app:
+  `/tmp/KaosCalGoogleLiveTestApp/Build/Products/Debug/KaosCal.app`
+- 별도 app build와 strict code-sign 검증이 통과했고, app `Info.plist`에서 공개 Google Desktop
+  client ID와 `http://127.0.0.1` redirect base 확장을 확인했다. client secret/token 패턴은
+  저장소에서 검출되지 않았다.
+- 남은 live gate: 실제 consent, 양방향 CRUD·conflict·재실행/refresh, 권한 철회·재연결과
+  양쪽 residue 0.
+
+### 2026-07-21 Google Tasks 실계정 활성화 전 자동 gate
+
+- 결과: **292 executed / 291 passed / 1 intentional manual-only skip / 0 failures**,
+  `TEST SUCCEEDED`
+- result bundle:
+  `/tmp/KaosCalGooglePlanBaseline/Logs/Test/Test-KaosCal-2026.07.21_18-29-25-+0900.xcresult`
+- 범위: Google Desktop OAuth의 임의 loopback 포트와 authorization/token redirect 일치,
+  callback state/path·거부·timeout·중복 완료, 필수 `openid`/Tasks scope 확인 전 credential
+  미저장, UTC/KST/America/New_York civil-date due, 명시적 due `null`, list/task pagination,
+  완료/미완료, ETag conflict, 401 단일 refresh와 403/404/429 오류, 철회·만료된 refresh token의
+  credential 제거와 reconnect-required 전환, account/binding metadata와 local task 보존을
+  포함한다. 현재
+  Tasks drawer와 Microsoft OAuth 사용자 변경을 포함한 전체 회귀도 함께 통과했다.
+- artifact: local ad-hoc Debug
+  `/tmp/KaosCalGooglePlanBaseline/Build/Products/Debug/KaosCal.app`
+- Google Cloud 준비 완료: Tasks API 활성화, External/Testing audience, test user 등록,
+  Desktop OAuth client 생성과 공개 `KAOSCAL_GOOGLE_TASKS_CLIENT_ID` 주입을 완료했다.
+- 남은 live gate: 실제 consent, CRUD·권한 철회·재연결과 residue 0은 아직 실행하지 않았다.
+  Google Calendar 직접 API는 추가하지 않았다.
 
 ### 2026-07-20 Tasks 통합 관리·계획·Calendar 결합 최종 자동 결과
 

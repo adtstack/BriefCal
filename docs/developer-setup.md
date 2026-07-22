@@ -1,7 +1,7 @@
 # Developer And Test Setup
 
 > 현재 개발·검증 상태: [Current Status](current-status.md)를 단일 기준으로 사용
-> 마지막 갱신: 2026-07-12
+> 마지막 갱신: 2026-07-21
 
 KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에서 결정하고 기록한다. 사용자가 우선 준비할 것은 개발·실계정 검증에 필요한 아래 항목뿐이다.
 
@@ -48,6 +48,35 @@ KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에
 8. **남은 Phase 7C gate:** 비반복 linked original delete는 run `20260712-025027-KST`에서 통과했다. 별도 반복 fixture의 `이번 일정` 삭제와 retained single local Brief의 UI-only cleanup은 series 잔존·원본 비재생성·exact cleanup을 전제로 확인한다. `이번 이후`는 누르지 않는다.
 
 실제 회사 일정은 수정하지 않고 모든 write는 `KAOS-TEST`와 `일정`에서 고유 run marker로 만든 전용 fixture에만 수행한다.
+
+## Google Tasks 개발 계정 설정
+
+Google Tasks 실계정 gate는 Calendar 계정과 분리해 아래 순서로 준비한다. Google Calendar
+일정은 계속 macOS EventKit으로 읽고 쓰며 Calendar API는 이 설정에서 활성화하거나 scope에
+추가하지 않는다.
+
+1. Google Cloud 프로젝트에서 **Google Tasks API**를 활성화한다.
+2. Google Auth Platform의 audience를 **External**, publishing status를 **Testing**으로 두고
+   검증에 사용할 Google 계정을 test user로 추가한다.
+3. data access에는 `openid`, `email`, `profile`,
+   `https://www.googleapis.com/auth/tasks`만 등록한다.
+4. OAuth client type **Desktop app**을 만든다. client secret은 앱, 저장소, SQLite, backup,
+   로그 또는 QA 기록에 복사하지 않는다.
+5. 공개 client ID를 app target의 user-defined build setting
+   `KAOSCAL_GOOGLE_TASKS_CLIENT_ID`에 넣는다. `Info.plist`의
+   `KaosCalGoogleTasksClientID`가 이 값을 확장하며,
+   `KaosCalGoogleTasksRedirectURI`는 포트 없는 `http://127.0.0.1` base다. KaosCal은 연결할
+   때마다 임의 가용 포트를 확보해 authorization과 token exchange에 같은 실제 redirect URI를
+   사용한다. 값이 비어 있으면 Settings는 안전하게 `Not configured`을 표시한다.
+
+Testing 상태에서 외부 test user가 승인한 refresh token은 Tasks scope가 포함된 이 구성에서
+7일 뒤 만료될 수 있다. 이는 개발 중 재연결 사유이며 데이터 삭제 사유가 아니다. 공개 배포 전
+Google OAuth app verification과 production publishing 전환을 별도 release blocker로 판정한다.
+
+실계정 검증은 민감하지 않은 전용 Google Tasks 목록과 `KAOS-GTASK-<UTC timestamp>-<random>`
+형식의 고유 run marker만 사용한다. 기존 사용자 task를 수정하지 않고, 종료 시 marker로 만든
+원격 task와 KaosCal의 연결 fixture를 정확히 삭제해 양쪽 residue가 0인지 확인한다. access token,
+refresh token, authorization code, 계정 email은 문서나 implementation log에 기록하지 않는다.
 
 저장소의 `ManualEventKitQATests/testManualExchangeGate`는 검증 대상 signed host의 상태를 확인하기 위한 **읽기 전용 opt-in preflight**다. `KAOSCAL_EVENTKIT_QA_MODE=inspect`, `KAOSCAL_EVENTKIT_SOURCE=KAOS-TEST`, `KAOSCAL_EVENTKIT_DESTINATION=일정`을 모두 명시한 실행만 동작하며, 기본 suite에서는 provider 생성 전에 skip한다. 이 test는 `requestFullAccess()`나 calendar write를 호출하지 않고, JSON report에도 raw calendar identifier와 source title을 남기지 않는다. 권한 승인은 사용자가 해당 host의 macOS prompt에서 별도로 수행해야 한다.
 

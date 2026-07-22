@@ -1258,6 +1258,79 @@
   부분 성공, residue 0,
   좁은 실창 keyboard·VoiceOver는 수동 검증해야 한다.
 
+## 2026-07-21 — 오른쪽 Tasks 하단 상세 drawer
+
+- 관련 요구사항: `TASK-005`~`TASK-007`
+- 오른쪽 Tasks 행 클릭과 `+`가 modal sheet 대신 목록 아래의 resizable `VSplitView` drawer를
+  열도록 변경했다. 선택 행을 accent 배경으로 유지하고 다른 작업을 누르면 drawer 안의
+  최신 원격 snapshot을 교체한다.
+- 기존 provider별 destination·notes·due·reminder·priority·완료·conflict·삭제 흐름은 같은
+  editor component로 유지했다. sheet 전용 최소 폭은 Task Center 경로에만 남기고 drawer는
+  300~420pt inspector 폭에서 세로 scroll을 사용한다.
+- 미저장 상태에서 다른 행이나 닫기를 선택하면 새 modal을 만들지 않고 drawer 내부에서
+  `Keep Editing`/`Discard`를 제공한다. 저장 성공 뒤에는 대기 중인 작업으로 이동하며,
+  `Esc`, Cancel, 닫기 버튼과 선택 행 재클릭도 같은 close route를 사용한다.
+- 검증:
+  - unsigned Debug build: `BUILD SUCCEEDED`
+  - 기존 sidebar·560pt sheet·새 340×360 drawer offscreen render 3개:
+    **3 executed / 3 passed / 0 failures**, `TEST SUCCEEDED`
+  - result bundle: `/tmp/KaosCalBottomDrawerRegression.xcresult`
+- 결과: **implemented / live resize·keyboard interaction pending**.
+- 남은 위험: 실제 300pt inspector에서 여러 provider의 긴 destination 이름, divider resize,
+  미저장 draft 전환과 VoiceOver focus는 서명된 앱의 실창 수동 gate로 확인해야 한다.
+
+## 2026-07-21 — Google Tasks Desktop OAuth·date-only due 활성화 기반
+
+- 관련 요구사항: `TASK-005`~`TASK-007`, `PRV-002`~`PRV-009`
+- Google Tasks의 포트 없는 `http://127.0.0.1` redirect base는 `NWListener`가 임의 가용 포트를
+  확보한 뒤 authorization request를 연다. authorization receipt의 실제 redirect URI를 code
+  exchange까지 전달해 두 요청을 일치시켰다. 기존 fixed-port Microsoft/Todoist 설정은 그대로
+  유지한다.
+- callback의 GET path와 state를 검증하고 한 번만 완료하며 기본 5분 timeout에서 listener와
+  Settings의 Connecting 상태를 정리한다. 거부·잘못된 callback·browser open 실패는 재연결 가능한
+  오류로 남긴다.
+- Google token response의 `openid`와 `https://www.googleapis.com/auth/tasks` 승인 여부를 account
+  identity 조회·Keychain 저장 전에 검사한다. 누락 시 credential과 account metadata를 만들지
+  않는다. client secret을 받거나 저장하는 경로는 추가하지 않았다.
+- `GoogleTaskDueDateCodec`으로 사용자 civil date를 Google의 date-only due 형식에 매핑했다.
+  UTC/KST/America/New_York에서 연·월·일을 보존하고, PATCH의 unchanged due는 생략하며 기한
+  제거는 JSON `null`로 구분한다. API 거부 시 별도 우회 write는 없다.
+- app target에는 public `KAOSCAL_GOOGLE_TASKS_CLIENT_ID` build setting과 포트 없는 redirect
+  base를 추가했다. client ID가 비어 있으면 `Not configured`이며 token·remote notes는 기존대로
+  SQLite/backup에 저장하지 않는다. Calendar event는 EventKit 경로를 유지한다.
+- 문서에는 External/Testing Google Auth Platform 설정, 최소 scope, 7일 refresh-token 만료 가능성,
+  production OAuth verification release blocker와 고유 marker/residue 0 live 절차를 추가했다.
+- 검증:
+  - 동적 loopback timeout **1 test / 0 failures**
+  - pagination·중복 callback·scope·HTTP/due 집중 **5 tests / 0 failures**
+  - 철회된 refresh token·401 credential cleanup 집중 **2 tests / 0 failures**
+  - 권한 철회 뒤 account/binding 재인증 상태와 local task 보존 **1 test / 0 failures**
+  - 전체 **292 executed / 291 passed / 1 intentional `ManualEventKitQATests` skip /
+    0 failures**, `TEST SUCCEEDED`
+  - result bundle:
+    `/tmp/KaosCalGooglePlanBaseline/Logs/Test/Test-KaosCal-2026.07.21_18-29-25-+0900.xcresult`
+- 결과: **local implementation and automated gate passed / Google live gate pending**.
+- 당시 남은 위험: Google Cloud 콘솔의 Tasks API, External/Testing consent, test user와 Desktop
+  OAuth client 구성, public client ID 주입 및 실제 Google 계정 live gate.
+
+## 2026-07-23 — Google Tasks 실계정 Cloud 준비
+
+- Google Cloud에서 Tasks API, External/Testing audience, test user와 Desktop OAuth client 구성을
+  완료했다.
+- 공개 client ID를 Debug/Release `KAOSCAL_GOOGLE_TASKS_CLIENT_ID`에 주입했다. client secret은
+  소스·SQLite·backup에 추가하지 않았다.
+- Debug build가 성공했고, 생성된 app `Info.plist`에서 client ID 및 포트 없는
+  `http://127.0.0.1` redirect base 확장을 확인했다.
+- 전체 XCTest는 **292 executed / 291 passed / 1 intentional manual-only skip / 0 failures**로
+  통과했다. result bundle은 `/tmp/KaosCalGooglePrePushFinal.xcresult`다.
+- clean local ad-hoc Debug app을
+  `/tmp/KaosCalGoogleLiveTestApp/Build/Products/Debug/KaosCal.app`에 생성했고 strict code-sign
+  검증과 client ID/redirect 확장을 다시 확인했다.
+- 결과: **Google Cloud configuration, full automated gate and local test build passed / Google live
+  account gate pending**.
+- 남은 위험: 실제 Google 계정 연결·CRUD·외부 변경·conflict·재실행/refresh·권한 철회·재연결과
+  양쪽 residue 0을 완료해야 한다.
+
 ## 다음 항목 템플릿
 
 ```markdown

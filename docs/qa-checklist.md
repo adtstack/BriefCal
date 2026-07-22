@@ -420,7 +420,8 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 14. 상세 draft를 연 채 Reminders.app에서 같은 task를 수정하고 Save한다. conflict에서 draft가
     남고 `Reload Latest`/`Cancel`만 보이는지 확인한다. 이어 list를 read-only로 바꾸거나
     삭제하고, Reminders 권한도 철회했다가 복구한다.
-15. inspector를 300pt와 360pt, 상세 sheet를 keyboard와 VoiceOver로 순회한다. 완료 버튼,
+15. inspector를 300pt와 360pt로 두고 목록과 하단 상세 drawer를 keyboard와 VoiceOver로
+    순회한다. divider를 끌어 drawer 높이를 바꾼 뒤에도 완료 버튼,
     list picker, title/notes/due/completed, Save/Delete/Cancel, 오류·복구 문구를 확인한다.
 16. linked task의 local 제목과 remote 제목을 각각 다르게 수정한 뒤 refresh한다. 이어 remote
     task를 삭제하고 다시 refresh한다.
@@ -434,9 +435,26 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 20. calendar의 기본 destination을 다른 provider/list로 바꾼다. 기존 linked task와 변경 당시
     unbound task를 수정하고, 변경 뒤 새로 만든 task도 수정한다.
 21. Google Tasks, Todoist와 Microsoft To Do의 writable test list에서 각각 생성→제목·notes·
-    기한→완료→미완료→삭제를 실행한다. Google due의 시간 미지원, Todoist/Microsoft의 원본
-    열기, Todoist project↔section 이동·Undo, Apple/Microsoft/Todoist priority와 Microsoft
-    reminder 설정/제거를 함께 확인한다.
+    기한→완료→미완료→삭제를 실행한다. Todoist/Microsoft의 원본 열기, Todoist
+    project↔section 이동·Undo, Apple/Microsoft/Todoist priority와 Microsoft reminder
+    설정/제거를 함께 확인한다. Google은 민감하지 않은 전용 목록과 고유
+    `KAOS-GTASK-<UTC timestamp>-<random>` marker를 사용해 다음 gate를 모두 수행한다.
+    - 사전 준비 완료(2026-07-23): Tasks API, External/Testing audience, test user, Desktop OAuth
+      client와 Debug/Release 공개 client ID 주입. 실제 계정 판정은 아래 절차 완료 전까지 pending이다.
+    - Settings에서 Connect 후 계정·목록 discovery와 즉시 task refresh를 확인한다.
+    - KaosCal에서 만든 task의 제목·notes·날짜를 Google에서 확인한다. KST와 DST 날짜 fixture가
+      하루 이동하지 않아야 한다.
+    - Google에서 제목 수정·완료·삭제한 뒤 KaosCal refresh 결과를 확인한다. 삭제는 local task를
+      지우지 않고 missing/Needs attention으로 남아야 한다.
+    - KaosCal에서 수정·기한 제거·완료·미완료를 수행하고 Google round-trip을 확인한다. 기한
+      제거 PATCH가 거부되면 자동 우회하지 않고 이 gate를 실패로 기록한다.
+    - 상세 drawer의 미저장 draft를 연 채 Google에서 같은 task를 수정해 conflict와 draft 보존,
+      `Reload Latest`/`Cancel` 경계를 확인한다.
+    - 앱 재실행과 access-token refresh 뒤 연결이 유지되는지 확인한다. Google 권한 페이지에서
+      grant를 철회한 뒤에는 local task를 보존하고 authorization-required/missing으로 전환해야
+      한다.
+    - 재연결 후 marker fixture를 정확히 삭제하고 전용 Google 목록과 KaosCal 양쪽의 테스트
+      residue가 0인지 재조회한다. token, authorization code, email은 QA 기록에 남기지 않는다.
 22. local Event/Personal task에 priority·중요 표시·반복 간격·예상 시간을 설정하고 timer를
     시작/정지한다. checklist를 만들고 반복 task를 완료한다.
 23. role, 날짜 filter, 날짜/list grouping과 검색을 조합해 이름 있는 Task view를 저장하고
@@ -484,7 +502,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 선택 list·상태·정렬은 Details 왕복과 재실행 뒤 복원되고, 검색어는 초기화된다. OAuth
   list 조회 중에는 선택이 사라지지 않으며 일시 오류에는 마지막 metadata/loaded task
   fallback을 유지한다.
-- writable provider task는 지원 capability 범위에서 완료 원, `+`와 상세 sheet의 생성·제목·
+- writable provider task는 지원 capability 범위에서 완료 원, `+`와 하단 상세 drawer의 생성·제목·
   notes·기한 설정/제거·완료·삭제를 원본에 반영하며 Open filter에서는 성공한 완료 행만
   사라진다. Google Tasks의 due는 날짜만 저장되고 Apple/Microsoft/Todoist priority는 의미를
   보존한다. Microsoft reminder는 due와 독립적으로 설정·제거된다. 목록 이동은 Apple

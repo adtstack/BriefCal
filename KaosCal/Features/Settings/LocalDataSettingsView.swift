@@ -1392,9 +1392,18 @@ private struct TaskProviderSettingsView: View {
                                     coordinator.disconnectOAuthProvider(provider)
                                 }
                             } else if coordinator.supportsInAppOAuthConnection(provider) {
-                                Button("Connect") {
-                                    Task {
-                                        await coordinator.connectOAuthProvider(provider)
+                                if coordinator.isConnectingOAuthProvider(provider) {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .accessibilityLabel("Connecting \(provider.title)")
+                                    Text("Connecting…")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Button("Connect") {
+                                        Task {
+                                            await coordinator.connectOAuthProvider(provider)
+                                        }
                                     }
                                 }
                             }
@@ -1409,6 +1418,13 @@ private struct TaskProviderSettingsView: View {
                         Text("This provider needs its registered HTTPS callback/return-to-app deployment before it can be connected here.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    } else if let message = coordinator.oauthConnectionError(
+                        for: provider
+                    ) {
+                        Label(message, systemImage: "exclamationmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 Text("OAuth credentials are stored only in the macOS Keychain. Provider task descriptions are not copied to local backups.")

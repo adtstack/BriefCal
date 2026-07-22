@@ -43,7 +43,15 @@ final class OAuthTaskProviderSession {
             request = try makeRequest(credential.accessToken)
             (data, response) = try await transport.data(for: request)
         }
-        return try checkedResponse(data: data, response: response)
+        do {
+            return try checkedResponse(data: data, response: response)
+        } catch TaskProviderError.authorizationRequired {
+            // A final 401 means the saved bearer credential can no longer be
+            // used. Remove only the Keychain value; account metadata and local
+            // tasks remain available for the reconnect flow.
+            try? credentials.deleteCredential(for: configuration.provider)
+            throw TaskProviderError.authorizationRequired
+        }
     }
 
     private func checkedResponse(
@@ -87,13 +95,22 @@ final class OAuthTaskProviderSession {
             try? credentials.deleteCredential(for: configuration.provider)
             throw TaskProviderError.authorizationRequired
         }
-        let response = try await OAuthTokenExchange.perform(
-            OAuthTokenExchange.refreshTokenRequest(
-                configuration: configuration,
-                refreshToken: refreshToken
-            ),
-            transport: transport
-        )
+        let response: OAuthTokenResponse
+        do {
+            response = try await OAuthTokenExchange.perform(
+                OAuthTokenExchange.refreshTokenRequest(
+                    configuration: configuration,
+                    refreshToken: refreshToken
+                ),
+                transport: transport
+            )
+        } catch OAuthTokenExchangeError.authorizationFailed(_) {
+            // Google returns invalid_grant after consent is revoked (and can
+            // do the same when a Testing refresh token expires). Keeping that
+            // token would leave Settings looking connected forever.
+            try? credentials.deleteCredential(for: configuration.provider)
+            throw TaskProviderError.authorizationRequired
+        }
         let refreshed = OAuthCredential(
             provider: credential.provider,
             accessToken: response.accessToken,

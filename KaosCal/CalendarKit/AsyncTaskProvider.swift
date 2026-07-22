@@ -132,14 +132,13 @@ final class GoogleTasksProvider: AsyncTaskProviding {
     }
 
     private func snapshot(_ task: Task, parentID: String) -> RemoteTaskSnapshot {
-        let formatter = ISO8601DateFormatter()
         return RemoteTaskSnapshot(
             id: task.id,
             parentID: parentID,
             parentAccountKey: accountKey,
             title: task.title ?? "",
             notes: task.notes ?? "",
-            dueAt: task.due.flatMap { formatter.date(from: $0) },
+            dueAt: task.due.flatMap { GoogleTaskDueDateCodec().decode($0) },
             isCompleted: task.status == "completed",
             version: task.etag,
             deepLink: nil

@@ -147,12 +147,16 @@ Todoist의 `Completed`는 provider archive를 bounded 조회해 최근 90일 완
 그보다 오래된 Todoist 완료 이력을 전체 로컬 기록처럼 약속하지 않는다.
 
 writable provider 항목은 체크 원을 눌러 바로 완료하거나 미완료로 바꿀 수 있다. 행을 누르면
-최신 원격 내용을 다시 읽은 상세 창에서 제목, notes, 기한과 완료 상태를 수정한다. Apple
+목록 아래의 크기 조절 가능한 상세 drawer가 열리고 최신 원격 내용을 다시 읽은 뒤 제목,
+notes, 기한과 완료 상태를 수정한다. 다른 행을 누르면 drawer를 유지한 채 해당 작업으로
+전환하며, 저장하지 않은 변경이 있으면 drawer 안에서 계속 편집하거나 버릴 수 있다. Apple
 Reminders, Microsoft To Do와 Todoist는 priority도 편집할 수 있고 Google Tasks의 due는
 날짜만 저장된다. Microsoft To Do는 due와 별도로 reminder 시각을 켜거나 끌 수 있으며 알림
 전달은 Microsoft To Do의 알림 설정을 따른다. Apple Reminders는 writable list 사이 이동도
-지원하며 Todoist는 같은 account 안에서 project/section 사이를 이동할 수 있다. 상단 `+`는 선택한
-writable provider list/project에 새 task를 만든다. `All Lists`에서는 destination을 먼저 고른다.
+지원하며 Todoist는 같은 account 안에서 project/section 사이를 이동할 수 있다. 상단 `+`도
+같은 drawer를 열어 선택한 writable provider list/project에 새 task를 만든다. `All Lists`에서는
+destination을 먼저 고른다. drawer 위 경계를 끌어 목록과 상세 영역의 높이를 조절하고,
+`Esc`나 닫기 버튼으로 상세 편집을 닫는다.
 
 상단 선택 아이콘을 누르면 여러 작업을 고르는 모드가 열린다. 이 모드에서는 선택한 writable
 작업을 한 번에 완료·미완료로 바꿀 수 있다. 목록 이동은 Apple Reminders와 Todoist처럼

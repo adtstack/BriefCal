@@ -1,3 +1,4 @@
+import AppKit
 import EventKit
 import Foundation
 import Combine
@@ -10,6 +11,7 @@ protocol TaskProviding: AnyObject {
     var authorizationState: TaskProviderAuthorizationState { get }
     var storeChangeHandler: (() -> Void)? { get set }
 
+    func refreshAuthorizationState()
     func requestFullAccess() async throws -> Bool
     func listTaskLists() throws -> [RemoteTaskList]
     func createTask(_ draft: RemoteTaskDraft) throws -> RemoteTaskSnapshot
@@ -32,6 +34,8 @@ protocol TaskProviding: AnyObject {
 }
 
 extension TaskProviding {
+    func refreshAuthorizationState() {}
+
     func moveTask(
         _ task: RemoteTaskSnapshot,
         to list: RemoteTaskList
@@ -52,6 +56,8 @@ final class AppleRemindersProvider: TaskProviding, TaskSnapshotListing {
     private let eventStore: EKEventStore
     private let notificationCenter: NotificationCenter
     private var storeChangeObserver: NSObjectProtocol?
+    private var lastKnownAuthorizationState =
+        AppleRemindersProvider.systemAuthorizationState
 
     let provider: TaskProviderKind = .appleReminders
     let capabilities = TaskProviderCapabilities(
@@ -89,6 +95,10 @@ final class AppleRemindersProvider: TaskProviding, TaskSnapshotListing {
     }
 
     var authorizationState: TaskProviderAuthorizationState {
+        Self.systemAuthorizationState
+    }
+
+    private static var systemAuthorizationState: TaskProviderAuthorizationState {
         switch EKEventStore.authorizationStatus(for: .reminder) {
         case .notDetermined:
             .notDetermined
@@ -105,8 +115,24 @@ final class AppleRemindersProvider: TaskProviding, TaskSnapshotListing {
         }
     }
 
+    func refreshAuthorizationState() {
+        let currentState = Self.systemAuthorizationState
+        guard currentState != lastKnownAuthorizationState else { return }
+        lastKnownAuthorizationState = currentState
+        // A long-lived EKEventStore can retain an empty snapshot when the TCC
+        // permission changes while KaosCal is running. Reset only on an actual
+        // authorization transition so the next list fetch sees the new store.
+        eventStore.reset()
+    }
+
     func requestFullAccess() async throws -> Bool {
-        try await eventStore.requestFullAccessToReminders()
+        let granted = try await eventStore.requestFullAccessToReminders()
+        lastKnownAuthorizationState = Self.systemAuthorizationState
+        // The store is created before the prompt is shown. Reset it after the
+        // decision so an immediately following list fetch is not served from
+        // the pre-authorization snapshot.
+        eventStore.reset()
+        return granted
     }
 
     func listTaskLists() throws -> [RemoteTaskList] {
@@ -405,8 +431,10 @@ final class TaskProviderCoordinator: ObservableObject {
     private let contextStore: ContextStore
     private let now: () -> Date
     private let oauthCredentials: OAuthCredentialStoring
+    private let notificationCenter: NotificationCenter
     private var asyncProviders = [TaskProviderKind: any AsyncTaskProviding]()
     private let injectedAsyncProviderKinds: Set<TaskProviderKind>
+    private var applicationDidBecomeActiveObserver: NSObjectProtocol?
     private var appleRemindersRefreshTask: Task<Void, Never>?
     private var activeOAuthListRefreshes = Set<UUID>()
     private var microsoftTaskDetails = [String: String]()
@@ -428,6 +456,8 @@ final class TaskProviderCoordinator: ObservableObject {
     @Published private(set) var microsoftToDoTaskState:
         ProviderTaskListState = .unavailable
     @Published private(set) var isRefreshingOAuthTaskLists = false
+    @Published private(set) var connectingOAuthProviders = Set<TaskProviderKind>()
+    @Published private(set) var oauthConnectionErrors = [TaskProviderKind: String]()
     @Published private(set) var taskListRefreshFailures = Set<TaskProviderKind>()
     @Published private(set) var activeSidebarMutationIDs = Set<String>()
     @Published private(set) var sidebarUndoState: SidebarTaskUndoState?
@@ -443,6 +473,7 @@ final class TaskProviderCoordinator: ObservableObject {
         oauthCredentials: OAuthCredentialStoring = KeychainOAuthCredentialStore(),
         asyncProviders injectedAsyncProviders:
             [TaskProviderKind: any AsyncTaskProviding] = [:],
+        notificationCenter: NotificationCenter = .default,
         now: @escaping () -> Date = Date.init
     ) {
         let provider = provider ?? AppleRemindersProvider()
@@ -451,6 +482,7 @@ final class TaskProviderCoordinator: ObservableObject {
         repository = contextStore.taskProviders
         self.now = now
         self.oauthCredentials = oauthCredentials
+        self.notificationCenter = notificationCenter
         asyncProviders = injectedAsyncProviders
         injectedAsyncProviderKinds = Set(injectedAsyncProviders.keys)
         authorizationState = provider.authorizationState
@@ -461,11 +493,27 @@ final class TaskProviderCoordinator: ObservableObject {
                 self.refreshLinkedTasks(in: self.contextStore)
             }
         }
+        applicationDidBecomeActiveObserver = notificationCenter.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.refresh()
+            }
+        }
         configureOAuthProviders()
         refresh()
     }
 
+    deinit {
+        if let applicationDidBecomeActiveObserver {
+            notificationCenter.removeObserver(applicationDidBecomeActiveObserver)
+        }
+    }
+
     func refresh() {
+        provider.refreshAuthorizationState()
         reloadSidebarCalendarLinks()
         authorizationState = provider.authorizationState
         providerAuthorizationStates[provider.provider] = authorizationState
@@ -1650,18 +1698,32 @@ final class TaskProviderCoordinator: ObservableObject {
         return host == "localhost" || host == "127.0.0.1"
     }
 
+    func isConnectingOAuthProvider(_ provider: TaskProviderKind) -> Bool {
+        connectingOAuthProviders.contains(provider)
+    }
+
+    func oauthConnectionError(for provider: TaskProviderKind) -> String? {
+        oauthConnectionErrors[provider]
+    }
+
     func connectOAuthProvider(_ provider: TaskProviderKind) async {
         guard provider != self.provider.provider,
               let configuration = OAuthProviderConfiguration.load(provider: provider) else {
             lastErrorMessage = "This provider is not configured for this build."
             return
         }
+        guard connectingOAuthProviders.insert(provider).inserted else { return }
+        oauthConnectionErrors[provider] = nil
+        defer { connectingOAuthProviders.remove(provider) }
         do {
             let authorization = try await OAuthLoopbackBrowserAuthorization.authorize(
                 configuration: configuration
             )
+            let effectiveConfiguration = configuration.replacingRedirectURI(
+                authorization.effectiveRedirectURI
+            )
             _ = try await OAuthProviderConnection.connect(
-                configuration: configuration,
+                configuration: effectiveConfiguration,
                 code: authorization.code,
                 pkce: authorization.pkce,
                 credentials: oauthCredentials
@@ -1670,7 +1732,9 @@ final class TaskProviderCoordinator: ObservableObject {
             lastErrorMessage = nil
             await refreshOAuthProviders()
         } catch {
-            lastErrorMessage = Self.message(for: error)
+            let message = Self.message(for: error)
+            oauthConnectionErrors[provider] = message
+            lastErrorMessage = message
         }
     }
 
@@ -1683,6 +1747,7 @@ final class TaskProviderCoordinator: ObservableObject {
             // the authoritative place to revoke server-side grants.
             try oauthCredentials.deleteCredential(for: provider)
             try repository.deleteAccounts(provider: provider)
+            oauthConnectionErrors[provider] = nil
             asyncProviders[provider] = nil
             taskListRefreshFailures.remove(provider)
             providerAuthorizationStates[provider] = isConfigured(provider)
@@ -1815,6 +1880,10 @@ final class TaskProviderCoordinator: ObservableObject {
                     )
                 }
             } catch {
+                markOAuthProviderAuthorizationRequiredIfNeeded(
+                    error,
+                    provider: kind
+                )
                 taskListRefreshFailures.insert(kind)
                 lastErrorMessage = Self.message(for: error)
                 setOAuthSidebarTaskState(
@@ -1876,6 +1945,10 @@ final class TaskProviderCoordinator: ObservableObject {
             setOAuthSidebarTaskState(.loaded(items), for: kind)
             lastSidebarSyncAt = now()
         } catch {
+            markOAuthProviderAuthorizationRequiredIfNeeded(
+                error,
+                provider: kind
+            )
             let message = Self.message(for: error)
             setOAuthSidebarTaskState(.failed(message), for: kind)
             lastErrorMessage = message
@@ -3446,8 +3519,16 @@ final class TaskProviderCoordinator: ObservableObject {
                     capabilities: asyncProvider.capabilities,
                     in: contextStore
                 ) || projectionChanged
-            } catch TaskProviderError.authorizationRequired,
-                    TaskProviderError.accessDenied {
+            } catch TaskProviderError.authorizationRequired {
+                markOAuthProviderAuthorizationRequiredIfNeeded(
+                    TaskProviderError.authorizationRequired,
+                    provider: account.provider
+                )
+                projectionChanged = ((try? repository.markBinding(
+                    bindingID: binding.id,
+                    state: .disconnected
+                )) == true) || projectionChanged
+            } catch TaskProviderError.accessDenied {
                 projectionChanged = ((try? repository.markBinding(
                     bindingID: binding.id,
                     state: .disconnected
@@ -4101,6 +4182,25 @@ final class TaskProviderCoordinator: ObservableObject {
         if projectionChanged {
             onLocalProjectionChange?()
         }
+    }
+
+    private func markOAuthProviderAuthorizationRequiredIfNeeded(
+        _ error: Error,
+        provider: TaskProviderKind
+    ) {
+        guard error as? TaskProviderError == .authorizationRequired else {
+            return
+        }
+        providerAuthorizationStates[provider] = .notDetermined
+        if let accounts = try? repository.fetchAccounts() {
+            for account in accounts where account.provider == provider {
+                try? repository.updateAuthorization(
+                    accountID: account.id,
+                    state: .notDetermined
+                )
+            }
+        }
+        markProviderBindingsDisconnected(provider)
     }
 
     private static func message(for error: Error) -> String {

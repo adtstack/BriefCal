@@ -139,6 +139,14 @@ struct OAuthProviderConfiguration: Equatable {
     let clientID: String
     let redirectURI: URL
 
+    func replacingRedirectURI(_ redirectURI: URL) -> OAuthProviderConfiguration {
+        OAuthProviderConfiguration(
+            provider: provider,
+            clientID: clientID,
+            redirectURI: redirectURI
+        )
+    }
+
     static func load(
         provider: TaskProviderKind,
         bundle: Bundle = .main
@@ -265,8 +273,12 @@ struct OAuthAuthorizationRequest: Equatable {
             // request used only to derive a stable account key.
             scopes = ["data:read_write"]
         case .microsoftToDo:
-            endpoint = URL(string: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize")!
-            scopes = ["openid", "offline_access", "User.Read", "Tasks.ReadWrite"]
+            endpoint = URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
+            // `profile` is required for the stable `oid` claim consumed below.
+            scopes = [
+                "openid", "profile", "offline_access", "User.Read",
+                "Tasks.ReadWrite"
+            ]
         case .appleReminders:
             throw OAuthAuthorizationRequestError.invalidURL
         }
@@ -341,6 +353,39 @@ enum OAuthTokenExchangeError: LocalizedError, Equatable {
             "Provider authorization failed: \(message)"
         case .invalidResponse:
             "The provider returned an invalid token response."
+        }
+    }
+}
+
+enum OAuthGrantedScopeError: LocalizedError, Equatable {
+    case missingRequiredScopes([String])
+
+    var errorDescription: String? {
+        switch self {
+        case let .missingRequiredScopes(scopes):
+            "Provider authorization did not grant the required access: \(scopes.joined(separator: ", ")). Reconnect and approve all requested permissions."
+        }
+    }
+}
+
+enum OAuthGrantedScopeValidator {
+    static func validate(
+        provider: TaskProviderKind,
+        grantedScope: String?
+    ) throws {
+        guard provider == .googleTasks else { return }
+        let granted = Set(
+            (grantedScope ?? "")
+                .split(whereSeparator: { $0.isWhitespace })
+                .map(String.init)
+        )
+        let required = [
+            "openid",
+            "https://www.googleapis.com/auth/tasks"
+        ]
+        let missing = required.filter { !granted.contains($0) }
+        guard missing.isEmpty else {
+            throw OAuthGrantedScopeError.missingRequiredScopes(missing)
         }
     }
 }
@@ -457,6 +502,11 @@ enum OAuthAccountIdentityResolver {
                 accessToken: tokenResponse.accessToken,
                 transport: transport
             )
+            guard profile.id == claims.objectID else {
+                throw TaskProviderError.providerFailure(
+                    "Microsoft returned inconsistent account identity information."
+                )
+            }
             return OAuthAccountIdentity(
                 accountKey: "\(claims.tenantID):\(claims.objectID)",
                 displayName: nonEmpty(profile.displayName)
@@ -520,6 +570,7 @@ enum OAuthAccountIdentityResolver {
     }
 
     private struct MicrosoftProfile: Decodable {
+        let id: String
         let displayName: String?
         let userPrincipalName: String?
     }
@@ -602,6 +653,10 @@ enum OAuthProviderConnection {
             ),
             transport: transport
         )
+        try OAuthGrantedScopeValidator.validate(
+            provider: configuration.provider,
+            grantedScope: response.scope
+        )
         let identity = try await OAuthAccountIdentityResolver.resolve(
             provider: configuration.provider,
             tokenResponse: response,
@@ -621,11 +676,12 @@ enum OAuthProviderConnection {
     }
 }
 
-enum OAuthLoopbackAuthorizationError: LocalizedError {
+enum OAuthLoopbackAuthorizationError: LocalizedError, Equatable {
     case unsupportedRedirect
     case listenerUnavailable
     case browserDidNotOpen
     case malformedCallback
+    case timedOut
 
     var errorDescription: String? {
         switch self {
@@ -637,8 +693,16 @@ enum OAuthLoopbackAuthorizationError: LocalizedError {
             "KaosCal could not open the system browser for sign-in."
         case .malformedCallback:
             "The provider returned an invalid local callback."
+        case .timedOut:
+            "Provider authorization timed out. Reconnect and finish sign-in in the browser."
         }
     }
+}
+
+struct OAuthLoopbackAuthorizationReceipt: Equatable {
+    let code: String
+    let pkce: OAuthPKCEChallenge
+    let effectiveRedirectURI: URL
 }
 
 /// Starts an OAuth authorization-code flow in the system browser and captures
@@ -646,36 +710,50 @@ enum OAuthLoopbackAuthorizationError: LocalizedError {
 /// random state is still validated before the code is exchanged, so a request
 /// to the listener alone cannot connect an account.
 enum OAuthLoopbackBrowserAuthorization {
+    static let defaultTimeout: TimeInterval = 5 * 60
+
     static func authorize(
-        configuration: OAuthProviderConfiguration
-    ) async throws -> (code: String, pkce: OAuthPKCEChallenge) {
+        configuration: OAuthProviderConfiguration,
+        timeout: TimeInterval = defaultTimeout,
+        openURL: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }
+    ) async throws -> OAuthLoopbackAuthorizationReceipt {
         guard configuration.redirectURI.scheme?.lowercased() == "http",
               let host = configuration.redirectURI.host?.lowercased(),
-              host == "localhost" || host == "127.0.0.1",
-              let portValue = configuration.redirectURI.port,
-              let port = NWEndpoint.Port(rawValue: UInt16(portValue)) else {
+              host == "localhost" || host == "127.0.0.1" else {
             throw OAuthLoopbackAuthorizationError.unsupportedRedirect
         }
-        let request = try OAuthAuthorizationRequest.make(configuration: configuration)
-        let callback = try await receiveCallback(
+        let configuredPort: NWEndpoint.Port?
+        if let portValue = configuration.redirectURI.port {
+            guard let port = NWEndpoint.Port(rawValue: UInt16(exactly: portValue) ?? 0),
+                  port.rawValue != 0 else {
+                throw OAuthLoopbackAuthorizationError.unsupportedRedirect
+            }
+            configuredPort = port
+        } else {
+            configuredPort = nil
+        }
+        let result = try await receiveCallback(
             configuration: configuration,
-            port: port,
-            authorizationURL: request.url
+            port: configuredPort ?? .any,
+            timeout: timeout,
+            openURL: openURL
         )
-        return (
-            try OAuthAuthorizationCallback.authorizationCode(
-                from: callback,
-                expectedState: request.state
+        return OAuthLoopbackAuthorizationReceipt(
+            code: try OAuthAuthorizationCallback.authorizationCode(
+                from: result.callbackURL,
+                expectedState: result.request.state
             ),
-            request.pkce
+            pkce: result.request.pkce,
+            effectiveRedirectURI: result.configuration.redirectURI
         )
     }
 
     private static func receiveCallback(
         configuration: OAuthProviderConfiguration,
         port: NWEndpoint.Port,
-        authorizationURL: URL
-    ) async throws -> URL {
+        timeout: TimeInterval,
+        openURL: @escaping (URL) -> Bool
+    ) async throws -> OAuthLoopbackCallbackResult {
         let listener: NWListener
         do {
             listener = try NWListener(using: .tcp, on: port)
@@ -687,51 +765,129 @@ enum OAuthLoopbackBrowserAuthorization {
                 listener: listener,
                 continuation: continuation
             )
+            relay.scheduleTimeout(after: timeout)
             listener.stateUpdateHandler = { state in
-                if case .failed = state {
+                switch state {
+                case .ready:
+                    guard let boundPort = listener.port,
+                          let effectiveRedirectURI = effectiveRedirectURI(
+                            configuration.redirectURI,
+                            port: boundPort.rawValue
+                          ) else {
+                        relay.finish(
+                            .failure(OAuthLoopbackAuthorizationError.listenerUnavailable)
+                        )
+                        return
+                    }
+                    let effectiveConfiguration = configuration
+                        .replacingRedirectURI(effectiveRedirectURI)
+                    do {
+                        let request = try OAuthAuthorizationRequest.make(
+                            configuration: effectiveConfiguration
+                        )
+                        let context = OAuthLoopbackRequestContext(
+                            request: request,
+                            configuration: effectiveConfiguration
+                        )
+                        relay.setContext(context)
+                        guard openURL(request.url) else {
+                            relay.finish(
+                                .failure(
+                                    OAuthLoopbackAuthorizationError.browserDidNotOpen
+                                )
+                            )
+                            return
+                        }
+                    } catch {
+                        relay.finish(.failure(error))
+                    }
+                case .failed:
                     relay.finish(
                         .failure(OAuthLoopbackAuthorizationError.listenerUnavailable)
                     )
+                default:
+                    break
                 }
             }
             listener.newConnectionHandler = { connection in
                 connection.start(queue: .main)
                 connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1_024) {
                     data, _, _, _ in
+                    guard let context = relay.context else {
+                        connection.cancel()
+                        return
+                    }
                     let callback = data.flatMap { callbackURL(
                         from: $0,
-                        redirectURI: configuration.redirectURI
+                        redirectURI: context.configuration.redirectURI
                     ) }
-                    let response: String
-                    if callback == nil {
-                        response = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nInvalid OAuth callback."
+                    let result: Result<OAuthLoopbackCallbackResult, Error>
+                    if let callback {
+                        do {
+                            _ = try OAuthAuthorizationCallback.authorizationCode(
+                                from: callback,
+                                expectedState: context.request.state
+                            )
+                            result = .success(
+                                OAuthLoopbackCallbackResult(
+                                    callbackURL: callback,
+                                    request: context.request,
+                                    configuration: context.configuration
+                                )
+                            )
+                        } catch {
+                            result = .failure(error)
+                        }
                     } else {
-                        response = "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nYou can return to KaosCal."
+                        result = .failure(
+                            OAuthLoopbackAuthorizationError.malformedCallback
+                        )
                     }
+                    let succeeded: Bool
+                    switch result {
+                    case .success:
+                        succeeded = true
+                    case .failure:
+                        succeeded = false
+                    }
+                    let response = callbackHTTPResponse(succeeded: succeeded)
                     connection.send(
                         content: response.data(using: .utf8),
                         completion: .contentProcessed { _ in connection.cancel() }
                     )
-                    if let callback {
-                        relay.finish(.success(callback))
-                    }
+                    relay.finish(result)
                 }
             }
             listener.start(queue: .main)
-            guard NSWorkspace.shared.open(authorizationURL) else {
-                relay.finish(.failure(OAuthLoopbackAuthorizationError.browserDidNotOpen))
-                return
-            }
         }
     }
 
-    private static func callbackURL(from data: Data, redirectURI: URL) -> URL? {
+    static func effectiveRedirectURI(_ baseURI: URL, port: UInt16) -> URL? {
+        guard port != 0,
+              var components = URLComponents(
+                url: baseURI,
+                resolvingAgainstBaseURL: false
+              ) else {
+            return nil
+        }
+        components.port = Int(port)
+        return components.url
+    }
+
+    static func callbackHTTPResponse(succeeded: Bool) -> String {
+        if succeeded {
+            return "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nSign-in response received. Return to KaosCal while it finishes connecting."
+        }
+        return "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nSign-in was not completed. Return to KaosCal to see the error and try again."
+    }
+
+    static func callbackURL(from data: Data, redirectURI: URL) -> URL? {
         guard let request = String(data: data, encoding: .utf8),
               let firstLine = request.split(separator: "\n", maxSplits: 1).first else {
             return nil
         }
         let parts = firstLine.split(separator: " ")
-        guard parts.count >= 2,
+        guard parts.count >= 2, parts[0] == "GET",
               var components = URLComponents(
                 url: redirectURI,
                 resolvingAgainstBaseURL: false
@@ -739,31 +895,81 @@ enum OAuthLoopbackBrowserAuthorization {
               let target = URLComponents(string: String(parts[1])) else {
             return nil
         }
-        guard target.path == components.path else { return nil }
+        let expectedPath = components.path.isEmpty ? "/" : components.path
+        let receivedPath = target.path.isEmpty ? "/" : target.path
+        guard receivedPath == expectedPath else { return nil }
         components.percentEncodedQuery = target.percentEncodedQuery
         return components.url
     }
 }
 
+private struct OAuthLoopbackRequestContext {
+    let request: OAuthAuthorizationRequest
+    let configuration: OAuthProviderConfiguration
+}
+
+private struct OAuthLoopbackCallbackResult {
+    let callbackURL: URL
+    let request: OAuthAuthorizationRequest
+    let configuration: OAuthProviderConfiguration
+}
+
 private final class OAuthLoopbackCallbackRelay: @unchecked Sendable {
     private let listener: NWListener
-    private let continuation: CheckedContinuation<URL, Error>
+    private let continuation: CheckedContinuation<OAuthLoopbackCallbackResult, Error>
     private let lock = NSLock()
     private var isFinished = false
+    private var requestContext: OAuthLoopbackRequestContext?
+    private var timeoutWorkItem: DispatchWorkItem?
 
     init(
         listener: NWListener,
-        continuation: CheckedContinuation<URL, Error>
+        continuation: CheckedContinuation<OAuthLoopbackCallbackResult, Error>
     ) {
         self.listener = listener
         self.continuation = continuation
     }
 
-    func finish(_ result: Result<URL, Error>) {
+    var context: OAuthLoopbackRequestContext? {
+        lock.lock()
+        defer { lock.unlock() }
+        return requestContext
+    }
+
+    func setContext(_ context: OAuthLoopbackRequestContext) {
         lock.lock()
         defer { lock.unlock() }
         guard !isFinished else { return }
+        requestContext = context
+    }
+
+    func scheduleTimeout(after interval: TimeInterval) {
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.finish(.failure(OAuthLoopbackAuthorizationError.timedOut))
+        }
+        lock.lock()
+        guard !isFinished else {
+            lock.unlock()
+            return
+        }
+        timeoutWorkItem = workItem
+        lock.unlock()
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + max(0, interval),
+            execute: workItem
+        )
+    }
+
+    func finish(_ result: Result<OAuthLoopbackCallbackResult, Error>) {
+        lock.lock()
+        guard !isFinished else {
+            lock.unlock()
+            return
+        }
         isFinished = true
+        let timeoutWorkItem = timeoutWorkItem
+        lock.unlock()
+        timeoutWorkItem?.cancel()
         listener.cancel()
         continuation.resume(with: result)
     }
@@ -825,7 +1031,7 @@ enum OAuthTokenExchange {
         case .todoist:
             URL(string: "https://api.todoist.com/oauth/access_token")!
         case .microsoftToDo:
-            URL(string: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token")!
+            URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/token")!
         case .appleReminders:
             URL(string: "https://localhost/unsupported-oauth-token")!
         }

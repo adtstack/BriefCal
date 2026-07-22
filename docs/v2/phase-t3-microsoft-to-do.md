@@ -5,7 +5,8 @@
 
 ## 목표
 
-Exchange/Microsoft 365 사용자에게 Microsoft Graph To Do를 task 정본으로 제공한다.
+개인 Microsoft 계정과 Exchange/Microsoft 365 사용자에게 Microsoft Graph To Do를 task
+정본으로 제공한다.
 macOS EventKit의 Exchange Calendar와 Graph 계정을 같은 것이라고 자동 추측하지 않고,
 계정 연결 화면에서 primary source와 중복 경로를 명시한다.
 
@@ -51,8 +52,10 @@ delta 결과가 삭제를 뜻하는지, 일시적으로 보이지 않는지를 p
 - Graph To Do list/task CRUD request와 delegated Bearer token 경계를 추가했다.
 - delta link는 opaque URL로 재사용하며, 새 cursor를 조합하거나 로그에 풀어 쓰지 않는다.
 - update/delete의 `If-Match` version 계약을 transport test로 고정했다.
-- Microsoft authorization request는 `openid offline_access User.Read Tasks.ReadWrite`로
-  제한하고, token response의 transient `tid` + `oid`와 `/me` profile을 조합해
+- Microsoft authorization/token request는 개인 계정과 회사·학교 계정을 모두 받는
+  `common` authority에서 `openid profile offline_access User.Read Tasks.ReadWrite`로
+  제한하고,
+  token response의 transient `tid` + `oid`와 `/me` profile을 조합해
   `tenant:object` account key를 만든다. email/userPrincipalName은 표시용일 뿐 account key가
   아니다. raw ID token은 저장하지 않는다.
 - `v7_microsoft_to_do_provider` migration은 기존 provider account/binding/destination/cursor

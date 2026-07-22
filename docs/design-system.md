@@ -180,12 +180,16 @@ After:
 - writable이며 완료를 지원하는 행의 완료 원은 18pt 실제 버튼이며 저장 중에는 같은 위치의
   spinner로 바꾸고 해당 행만 비활성화한다. read-only 또는 capability가 없는 field는 lock과
   `View only` 이유를 표시한다.
-- 행을 누르면 520pt 이상 상세 sheet에서 최신 snapshot을 읽고 provider·account·list를
-  읽기 전용으로, 제목·여러 줄 notes·기한 toggle/날짜/시간·완료를 편집 가능하게 표시한다.
-  하단은 Delete, 여백, Cancel, Save 순서다. conflict에서는 draft를 유지한 채 Save/Delete를
-  숨기고 `Reload Latest`와 Cancel만 남긴다.
-- `All Lists`의 `+`는 먼저 writable provider list picker를 보여 주고, 특정 writable
-  list 선택 중에는 그 list를 기본값으로 사용한다. 삭제 확인은 task 이름과
+- 행을 누르면 목록 아래의 resizable `VSplitView` drawer에서 최신 snapshot을 읽고
+  provider·account·list를 읽기 전용으로, 제목·여러 줄 notes·기한 toggle/날짜/시간·완료를
+  편집 가능하게 표시한다. 선택 행은 accent 배경으로 표시하고 다른 행을 누르면 drawer를
+  유지한 채 내용을 바꾼다. 미저장 draft가 있으면 별도 modal 대신 drawer 내부에
+  `Keep Editing`/`Discard`를 표시한다. 하단은 Delete, 여백, Cancel, Save 순서다.
+  conflict에서는 draft를 유지한 채 Save/Delete를 숨기고 `Reload Latest`와 Cancel만 남긴다.
+- `All Lists`의 `+`는 같은 drawer에서 먼저 writable provider list picker를 보여 주고,
+  특정 writable list 선택 중에는 그 list를 기본값으로 사용한다. drawer는 목록을 가리는
+  overlay가 아니라 목록 높이를 줄이는 분할 영역이며, 위 경계를 끌어 높이를 조절하고
+  `Esc`·Cancel·닫기 버튼 또는 선택 행 재클릭으로 닫는다. 삭제 확인은 task 이름과
   provider·account·list, 연결 local task 보존을 함께 설명한다.
 - 300pt inspector에서도 menu·검색·상태 control이 잘리지 않고 list/source/account와 task
   본문의 우선순위가 유지되어야 한다. 실제 keyboard·VoiceOver·Increase Contrast 판정은

@@ -1,6 +1,6 @@
 # T2 — Google Tasks + Todoist
 
-> 상태: implemented / live pending — OAuth·multi-provider coordinator·Settings destination까지 구현, provider별 실계정 gate 대기
+> 상태: implemented / Google Cloud configured / live pending — OAuth·multi-provider coordinator·Settings destination까지 구현, provider별 실계정 gate 대기
 > 선행: T0, T1에서 확정한 destination·sync·conflict 계약
 
 ## 목표
@@ -49,9 +49,16 @@ OAuth 기반 provider 두 종류를 같은 계정·Keychain·동기화 경계로
   외부 완료를 `missing`으로 잘못 처리하지 않는다.
   archive에 없는 task는 삭제와 장기 보관 완료를 확정할 수 없으므로 기존처럼 `missing`으로
   남기며 local task를 자동 삭제하지 않는다.
-- Google loopback redirect와 HTTP `localhost`로 등록한 개발용 provider는 시스템 browser
-  callback → state/PKCE 확인 → account identity 조회 → Keychain 저장을 수행한다. OAuth
-  account는 Google `sub`, Todoist user ID로 식별하며 email을 account key로 쓰지 않는다.
+- Google은 포트 없는 `http://127.0.0.1` base에서 먼저 임의 가용 포트를 확보하고, 실제
+  `http://127.0.0.1:<port>`를 authorization과 token exchange에 동일하게 전달한다. callback의
+  state와 path를 확인하고 중복 callback은 한 번만 완료하며, callback이 없으면 5분 뒤
+  `Connecting`을 종료한다. 고정 포트를 사용하는 Todoist/Microsoft 구성에는 이 규칙을
+  적용하지 않는다.
+- Google token response에 `openid`와
+  `https://www.googleapis.com/auth/tasks`가 모두 승인된 경우에만 account identity를 조회하고
+  Keychain에 저장한다. 일부 scope가 빠지면 account metadata를 만들지 않고 재연결 가능한
+  오류를 남긴다. OAuth account는 Google `sub`, Todoist user ID로 식별하며 email을 account
+  key로 쓰지 않는다.
 - disconnect는 KaosCal Keychain credential 및 local provider metadata/destination/binding을
   삭제하고 local event task는 유지한다. public desktop client는 provider별 server-side revoke
   endpoint를 안전하게 일반화할 수 없으므로, provider consent page revoke는 별도 사용자
@@ -68,7 +75,7 @@ client secret 없이 아래 public configuration을 앱의 `Info.plist` build se
 
 | Provider | Client ID key | Redirect key | 등록 방식 |
 | --- | --- | --- | --- |
-| Google Tasks | `KaosCalGoogleTasksClientID` | `KaosCalGoogleTasksRedirectURI` | Google Cloud의 Desktop OAuth client + loopback redirect |
+| Google Tasks | `KaosCalGoogleTasksClientID` ← `KAOSCAL_GOOGLE_TASKS_CLIENT_ID` | `KaosCalGoogleTasksRedirectURI` = `http://127.0.0.1` | Google Cloud의 Desktop OAuth client + dynamic loopback port |
 | Todoist | `KaosCalTodoistClientID` | `KaosCalTodoistRedirectURI` | PKCE public client; `Client ID Metadata Document` URL과 HTTPS redirect를 Todoist에 등록 |
 
 Todoist의 production redirect는 HTTPS metadata callback이므로, standalone app의 HTTP
@@ -77,12 +84,21 @@ loopback handler와 동일시하지 않는다. 배포용 HTTPS callback/return-t
 
 ## T2-Google
 
+> Cloud 준비: Tasks API, External/Testing audience, test user, Desktop OAuth client와 공개
+> Debug/Release client ID 주입 완료. 실제 계정 live gate와 residue 0 판정은 대기 중이다.
+
 ### 범위
 
 - Google account 연결과 task list 선택
-- 제목, notes, due, status, position의 양방향 sync
+- 제목, notes, date-only due, status의 양방향 sync
 - account/list/cursor 저장과 remote deletion missing 처리
 - 캘린더별 destination과 `Google Tasks · <list>` badge
+
+Google Tasks의 `due`는 RFC 3339 모양이지만 시간 부분을 보존하지 않는다. 전용 civil-date
+codec이 사용자의 연·월·일을 `YYYY-MM-DDT00:00:00.000Z`로 보내고 UTC/KST/DST 지역에서 같은
+연·월·일의 local midnight로 복원한다. PATCH의 due 변경 없음은 필드를 생략하고 기한 제거는
+명시적 JSON `null`로 보낸다. 실제 API가 `null`을 거부하면 다른 write로 우회하지 않고
+T2-Google live gate 실패로 기록한다.
 
 Google Calendar 직접 API는 T2에서 구현하지 않는다. macOS EventKit이 이미 제공하는
 Google Calendar event를 다시 수집해 duplicate event를 만들지 않기 위해 T4로 분리한다.
@@ -91,7 +107,7 @@ Google Calendar event를 다시 수집해 duplicate event를 만들지 않기 �
 
 - PKCE success/cancel/denied/expired token
 - task list 변경, remote completion, remote deletion, cursor reset
-- due의 날짜 전용·시간 포함·시간대 손실 capability
+- due의 UTC/KST/America/New_York civil-date round-trip과 명시적 기한 제거
 - 동일 account의 두 list에서 같은 remote ID가 섞이지 않는지
 - 실제 테스트 account에서 Before/During/After 생성→완료→삭제→cleanup
 
@@ -131,3 +147,7 @@ Google과 Todoist 각각에 대해 OAuth·list 선택·생성·외부 완료·�
 실제 cleanup을 완료해야 한다. 한 provider만 통과하면 `T2 partial`이며 다음 provider의
 실패를 숨기지 않는다. 두 provider 모두 token/본문 backup audit와 local-only regression을
 통과한 뒤에만 T3를 시작한다.
+
+Google Auth Platform이 External/Testing인 동안 Tasks scope를 승인한 refresh token은 7일 뒤
+만료될 수 있다. 개발 gate에서는 재연결을 정상 복구 시나리오로 포함하고, 공개 사용자용 OAuth
+verification과 production publishing은 별도 release blocker로 유지한다.

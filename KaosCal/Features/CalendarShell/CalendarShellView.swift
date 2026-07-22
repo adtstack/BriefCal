@@ -1982,6 +1982,15 @@ struct ProviderTaskEditorPresentation: Identifiable {
 
     let id = UUID()
     let mode: Mode
+
+    var editingTaskID: String? {
+        guard case let .edit(item) = mode else { return nil }
+        return item.id
+    }
+
+    var targetKey: String {
+        editingTaskID.map { "edit:\($0)" } ?? "create"
+    }
 }
 
 struct ProviderTaskSidebarView: View {
@@ -1994,6 +2003,9 @@ struct ProviderTaskSidebarView: View {
     @State private var searchText = ""
     @State private var isRequestingRemindersAccess = false
     @State private var editorPresentation: ProviderTaskEditorPresentation?
+    @State private var pendingEditorPresentation: ProviderTaskEditorPresentation?
+    @State private var editorHasUnsavedChanges = false
+    @State private var showsEditorTransitionPrompt = false
     @State private var isSelectingTasks = false
     @State private var selectedTaskIDs = Set<String>()
     @State private var isPerformingBulkAction = false
@@ -2050,9 +2062,7 @@ struct ProviderTaskSidebarView: View {
                 Divider()
             }
 
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .layoutPriority(1)
+            taskContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
@@ -2072,6 +2082,10 @@ struct ProviderTaskSidebarView: View {
             if selectedTaskIDs.isEmpty && displayedItems.isEmpty {
                 isSelectingTasks = false
             }
+            if let editingTaskID = editorPresentation?.editingTaskID,
+               !availableIDs.contains(editingTaskID) {
+                closeEditorImmediately()
+            }
         }
         .onChange(of: coordinator.sidebarUndoState?.id) { _, _ in
             undoErrorMessage = nil
@@ -2079,14 +2093,94 @@ struct ProviderTaskSidebarView: View {
         .onChange(of: calendarSetOnly) { _, _ in
             selectedTaskIDs.formIntersection(Set(displayedItems.map(\.id)))
         }
-        .sheet(item: $editorPresentation) { presentation in
+        .accessibilityIdentifier("rightSidebar.tasks")
+    }
+
+    @ViewBuilder
+    private var taskContent: some View {
+        if let presentation = editorPresentation {
+            VSplitView {
+                content
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minHeight: 120)
+                    .layoutPriority(1)
+
+                editorDrawer(presentation)
+                    .frame(
+                        maxWidth: .infinity,
+                        minHeight: 240,
+                        idealHeight: 340,
+                        maxHeight: 560
+                    )
+            }
+        } else {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .layoutPriority(1)
+        }
+    }
+
+    private func editorDrawer(
+        _ presentation: ProviderTaskEditorPresentation
+    ) -> some View {
+        VStack(spacing: 0) {
+            Capsule()
+                .fill(Color(nsColor: .separatorColor))
+                .frame(width: 36, height: 4)
+                .padding(.top, 7)
+                .padding(.bottom, 5)
+                .accessibilityHidden(true)
+
+            if showsEditorTransitionPrompt {
+                editorTransitionPrompt
+                Divider()
+            }
+
             ProviderTaskEditorSheet(
                 coordinator: coordinator,
                 mode: presentation.mode,
-                writableLists: writableTaskLists
+                writableLists: writableTaskLists,
+                presentationStyle: .drawer,
+                onCancel: requestEditorClose,
+                onComplete: finishEditorOperation,
+                onDirtyChange: { editorHasUnsavedChanges = $0 }
             )
+            .id(presentation.id)
         }
-        .accessibilityIdentifier("rightSidebar.tasks")
+        .background(Color(nsColor: .windowBackgroundColor))
+        .accessibilityIdentifier("tasks.drawer")
+    }
+
+    private var editorTransitionPrompt: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Unsaved changes", systemImage: "pencil.and.list.clipboard")
+                .font(.subheadline.weight(.semibold))
+            Text(editorTransitionMessage)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Keep Editing") {
+                    pendingEditorPresentation = nil
+                    showsEditorTransitionPrompt = false
+                }
+                Button("Discard", role: .destructive) {
+                    discardCurrentEditor()
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.08))
+        .accessibilityIdentifier("tasks.drawer.unsavedChanges")
+    }
+
+    private var editorTransitionMessage: String {
+        if let pendingEditorPresentation {
+            return "Save below to continue to \(editorTargetTitle(pendingEditorPresentation)), or discard the current draft."
+        }
+        return "Save below to keep this draft, or discard it to close the editor."
     }
 
     private var header: some View {
@@ -2112,8 +2206,10 @@ struct ProviderTaskSidebarView: View {
             .accessibilityLabel(isSelectingTasks ? "Finish selecting tasks" : "Select multiple tasks")
             .accessibilityIdentifier("tasks.selectionMode")
             Button {
-                editorPresentation = ProviderTaskEditorPresentation(
-                    mode: .create(preferredList: preferredCreationList)
+                presentEditor(
+                    ProviderTaskEditorPresentation(
+                        mode: .create(preferredList: preferredCreationList)
+                    )
                 )
             } label: {
                 Image(systemName: "plus")
@@ -2886,12 +2982,13 @@ struct ProviderTaskSidebarView: View {
                 item: item,
                 isSelectionMode: isSelectingTasks,
                 isSelected: selectedTaskIDs.contains(item.id),
+                isDetailSelected: editorPresentation?.editingTaskID == item.id,
                 toggleSelection: {
                     toggleSelection(of: item)
                 }
             ) {
-                editorPresentation = ProviderTaskEditorPresentation(
-                    mode: .edit(item)
+                presentEditor(
+                    ProviderTaskEditorPresentation(mode: .edit(item))
                 )
             }
                 .focusable()
@@ -3201,6 +3298,75 @@ struct ProviderTaskSidebarView: View {
         }
     }
 
+    private func presentEditor(
+        _ presentation: ProviderTaskEditorPresentation
+    ) {
+        guard let current = editorPresentation else {
+            activateEditor(presentation)
+            return
+        }
+        if current.targetKey == presentation.targetKey {
+            requestEditorClose()
+        } else if editorHasUnsavedChanges {
+            pendingEditorPresentation = presentation
+            showsEditorTransitionPrompt = true
+        } else {
+            activateEditor(presentation)
+        }
+    }
+
+    private func activateEditor(
+        _ presentation: ProviderTaskEditorPresentation
+    ) {
+        editorHasUnsavedChanges = false
+        pendingEditorPresentation = nil
+        showsEditorTransitionPrompt = false
+        editorPresentation = presentation
+    }
+
+    private func requestEditorClose() {
+        if editorHasUnsavedChanges {
+            pendingEditorPresentation = nil
+            showsEditorTransitionPrompt = true
+        } else {
+            closeEditorImmediately()
+        }
+    }
+
+    private func finishEditorOperation() {
+        let pending = pendingEditorPresentation
+        closeEditorImmediately()
+        if let pending {
+            activateEditor(pending)
+        }
+    }
+
+    private func discardCurrentEditor() {
+        let pending = pendingEditorPresentation
+        closeEditorImmediately()
+        if let pending {
+            activateEditor(pending)
+        }
+    }
+
+    private func closeEditorImmediately() {
+        editorPresentation = nil
+        pendingEditorPresentation = nil
+        editorHasUnsavedChanges = false
+        showsEditorTransitionPrompt = false
+    }
+
+    private func editorTargetTitle(
+        _ presentation: ProviderTaskEditorPresentation
+    ) -> String {
+        switch presentation.mode {
+        case .create:
+            return "a new task"
+        case let .edit(item):
+            return "‘\(item.title)’"
+        }
+    }
+
     private func toggleSelection(of item: ProviderTaskListItem) {
         if selectedTaskIDs.contains(item.id) {
             selectedTaskIDs.remove(item.id)
@@ -3290,6 +3456,7 @@ private struct ProviderTaskSidebarRow: View {
     let item: ProviderTaskListItem
     let isSelectionMode: Bool
     let isSelected: Bool
+    let isDetailSelected: Bool
     let toggleSelection: () -> Void
     let openEditor: () -> Void
 
@@ -3378,6 +3545,9 @@ private struct ProviderTaskSidebarRow: View {
                         ? (isSelectionMode ? "Selects this task" : "Opens task details for editing")
                         : (isSelectionMode ? "Selects this task" : "Opens read-only task details")
                 )
+                .accessibilityAddTraits(
+                    isDetailSelected ? .isSelected : []
+                )
 
                 if let originalURL = item.originalURL {
                     Button {
@@ -3437,7 +3607,14 @@ private struct ProviderTaskSidebarRow: View {
                 .padding(.leading, 28)
             }
         }
+        .padding(.horizontal, 6)
         .padding(.vertical, 7)
+        .background(
+            isDetailSelected
+                ? KaosCalTheme.accent.opacity(0.12)
+                : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8)
+        )
         .help(item.details ?? item.title)
         .accessibilityIdentifier("task.\(item.id)")
         .draggable("kaoscal-task:\(item.id)") {
@@ -3662,11 +3839,21 @@ private struct ProviderTaskSidebarRow: View {
     }
 }
 
+enum ProviderTaskEditorPresentationStyle {
+    case sheet
+    case drawer
+}
+
 struct ProviderTaskEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var coordinator: TaskProviderCoordinator
     let mode: ProviderTaskEditorPresentation.Mode
     let writableLists: [RemoteTaskList]
+    let presentationStyle: ProviderTaskEditorPresentationStyle
+    let onCancel: (() -> Void)?
+    let onComplete: (() -> Void)?
+    let onDirtyChange: ((Bool) -> Void)?
+    private let initialSelectedListKey: String
 
     @State private var selectedListKey: String
     @State private var baseline: RemoteTaskSnapshot?
@@ -3687,11 +3874,19 @@ struct ProviderTaskEditorSheet: View {
     init(
         coordinator: TaskProviderCoordinator,
         mode: ProviderTaskEditorPresentation.Mode,
-        writableLists: [RemoteTaskList]
+        writableLists: [RemoteTaskList],
+        presentationStyle: ProviderTaskEditorPresentationStyle = .sheet,
+        onCancel: (() -> Void)? = nil,
+        onComplete: (() -> Void)? = nil,
+        onDirtyChange: ((Bool) -> Void)? = nil
     ) {
         self.coordinator = coordinator
         self.mode = mode
         self.writableLists = writableLists
+        self.presentationStyle = presentationStyle
+        self.onCancel = onCancel
+        self.onComplete = onComplete
+        self.onDirtyChange = onDirtyChange
 
         let defaultDue = Calendar.autoupdatingCurrent.date(
             byAdding: .day,
@@ -3702,8 +3897,9 @@ struct ProviderTaskEditorSheet: View {
         case let .create(preferredList):
             let initialList = preferredList
                 ?? (writableLists.count == 1 ? writableLists.first : nil)
+            initialSelectedListKey = initialList?.destinationSelectionKey ?? ""
             _selectedListKey = State(
-                initialValue: initialList?.destinationSelectionKey ?? ""
+                initialValue: initialSelectedListKey
             )
             _baseline = State(initialValue: nil)
             _title = State(initialValue: "")
@@ -3716,12 +3912,13 @@ struct ProviderTaskEditorSheet: View {
             _priority = State(initialValue: .none)
             _isLoading = State(initialValue: false)
         case let .edit(item):
+            initialSelectedListKey = writableLists.first {
+                $0.provider == item.provider
+                    && $0.accountKey == item.accountKey
+                    && $0.id == item.listID
+            }?.destinationSelectionKey ?? ""
             _selectedListKey = State(
-                initialValue: writableLists.first {
-                    $0.provider == item.provider
-                        && $0.accountKey == item.accountKey
-                        && $0.id == item.listID
-                }?.destinationSelectionKey ?? ""
+                initialValue: initialSelectedListKey
             )
             _baseline = State(initialValue: nil)
             _title = State(initialValue: item.title)
@@ -3739,6 +3936,44 @@ struct ProviderTaskEditorSheet: View {
     }
 
     var body: some View {
+        Group {
+            if presentationStyle == .sheet {
+                editorContent
+                    .frame(
+                        minWidth: 520,
+                        idealWidth: 560,
+                        minHeight: 500
+                    )
+            } else {
+                editorContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task {
+            if case .edit = mode {
+                await reloadLatest()
+            }
+        }
+        .onAppear {
+            onDirtyChange?(hasDraftChanges)
+        }
+        .onChange(of: hasDraftChanges) { _, hasChanges in
+            onDirtyChange?(hasChanges)
+        }
+        .alert("Delete this task?", isPresented: $confirmsDeletion) {
+            Button("Delete", role: .destructive) {
+                deleteTask()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(deleteConfirmationMessage)
+        }
+        .accessibilityIdentifier(
+            presentationStyle == .drawer ? "tasks.drawer.editor" : "tasks.editor"
+        )
+    }
+
+    private var editorContent: some View {
         VStack(spacing: 0) {
             HStack {
                 Label(sheetTitle, systemImage: "checklist")
@@ -3749,8 +3984,21 @@ struct ProviderTaskEditorSheet: View {
                         .controlSize(.small)
                         .accessibilityLabel("Saving task")
                 }
+                if presentationStyle == .drawer {
+                    Button {
+                        cancelEditing()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 24, height: 24)
+                    .disabled(isSubmitting)
+                    .help("Close task editor")
+                    .accessibilityLabel("Close task editor")
+                    .accessibilityIdentifier("tasks.drawer.close")
+                }
             }
-            .padding(20)
+            .padding(presentationStyle == .drawer ? 14 : 20)
 
             Divider()
 
@@ -3764,29 +4012,14 @@ struct ProviderTaskEditorSheet: View {
                         editorFields
                         statusMessage
                     }
-                    .padding(20)
+                    .padding(presentationStyle == .drawer ? 14 : 20)
                 }
             }
 
             Divider()
             actionBar
-                .padding(16)
+                .padding(presentationStyle == .drawer ? 12 : 16)
         }
-        .frame(minWidth: 520, idealWidth: 560, minHeight: 500)
-        .task {
-            if case .edit = mode {
-                await reloadLatest()
-            }
-        }
-        .alert("Delete this task?", isPresented: $confirmsDeletion) {
-            Button("Delete", role: .destructive) {
-                deleteTask()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(deleteConfirmationMessage)
-        }
-        .accessibilityIdentifier("tasks.editor")
     }
 
     @ViewBuilder
@@ -3977,7 +4210,7 @@ struct ProviderTaskEditorSheet: View {
                 .accessibilityIdentifier("tasks.editor.delete")
             }
             Spacer()
-            Button("Cancel") { dismiss() }
+            Button("Cancel") { cancelEditing() }
                 .keyboardShortcut(.cancelAction)
             if !hasConflict {
                 Button("Save") { saveTask() }
@@ -4051,6 +4284,27 @@ struct ProviderTaskEditorSheet: View {
             || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || (editingItem == nil && selectedCreateList == nil)
             || (editingItem != nil && !canSaveEdit)
+    }
+
+    private var hasDraftChanges: Bool {
+        if let baseline {
+            return selectedListKey != initialSelectedListKey
+                || title != baseline.title
+                || notes != baseline.notes
+                || (dueEnabled ? dueDraft : nil) != baseline.dueAt
+                || (reminderEnabled ? reminderDraft : nil)
+                    != baseline.reminderAt
+                || isCompleted != baseline.isCompleted
+                || priority != baseline.priority
+        }
+        guard editingItem == nil else { return false }
+        return selectedListKey != initialSelectedListKey
+            || !title.isEmpty
+            || !notes.isEmpty
+            || dueEnabled
+            || reminderEnabled
+            || isCompleted
+            || priority != .none
     }
 
     private var deleteConfirmationMessage: String {
@@ -4132,7 +4386,7 @@ struct ProviderTaskEditorSheet: View {
                         priority: priority
                     )
                 }
-                dismiss()
+                completeEditing()
             } catch {
                 errorMessage = error.localizedDescription
                 hasConflict = (error as? TaskProviderError) == .conflict
@@ -4154,12 +4408,28 @@ struct ProviderTaskEditorSheet: View {
                     item,
                     baseline: baseline
                 )
-                dismiss()
+                completeEditing()
             } catch {
                 errorMessage = error.localizedDescription
                 hasConflict = (error as? TaskProviderError) == .conflict
                 isSubmitting = false
             }
+        }
+    }
+
+    private func cancelEditing() {
+        if let onCancel {
+            onCancel()
+        } else {
+            dismiss()
+        }
+    }
+
+    private func completeEditing() {
+        if let onComplete {
+            onComplete()
+        } else {
+            dismiss()
         }
     }
 

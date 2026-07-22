@@ -1,5 +1,61 @@
 import Foundation
 
+/// Google Tasks stores a civil due date in an RFC 3339-shaped field but
+/// discards its time. Converting a local midnight directly to UTC can move the
+/// date backward or forward, so encode and decode the calendar day explicitly.
+struct GoogleTaskDueDateCodec {
+    private let calendar: Calendar
+
+    init(timeZone: TimeZone = .autoupdatingCurrent) {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.timeZone = timeZone
+        self.calendar = calendar
+    }
+
+    func encode(_ date: Date) -> String? {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        guard let year = components.year,
+              let month = components.month,
+              let day = components.day else {
+            return nil
+        }
+        return String(
+            format: "%04d-%02d-%02dT00:00:00.000Z",
+            locale: Locale(identifier: "en_US_POSIX"),
+            year,
+            month,
+            day
+        )
+    }
+
+    func decode(_ value: String) -> Date? {
+        let datePart = value.prefix(10)
+        let parts = datePart.split(separator: "-", omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              let year = Int(parts[0]),
+              let month = Int(parts[1]),
+              let day = Int(parts[2]) else {
+            return nil
+        }
+        var components = DateComponents()
+        components.calendar = calendar
+        components.timeZone = calendar.timeZone
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = 0
+        guard let date = calendar.date(from: components) else { return nil }
+        let roundTrip = calendar.dateComponents([.year, .month, .day], from: date)
+        guard roundTrip.year == year,
+              roundTrip.month == month,
+              roundTrip.day == day else {
+            return nil
+        }
+        return date
+    }
+}
+
 /// Transport-level Google Tasks adapter. It deliberately has no EventKit or
 /// SQLite dependency so request/etag behavior can be tested without an account.
 enum GoogleTasksAPI {
@@ -52,16 +108,19 @@ enum GoogleTasksAPI {
         title: String,
         notes: String,
         dueAt: Date?,
-        accessToken: String
+        accessToken: String,
+        dueDateCodec: GoogleTaskDueDateCodec = GoogleTaskDueDateCodec()
     ) throws -> URLRequest {
         var request = request(
             path: "/lists/\(pathComponent(listID))/tasks",
             accessToken: accessToken
         )
         request.httpMethod = "POST"
-        request.httpBody = try JSONSerialization.data(withJSONObject: body(
-            title: title, notes: notes, dueAt: dueAt, completed: nil
-        ))
+        var body: [String: Any] = ["title": title, "notes": notes]
+        if let dueAt, let due = dueDateCodec.encode(dueAt) {
+            body["due"] = due
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
 
@@ -70,7 +129,8 @@ enum GoogleTasksAPI {
         taskID: String,
         patch: RemoteTaskPatch,
         expectedETag: String?,
-        accessToken: String
+        accessToken: String,
+        dueDateCodec: GoogleTaskDueDateCodec = GoogleTaskDueDateCodec()
     ) throws -> URLRequest {
         var request = request(
             path: "/lists/\(pathComponent(listID))/tasks/\(pathComponent(taskID))",
@@ -78,12 +138,21 @@ enum GoogleTasksAPI {
         )
         request.httpMethod = "PATCH"
         if let expectedETag { request.setValue(expectedETag, forHTTPHeaderField: "If-Match") }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body(
-            title: patch.title,
-            notes: patch.notes,
-            dueAt: patch.dueAt ?? nil,
-            completed: patch.isCompleted
-        ))
+        var body = [String: Any]()
+        if let title = patch.title { body["title"] = title }
+        if let notes = patch.notes { body["notes"] = notes }
+        if let duePatch = patch.dueAt {
+            if let dueAt = duePatch,
+               let due = dueDateCodec.encode(dueAt) {
+                body["due"] = due
+            } else {
+                body["due"] = NSNull()
+            }
+        }
+        if let completed = patch.isCompleted {
+            body["status"] = completed ? "completed" : "needsAction"
+        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
         return request
     }
 
@@ -114,14 +183,4 @@ enum GoogleTasksAPI {
         value.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value
     }
 
-    private static func body(title: String?, notes: String?, dueAt: Date?, completed: Bool?) -> [String: Any] {
-        var result = [String: Any]()
-        if let title { result["title"] = title }
-        if let notes { result["notes"] = notes }
-        // Google Tasks keeps the due date and discards the time. T2 must not
-        // auto-link a timed due value to this provider without an explicit UI choice.
-        if let dueAt { result["due"] = ISO8601DateFormatter().string(from: dueAt) }
-        if let completed { result["status"] = completed ? "completed" : "needsAction" }
-        return result
-    }
 }

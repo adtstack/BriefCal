@@ -557,6 +557,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KaosCal/Resources/Info.plist;
+				KAOSCAL_GOOGLE_TASKS_CLIENT_ID = "867825317355-5ucmuuu02qhnul55rgeuq7iacvcruk7d.apps.googleusercontent.com";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -582,6 +583,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KaosCal/Resources/Info.plist;
+				KAOSCAL_GOOGLE_TASKS_CLIENT_ID = "867825317355-5ucmuuu02qhnul55rgeuq7iacvcruk7d.apps.googleusercontent.com";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
