@@ -440,7 +440,10 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
     설정/제거를 함께 확인한다. Google은 민감하지 않은 전용 목록과 고유
     `KAOS-GTASK-<UTC timestamp>-<random>` marker를 사용해 다음 gate를 모두 수행한다.
     - 사전 준비 완료(2026-07-23): Tasks API, External/Testing audience, test user, Desktop OAuth
-      client와 Debug/Release 공개 client ID 주입. 실제 계정 판정은 아래 절차 완료 전까지 pending이다.
+      client와 Debug/Release 공개 client ID 주입. 루트 `.env`의
+      `KAOSCAL_GOOGLE_TASKS_CLIENT_SECRET`도 주입하고 `.env`가 Git ignored인지 확인한다. secret
+      원문은 terminal·build log·QA 기록에 출력하지 않는다. 실제 계정 판정은 아래 절차 완료
+      전까지 pending이다.
     - Settings에서 Connect 후 계정·목록 discovery와 즉시 task refresh를 확인한다.
     - KaosCal에서 만든 task의 제목·notes·날짜를 Google에서 확인한다. KST와 DST 날짜 fixture가
       하루 이동하지 않아야 한다.
@@ -454,7 +457,8 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
       grant를 철회한 뒤에는 local task를 보존하고 authorization-required/missing으로 전환해야
       한다.
     - 재연결 후 marker fixture를 정확히 삭제하고 전용 Google 목록과 KaosCal 양쪽의 테스트
-      residue가 0인지 재조회한다. token, authorization code, email은 QA 기록에 남기지 않는다.
+      residue가 0인지 재조회한다. token, authorization code, email, client secret은 QA 기록에
+      남기지 않는다.
 22. local Event/Personal task에 priority·중요 표시·반복 간격·예상 시간을 설정하고 timer를
     시작/정지한다. checklist를 만들고 반복 task를 완료한다.
 23. role, 날짜 filter, 날짜/list grouping과 검색을 조합해 이름 있는 Task view를 저장하고

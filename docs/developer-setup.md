@@ -60,14 +60,29 @@ Google Tasks 실계정 gate는 Calendar 계정과 분리해 아래 순서로 준
    검증에 사용할 Google 계정을 test user로 추가한다.
 3. data access에는 `openid`, `email`, `profile`,
    `https://www.googleapis.com/auth/tasks`만 등록한다.
-4. OAuth client type **Desktop app**을 만든다. client secret은 앱, 저장소, SQLite, backup,
-   로그 또는 QA 기록에 복사하지 않는다.
+4. OAuth client type **Desktop app**을 만들고 JSON을 다운로드하거나 콘솔에서 Desktop client의
+   client secret을 확인한다. 이 값은 최종 사용자별 설정이 아니라 KaosCal 앱 빌드 하나가
+   공통으로 사용하는 Desktop OAuth client credential이다.
 5. 공개 client ID를 app target의 user-defined build setting
    `KAOSCAL_GOOGLE_TASKS_CLIENT_ID`에 넣는다. `Info.plist`의
    `KaosCalGoogleTasksClientID`가 이 값을 확장하며,
    `KaosCalGoogleTasksRedirectURI`는 포트 없는 `http://127.0.0.1` base다. KaosCal은 연결할
    때마다 임의 가용 포트를 확보해 authorization과 token exchange에 같은 실제 redirect URI를
-   사용한다. 값이 비어 있으면 Settings는 안전하게 `Not configured`을 표시한다.
+   사용한다.
+6. 저장소 루트의 `.env.example`을 참고해 Git에 포함되지 않는 `.env`를 만들고 아래 xcconfig
+   형식으로 값을 넣는다. `export`나 따옴표를 붙이는 shell 환경변수 파일이 아니다.
+
+   ```xcconfig
+   KAOSCAL_GOOGLE_TASKS_CLIENT_SECRET = <Google Desktop client secret>
+   ```
+
+   `Config/GoogleOAuth.xcconfig`가 이 파일을 선택적으로 읽고 빌드된 app `Info.plist`에 값을
+   확장한다. `.env` 파일 자체는 app bundle에 복사되지 않지만 설치형 앱의 credential은 추출
+   가능하므로 비밀 서버 자격 증명으로 간주하지 않는다. 사용자별 access/refresh token은 계속
+   Keychain에만 저장하고 secret을 SQLite, backup, 로그, QA 기록 또는 commit에 남기지 않는다.
+   client ID, redirect 또는 Google client secret이 비어 있으면 Settings는 안전하게
+   `Not configured`을 표시한다. TestFlight/상용 archive는 개발자 또는 CI가 같은 값을 빌드 시
+   주입하며 최종 사용자는 `.env`를 만들지 않는다.
 
 Testing 상태에서 외부 test user가 승인한 refresh token은 Tasks scope가 포함된 이 구성에서
 7일 뒤 만료될 수 있다. 이는 개발 중 재연결 사유이며 데이터 삭제 사유가 아니다. 공개 배포 전

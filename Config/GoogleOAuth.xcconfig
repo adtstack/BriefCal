@@ -1,0 +1,4 @@
+// The real value is loaded from the repository-root .env file when present.
+// .env is ignored by Git and is never copied into the application bundle.
+KAOSCAL_GOOGLE_TASKS_CLIENT_SECRET =
+#include? "../.env"

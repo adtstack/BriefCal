@@ -132,17 +132,32 @@ final class KeychainOAuthCredentialStore: OAuthCredentialStoring {
     }
 }
 
-/// Public OAuth client configuration. Client IDs and redirects may be shipped
-/// in Info.plist; client secrets are intentionally never accepted here.
+/// OAuth client configuration shipped with the app. Google may require the
+/// Desktop client credential during token exchange; its value is injected at
+/// build time and is never stored with user tokens or provider metadata.
 struct OAuthProviderConfiguration: Equatable {
     let provider: TaskProviderKind
     let clientID: String
+    let clientSecret: String?
     let redirectURI: URL
+
+    init(
+        provider: TaskProviderKind,
+        clientID: String,
+        clientSecret: String? = nil,
+        redirectURI: URL
+    ) {
+        self.provider = provider
+        self.clientID = clientID
+        self.clientSecret = clientSecret
+        self.redirectURI = redirectURI
+    }
 
     func replacingRedirectURI(_ redirectURI: URL) -> OAuthProviderConfiguration {
         OAuthProviderConfiguration(
             provider: provider,
             clientID: clientID,
+            clientSecret: clientSecret,
             redirectURI: redirectURI
         )
     }
@@ -169,9 +184,18 @@ struct OAuthProviderConfiguration: Equatable {
         ), let redirectURI = URL(string: redirectString) else {
             return nil
         }
+        let clientSecret = provider == .googleTasks
+            ? validString(bundle.object(
+                forInfoDictionaryKey: "KaosCalGoogleTasksClientSecret"
+            ))
+            : nil
+        guard provider != .googleTasks || clientSecret != nil else {
+            return nil
+        }
         return OAuthProviderConfiguration(
             provider: provider,
             clientID: clientID,
+            clientSecret: clientSecret,
             redirectURI: redirectURI
         )
     }
@@ -502,7 +526,9 @@ enum OAuthAccountIdentityResolver {
                 accessToken: tokenResponse.accessToken,
                 transport: transport
             )
-            guard profile.id == claims.objectID else {
+            guard let graphObjectID = UUID(uuidString: profile.id),
+                  let claimedObjectID = UUID(uuidString: claims.objectID),
+                  graphObjectID == claimedObjectID else {
                 throw TaskProviderError.providerFailure(
                     "Microsoft returned inconsistent account identity information."
                 )
@@ -981,15 +1007,20 @@ enum OAuthTokenExchange {
         code: String,
         pkce: OAuthPKCEChallenge
     ) -> URLRequest {
-        formRequest(
+        var values = [
+            "client_id": configuration.clientID,
+            "code": code,
+            "code_verifier": pkce.verifier,
+            "grant_type": "authorization_code",
+            "redirect_uri": configuration.redirectURI.absoluteString
+        ]
+        appendGoogleClientSecret(
+            configuration: configuration,
+            to: &values
+        )
+        return formRequest(
             endpoint: tokenEndpoint(for: configuration.provider),
-            values: [
-                "client_id": configuration.clientID,
-                "code": code,
-                "code_verifier": pkce.verifier,
-                "grant_type": "authorization_code",
-                "redirect_uri": configuration.redirectURI.absoluteString
-            ]
+            values: values
         )
     }
 
@@ -997,14 +1028,31 @@ enum OAuthTokenExchange {
         configuration: OAuthProviderConfiguration,
         refreshToken: String
     ) -> URLRequest {
-        formRequest(
-            endpoint: tokenEndpoint(for: configuration.provider),
-            values: [
-                "client_id": configuration.clientID,
-                "grant_type": "refresh_token",
-                "refresh_token": refreshToken
-            ]
+        var values = [
+            "client_id": configuration.clientID,
+            "grant_type": "refresh_token",
+            "refresh_token": refreshToken
+        ]
+        appendGoogleClientSecret(
+            configuration: configuration,
+            to: &values
         )
+        return formRequest(
+            endpoint: tokenEndpoint(for: configuration.provider),
+            values: values
+        )
+    }
+
+    private static func appendGoogleClientSecret(
+        configuration: OAuthProviderConfiguration,
+        to values: inout [String: String]
+    ) {
+        guard configuration.provider == .googleTasks,
+              let clientSecret = configuration.clientSecret,
+              !clientSecret.isEmpty else {
+            return
+        }
+        values["client_secret"] = clientSecret
     }
 
     static func perform(

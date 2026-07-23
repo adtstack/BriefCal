@@ -41,6 +41,8 @@
 	<string>http://localhost:43891/oauth/callback</string>
 	<key>KaosCalGoogleTasksClientID</key>
 	<string>$(KAOSCAL_GOOGLE_TASKS_CLIENT_ID)</string>
+	<key>KaosCalGoogleTasksClientSecret</key>
+	<string>$(KAOSCAL_GOOGLE_TASKS_CLIENT_SECRET)</string>
 	<key>KaosCalGoogleTasksRedirectURI</key>
 	<string>http://127.0.0.1</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>

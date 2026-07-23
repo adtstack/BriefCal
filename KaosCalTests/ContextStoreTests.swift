@@ -2756,6 +2756,44 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertTrue(tokenBody.contains("code=code%20with%20reserved%26characters"))
         XCTAssertTrue(tokenBody.contains("code_verifier="))
         XCTAssertFalse(tokenBody.contains("client_secret"))
+
+        let googleConfigurationWithSecret = OAuthProviderConfiguration(
+            provider: .googleTasks,
+            clientID: "desktop-client.apps.googleusercontent.com",
+            clientSecret: "test-secret+/=",
+            redirectURI: configuration.redirectURI
+        )
+        let secretTokenRequest = OAuthTokenExchange.authorizationCodeRequest(
+            configuration: googleConfigurationWithSecret,
+            code: "code",
+            pkce: request.pkce
+        )
+        let secretTokenBody = try XCTUnwrap(
+            secretTokenRequest.httpBody.flatMap {
+                String(data: $0, encoding: .utf8)
+            }
+        )
+        XCTAssertTrue(
+            secretTokenBody.contains("client_secret=test-secret%2B%2F%3D")
+        )
+        let secretRefreshRequest = OAuthTokenExchange.refreshTokenRequest(
+            configuration: googleConfigurationWithSecret,
+            refreshToken: "refresh"
+        )
+        let secretRefreshBody = try XCTUnwrap(
+            secretRefreshRequest.httpBody.flatMap {
+                String(data: $0, encoding: .utf8)
+            }
+        )
+        XCTAssertTrue(
+            secretRefreshBody.contains("client_secret=test-secret%2B%2F%3D")
+        )
+        XCTAssertEqual(
+            googleConfigurationWithSecret.replacingRedirectURI(
+                try XCTUnwrap(URL(string: "http://127.0.0.1:51234"))
+            ).clientSecret,
+            "test-secret+/="
+        )
         XCTAssertEqual(
             try OAuthAuthorizationCallback.authorizationCode(
                 from: try XCTUnwrap(URL(string: "http://127.0.0.1/callback?state=state-for-test&code=returned-code")),
@@ -3575,6 +3613,9 @@ final class ContextStoreTests: XCTestCase {
     }
 
     func testOAuthConnectionDerivesMatchingMicrosoftTenantAndGraphIdentity() async throws {
+        let tenantID = "11111111-2222-3333-4444-555555555555"
+        let tokenObjectID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
+        let graphObjectID = tokenObjectID.lowercased()
         let configuration = OAuthProviderConfiguration(
             provider: .microsoftToDo,
             clientID: "microsoft-public-client",
@@ -3584,7 +3625,9 @@ final class ContextStoreTests: XCTestCase {
         )
         let credentialStore = InMemoryOAuthCredentialStore()
         let payload = Data(
-            #"{"tid":"tenant-id","oid":"object-id","name":"Token Name"}"#.utf8
+            """
+            {"tid":"\(tenantID)","oid":"\(tokenObjectID)","name":"Token Name"}
+            """.utf8
         ).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
@@ -3600,7 +3643,7 @@ final class ContextStoreTests: XCTestCase {
             "graph.microsoft.com": Self.httpResponse(
                 host: "graph.microsoft.com",
                 json: """
-                {"id":"object-id","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
+                {"id":"\(graphObjectID)","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
                 """
             )
         ])
@@ -3615,12 +3658,65 @@ final class ContextStoreTests: XCTestCase {
             transport: transport
         )
 
-        XCTAssertEqual(credential.accountKey, "tenant-id:object-id")
+        XCTAssertEqual(credential.accountKey, "\(tenantID):\(tokenObjectID)")
         XCTAssertEqual(credential.displayName, "Microsoft User")
         XCTAssertEqual(
             try credentialStore.loadCredential(for: .microsoftToDo),
             credential
         )
+    }
+
+    func testOAuthConnectionRejectsDifferentMicrosoftTokenAndGraphIdentities() async throws {
+        let configuration = OAuthProviderConfiguration(
+            provider: .microsoftToDo,
+            clientID: "microsoft-public-client",
+            redirectURI: try XCTUnwrap(
+                URL(string: "http://localhost:43891/oauth/callback")
+            )
+        )
+        let credentialStore = InMemoryOAuthCredentialStore()
+        let payload = Data(
+            #"{"tid":"11111111-2222-3333-4444-555555555555","oid":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","name":"Token Name"}"#.utf8
+        ).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let idToken = "header.\(payload).signature"
+        let transport = StubOAuthTransport(responses: [
+            "login.microsoftonline.com": Self.httpResponse(
+                host: "login.microsoftonline.com",
+                json: """
+                {"access_token":"access","refresh_token":"refresh","expires_in":3600,"scope":"openid profile offline_access User.Read Tasks.ReadWrite","id_token":"\(idToken)"}
+                """
+            ),
+            "graph.microsoft.com": Self.httpResponse(
+                host: "graph.microsoft.com",
+                json: """
+                {"id":"ffffffff-1111-4222-8333-444444444444","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
+                """
+            )
+        ])
+
+        do {
+            _ = try await OAuthProviderConnection.connect(
+                configuration: configuration,
+                code: "code",
+                pkce: OAuthPKCEChallenge.make(
+                    verifier: String(repeating: "m", count: 64)
+                ),
+                credentials: credentialStore,
+                transport: transport
+            )
+            XCTFail("Expected mismatched Microsoft identities to reject connection")
+        } catch {
+            XCTAssertEqual(
+                error as? TaskProviderError,
+                .providerFailure(
+                    "Microsoft returned inconsistent account identity information."
+                )
+            )
+        }
+        XCTAssertNil(try credentialStore.loadCredential(for: .microsoftToDo))
     }
 
     func testOAuthSessionRefreshesOnceAfterUnexpected401ThenReplaysRequest() async throws {

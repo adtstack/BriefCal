@@ -1410,7 +1410,7 @@ private struct TaskProviderSettingsView: View {
                         }
                     }
                     if !coordinator.isConfigured(provider) {
-                        Text("This build has no public client ID and redirect configured for \(provider.title).")
+                        Text("This build is missing required OAuth client configuration for \(provider.title).")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else if coordinator.authorizationState(for: provider) != .authorized,

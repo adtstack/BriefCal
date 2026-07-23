@@ -18,15 +18,19 @@
   회의 링크 Join이다. C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, KaosCal
   계정/backend/cloud sync, telemetry, scheduling server와 모바일·웹 companion은
   [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 C4 영구 제외다.
-- **최신 완료 자동 결과:** 292 tests executed, 291 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
+- **최신 완료 자동 결과:** 293 tests executed, 292 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
 - **중간 체크포인트:** Apple CRUD 268-test, move/bulk/Undo 271-test와 calendar/planning 집중
-  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 아래 292-test 결과를 따른다.
+  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 아래 293-test 결과를 따른다.
 - **새 구현 / live 대기:** 네 provider 직접 CRUD, Apple 목록/account 이동과 Todoist
   project/section 이동, priority capability, local
   planning/checklist/repeat/timer, exact 날짜 filter·저장 view·통합 검색, provider task drag→calendar
   block, Event Brief 연결·상대 기한과 Calendar Set filter, Google Tasks dynamic loopback·scope·
   civil-date due 경계가 전체 자동 suite를 통과했다. 실제 provider·signed app·실창·VoiceOver와
-  residue 0 판정은 남아 있다. Google Cloud 준비와 Desktop client ID 주입은 완료했다.
+  residue 0 판정은 남아 있다. Google Cloud 준비와 Desktop client ID 주입은 완료했다. 첫 live
+  token 교환에서 Desktop client secret 누락을 확인해 Git 밖 `.env`/CI build injection 경로를
+  구현했다. 실제 로컬 값이 주입된 clean Debug build와 strict code-sign 검증까지 통과했고 live
+  연결 재실행은 대기 중이다. Microsoft To Do의 ID token `oid`와 Graph `/me.id`는 GUID 값으로
+  비교해 대소문자 표현 차이를 허용하고 실제 다른 계정은 계속 거부한다.
 - **외부 베타 판정:** v1에서는 더 이상 추진하지 않는다. final live UI/accessibility/Exchange gate, 실제 bootstrap fault와 Developer ID/notary/license/support 입력은 알려진 제한으로 보존한다.
 - **증거 경계:** 최신 Phase 10 Release는 EventKit/Exchange write나 실제 손상 DB recovery를 실행하지 않았다. 실제 Exchange 결과는 아래의 별도 과거 live run에만 귀속한다.
 
@@ -38,7 +42,7 @@
 | 1 · EventKit read-only | 실계정 부분 통과 | full access와 `KAOS-TEST`·`일정`의 Exchange/writable 표시 | 권한 거부·복구 UI, shared read-only, live all-day/recurrence 표시, Calendar.app 변경 반영 |
 | 2 · Calendar layout | 구현·자동·offscreen 검증 완료, event dot live 대기 | Day/Week/Agenda 공통 범위, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count | `CAL-007`/`UI-005` 실창·VoiceOver, 실제 고밀도 scroll·선택·inspector, live all-day/recurrence 배치 |
 | 3 · Local context DB | 구현 기준 완료 | v1 DB, repository, identity, 재열기·동시 저장 자동 회귀 | 실제 UI 재실행 유지, identifier churn·detached recurrence |
-| 4 · Event Brief / Task Center | 구현·292-test 자동 검증 완료, live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Google Cloud External/Testing Desktop client·dynamic loopback·scope/date-only due·revoke local preservation, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter | Google 실계정 consent·CRUD·revoke/reconnect/residue 0, 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
+| 4 · Event Brief / Task Center | 구현·Google credential/Microsoft identity 보강 포함 293-test 자동 검증 완료·live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Google Cloud External/Testing Desktop client·dynamic loopback·scope/date-only due·revoke local preservation, Git 밖 Desktop credential build injection, Microsoft tenant/object GUID identity 검증, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter | Google `.env` 실제 값 주입 뒤 실계정 consent·CRUD·revoke/reconnect/residue 0, 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
 | 5 · Real event editing | 비반복 live CRUD 부분 통과 | attendee 없는 writable 단일 일정 create→restart/refetch→update→delete와 서버 residue 0 | Calendar.app 시각 round-trip, all-day, floating/zoned time, identifier churn |
 | 6 · Recurrence / safe move | 구현·자동·Release checkpoint 완료 | 명시적 scope, impact Confirm, linked safe move, change log, 좁은 session Undo | 지원 범위 내 recurrence scope/future split과 calendar move의 live 검증 |
 | 7 · Lifecycle / After Review | 7A–7C 구현, 비반복 linked delete live 통과 | lifecycle, missing/orphan/relink, linked original delete 뒤 local Brief/task 보존 | recurring `thisEvent`, 외부 삭제 지연·one-off exception, crash-window recovery, 남겨 둔 live Brief 정리 |
@@ -46,10 +50,40 @@
 | 9 · Backup / Settings | 구현·213-test·signed Release·운영 DB 격리·live visual 완료 | healthy current-schema export/import/reset, recovery ZIP, strict archive/schema 검사, 실제 Settings scroll·file panel·typed `RESET` activation | 실제 export 파일 작성·backup 선택 뒤 import/reset mutation, real rollback failure |
 | 10 · Paid beta polish | 구현·220-test·ad-hoc Release checkpoint 완료, 외부 beta blocked | onboarding, `⌘R`, empty state, bootstrap-only strict restore/quarantine/rollback, 운영 문서와 license placeholder | final exact Release UI/VoiceOver, 실제 손상 DB recovery, Developer ID/notary/package/clean user, 승인 EULA·support/privacy 연락처와 남은 live Exchange gate |
 
-표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 292-test suite,
+표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 293-test suite,
 review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
+
+### 2026-07-23 Microsoft identity 정규화·최종 universal Release gate
+
+- 결과: **293 executed / 292 passed / 1 intentional manual-only skip / 0 failures**,
+  `TEST SUCCEEDED`
+- result bundle:
+  `/tmp/KaosCalFinalGate/Logs/Test/Test-KaosCal-2026.07.23_17-51-14-+0900.xcresult`
+- Microsoft ID token `oid`와 Graph `/me.id`를 문자열 표기가 아닌 UUID 값으로 비교한다. 같은
+  GUID의 대소문자 차이는 허용하고 실제 다른 GUID는 credential 저장 전에 거부하는 회귀가
+  통과했다.
+- universal ad-hoc Release:
+  `/tmp/KaosCalFinalUniversalRelease-20260723/Build/Products/Release/KaosCal.app`, CDHash
+  `9d5300b0b2f6195dafeb109231d5448017a00493`.
+- `x86_64`/`arm64`, hardened runtime, strict code-sign, app sandbox·Calendar·Reminders·파일 선택·
+  network client/server entitlement, 실제 로컬 OAuth build setting 주입과 XCTest 비포함을
+  확인했다. Developer ID 서명·notarization을 거친 공개 배포물은 아니다.
+
+### 2026-07-23 Google Desktop credential build injection 자동 gate
+
+- 결과: **292 executed / 291 passed / 1 intentional manual-only skip / 0 failures**,
+  `TEST SUCCEEDED`
+- result bundle: `/tmp/KaosCalGoogleSecretFullTests.xcresult`
+- 범위: Git-ignored 루트 `.env`의 optional xcconfig 주입, Google token/refresh request의 조건부
+  form-encoded `client_secret`, dynamic redirect 교체 뒤 credential 보존, 값 없는 build의
+  `Not configured` 경계를 포함한다.
+- 자동 suite 전 가짜 build-setting 검증 값은 즉시 제거했으며 secret 원문은 어느 결과에도
+  기록하지 않았다.
+- 이후 Git-ignored 실제 로컬 `.env`로 clean Debug build를 생성하고 app 안의 client ID,
+  loopback redirect와 credential의 비어 있지 않음을 원문 출력 없이 확인했다. strict code-sign도
+  통과했다. app: `/tmp/KaosCalGoogleLiveSecretBuild-20260723/Build/Products/Debug/KaosCal.app`
 
 ### 2026-07-23 Google Cloud 구성·pre-push 자동 gate
 

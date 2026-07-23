@@ -1331,6 +1331,53 @@
 - 남은 위험: 실제 Google 계정 연결·CRUD·외부 변경·conflict·재실행/refresh·권한 철회·재연결과
   양쪽 residue 0을 완료해야 한다.
 
+## 2026-07-23 — Google Desktop credential live 교정
+
+- Google consent callback 뒤 token exchange가 `client_secret is missing`으로 거부되는 실계정
+  결과를 확인했다. 이는 Microsoft 계정 불일치가 아니라 등록된 Google Desktop OAuth client의
+  token endpoint 요구사항이다.
+- 루트의 Git-ignored `.env`를 `Config/GoogleOAuth.xcconfig`가 선택적으로 읽어
+  `KAOSCAL_GOOGLE_TASKS_CLIENT_SECRET`을 app build에 주입하도록 했다. 개발자/CI가 앱 하나의
+  credential을 관리하며 최종 사용자는 secret이나 JSON 파일을 제공하지 않는다.
+- authorization code와 refresh-token request에 Google일 때만 form-encoded `client_secret`을
+  추가한다. Todoist/Microsoft 흐름은 바꾸지 않았고 사용자 access/refresh token은 계속
+  Keychain에만 저장한다.
+- client ID, redirect 또는 Google client secret이 비어 있는 build는 Connect를 열지 않고
+  `Not configured`으로 표시한다. 설치형 Desktop app의 embedded credential은 추출 가능하며
+  서버 비밀로 간주하지 않는다는 경계를 개발 문서에 기록했다.
+- 검증: 가짜 로컬 `.env`로 build setting 확장만 확인한 뒤 파일을 즉시 제거했고, token/refresh
+  form encoding과 dynamic redirect 교체 뒤 credential 보존 집중 XCTest가 통과했다. 전체 suite도
+  **292 executed / 291 passed / 1 intentional manual-only skip / 0 failures**로 통과했다. result
+  bundle은 `/tmp/KaosCalGoogleSecretFullTests.xcresult`다. 실제 값은 저장소·로그에 노출하지 않고
+  사용자 로컬 `.env`/배포 CI secret으로만 주입한다.
+- 실제 Git-ignored `.env` 주입 뒤 clean Debug build와 strict code-sign이 통과했다. app
+  `Info.plist`의 client ID, `http://127.0.0.1` redirect, credential의 비어 있지 않음을 원문 출력
+  없이 확인했다. live app은
+  `/tmp/KaosCalGoogleLiveSecretBuild-20260723/Build/Products/Debug/KaosCal.app`이다.
+- 결과: **build injection, request wiring and full automated gate passed / Google live account gate
+  pending**.
+
+## 2026-07-23 — Microsoft To Do account identity 정규화·최종 로컬 Release
+
+- Microsoft 연결 중 표시된 `Microsoft returned inconsistent account identity information.`은
+  provider 응답 문구가 아니라 KaosCal이 ID token `oid`와 Graph `/me.id`를 Swift 문자열
+  완전일치로 비교하며 만든 오류임을 확인했다.
+- 두 값은 Microsoft object GUID이므로 `UUID(uuidString:)`로 해석한 값끼리 비교하도록 바꿨다.
+  대소문자 표현만 다른 같은 GUID는 연결하고 실제 다른 GUID나 잘못된 GUID는 credential 저장
+  전에 계속 거부한다.
+- 회귀는 대문자 token `oid`/소문자 Graph `id` 성공과 실제 다른 GUID 실패·credential 미저장을
+  각각 검증한다.
+- 전체 XCTest는 **293 executed / 292 passed / 1 intentional manual-only skip / 0 failures**로
+  통과했다. result bundle은
+  `/tmp/KaosCalFinalGate/Logs/Test/Test-KaosCal-2026.07.23_17-51-14-+0900.xcresult`다.
+- 최종 로컬 universal Release는
+  `/tmp/KaosCalFinalUniversalRelease-20260723/Build/Products/Release/KaosCal.app`에 생성했다.
+  CDHash `9d5300b0b2f6195dafeb109231d5448017a00493`, `x86_64`/`arm64`, hardened runtime,
+  strict code-sign, sandbox·Calendar·Reminders·파일 선택·network entitlement, OAuth build setting
+  주입과 XCTest 비포함 검증을 통과했다.
+- 결과: **Microsoft identity false mismatch fixed / full test and local universal ad-hoc Release
+  passed / Developer ID notarized public distribution still blocked**.
+
 ## 다음 항목 템플릿
 
 ```markdown

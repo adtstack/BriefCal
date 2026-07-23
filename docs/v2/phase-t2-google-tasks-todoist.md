@@ -29,12 +29,14 @@ OAuth 기반 provider 두 종류를 같은 계정·Keychain·동기화 경계로
   backup 정책을 함께 설계한 뒤 별도 gate로 연다.
 - reset은 provider account/item/binding/destination뿐 아니라 cursor와 대기 작업도
   지운다. Keychain credential 삭제는 provider별 **Disconnect** 확인 흐름에서만 수행한다.
-- authorization URL은 PKCE S256과 state를 포함하고, client secret을 받지 않는다.
+- authorization URL은 PKCE S256과 state를 포함한다. Google Desktop client credential은
+  개발자/CI의 빌드 입력으로만 받고 최종 사용자에게 입력받지 않는다.
   Google은 `http://127.0.0.1:<port>` loopback redirect만, Todoist는 HTTPS 또는
   localhost test redirect만 허용한다.
 - authorization code 및 refresh-token 교환 request는 Google의
   `oauth2.googleapis.com/token`과 Todoist의 `api.todoist.com/oauth/access_token`
-  endpoint에 대해 form-encoded PKCE request로 생성한다. request body에는
+  endpoint에 대해 form-encoded PKCE request로 생성한다. Google은 등록된 Desktop client
+  credential을 token/refresh request에 함께 보내고 Todoist public-client 흐름에는
   `client_secret`을 넣지 않는다.
 - Google Tasks REST v1 request builder는 list/get/create/update/delete와 ETag
   `If-Match` write를, Todoist API v1 builder는 project/section routing과
@@ -69,13 +71,15 @@ OAuth 기반 provider 두 종류를 같은 계정·Keychain·동기화 경계로
 
 ### 배포 전 등록값
 
-client secret 없이 아래 public configuration을 앱의 `Info.plist` build setting으로
-주입한다. 값이 비어 있으면 해당 provider는 `Not configured`으로 남아야 하며,
-소스·SQLite·backup에 token이나 secret을 넣지 않는다.
+아래 OAuth configuration을 앱의 `Info.plist` build setting으로 주입한다. 값이 비어 있으면
+해당 provider는 `Not configured`으로 남아야 하며, 사용자 token은 소스·SQLite·backup에 넣지
+않는다. Google Desktop secret은 Git에 포함되지 않는 루트 `.env` 또는 CI secret으로만 빌드에
+주입한다. 설치형 앱에서는 추출 가능하므로 서버 비밀로 취급하지 않으며 최종 사용자는 별도
+secret을 입력하지 않는다.
 
-| Provider | Client ID key | Redirect key | 등록 방식 |
+| Provider | Client configuration | Redirect key | 등록 방식 |
 | --- | --- | --- | --- |
-| Google Tasks | `KaosCalGoogleTasksClientID` ← `KAOSCAL_GOOGLE_TASKS_CLIENT_ID` | `KaosCalGoogleTasksRedirectURI` = `http://127.0.0.1` | Google Cloud의 Desktop OAuth client + dynamic loopback port |
+| Google Tasks | `KaosCalGoogleTasksClientID`; `KaosCalGoogleTasksClientSecret` ← `.env`/CI | `KaosCalGoogleTasksRedirectURI` = `http://127.0.0.1` | Google Cloud의 Desktop OAuth client + dynamic loopback port |
 | Todoist | `KaosCalTodoistClientID` | `KaosCalTodoistRedirectURI` | PKCE public client; `Client ID Metadata Document` URL과 HTTPS redirect를 Todoist에 등록 |
 
 Todoist의 production redirect는 HTTPS metadata callback이므로, standalone app의 HTTP
