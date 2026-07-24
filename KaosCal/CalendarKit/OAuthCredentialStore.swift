@@ -527,14 +527,14 @@ enum OAuthAccountIdentityResolver {
                 accessToken: tokenResponse.accessToken,
                 transport: transport
             )
-            guard let graphObjectID = UUID(uuidString: profile.id) else {
+            guard let graphAccountID = nonEmpty(profile.id) else {
                 throw TaskProviderError.providerFailure(
-                    "Microsoft did not return a valid Graph account identity required to connect To Do."
+                    "Microsoft did not return the Graph account identity required to connect To Do."
                 )
             }
             let accountKey = [
                 claims.tenantID.uuidString.lowercased(),
-                graphObjectID.uuidString.lowercased()
+                graphAccountID
             ].joined(separator: ":")
             return OAuthAccountIdentity(
                 accountKey: accountKey,

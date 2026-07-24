@@ -1401,6 +1401,27 @@
 - 결과: **Graph identity-authoritative Microsoft connection fixed / full test and local universal
   ad-hoc Release passed / live account retry pending**.
 
+## 2026-07-24 — Microsoft Graph opaque user ID 호환
+
+- 실계정 재시도에서 `Microsoft did not return a valid Graph account identity`가 발생했다. 이는
+  Graph `/me` 실패가 아니라 응답받은 nonempty `id`를 KaosCal이 다시 UUID로 강제 해석하며
+  만든 앱 내부 오류였다.
+- Microsoft Graph user resource 계약에 맞춰 `/me.id`를 형식을 해석하지 않는 opaque string으로
+  취급한다. 빈 값만 거부하며 대소문자 변경 없이 account key에 보존한다. tenant `tid`만 UUID
+  표준형을 유지한다.
+- 회귀를 UUID 형태 Graph ID 성공/비UUID 실패에서 opaque Graph ID 성공/blank ID 실패로
+  교체했다.
+- `bc11ab8`의 깨끗한 `/tmp` 복제본에 이 Microsoft 패치만 적용해 전체 XCTest를 실행했다.
+  **293 executed / 292 passed / 1 intentional manual-only skip / 0 failures**이며 result bundle은
+  `/tmp/KaosCalMicrosoftOpaqueCleanFull/Logs/Test/Test-KaosCal-2026.07.24_09-51-42-+0900.xcresult`다.
+- 같은 clean source의 universal ad-hoc Release는
+  `/tmp/KaosCalMicrosoftOpaqueRelease-20260724/Build/Products/Release/KaosCal.app`에 생성했다.
+  CDHash `6d8f5c18877b47c656f4558a8a87b1ba2ae064c7`, `x86_64`/`arm64`, hardened runtime,
+  strict code-sign, 필요한 sandbox entitlement, XCTest와 이전 두 identity 오류 문자열 미포함을
+  검증했다.
+- 결과: **opaque Microsoft Graph user ID supported / clean full test and universal Release passed /
+  live account retry pending**.
+
 ## 다음 항목 템플릿
 
 ```markdown

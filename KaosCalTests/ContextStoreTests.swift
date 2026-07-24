@@ -3612,9 +3612,9 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertNil(try credentialStore.loadCredential(for: .googleTasks))
     }
 
-    func testOAuthConnectionUsesMicrosoftGraphIdentityForAccountKey() async throws {
+    func testOAuthConnectionUsesOpaqueMicrosoftGraphIdentityForAccountKey() async throws {
         let tenantID = "11111111-2222-3333-4444-555555555555"
-        let graphObjectID = "FFFFFFFF-1111-4222-8333-444444444444"
+        let graphAccountID = "AAMkAGI2T2RvLXVzZXItaWRlbnRpdHk"
         let configuration = OAuthProviderConfiguration(
             provider: .microsoftToDo,
             clientID: "microsoft-public-client",
@@ -3642,7 +3642,7 @@ final class ContextStoreTests: XCTestCase {
             "graph.microsoft.com": Self.httpResponse(
                 host: "graph.microsoft.com",
                 json: """
-                {"id":"\(graphObjectID)","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
+                {"id":"\(graphAccountID)","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
                 """
             )
         ])
@@ -3659,7 +3659,7 @@ final class ContextStoreTests: XCTestCase {
 
         XCTAssertEqual(
             credential.accountKey,
-            "\(tenantID):\(graphObjectID.lowercased())"
+            "\(tenantID):\(graphAccountID)"
         )
         XCTAssertEqual(credential.displayName, "Microsoft User")
         XCTAssertEqual(
@@ -3668,7 +3668,7 @@ final class ContextStoreTests: XCTestCase {
         )
     }
 
-    func testOAuthConnectionRejectsInvalidMicrosoftGraphIdentity() async throws {
+    func testOAuthConnectionRejectsBlankMicrosoftGraphIdentity() async throws {
         let configuration = OAuthProviderConfiguration(
             provider: .microsoftToDo,
             clientID: "microsoft-public-client",
@@ -3694,7 +3694,7 @@ final class ContextStoreTests: XCTestCase {
             "graph.microsoft.com": Self.httpResponse(
                 host: "graph.microsoft.com",
                 json: """
-                {"id":"not-a-guid","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
+                {"id":"  ","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
                 """
             )
         ])
@@ -3709,12 +3709,12 @@ final class ContextStoreTests: XCTestCase {
                 credentials: credentialStore,
                 transport: transport
             )
-            XCTFail("Expected an invalid Microsoft Graph identity to reject connection")
+            XCTFail("Expected a blank Microsoft Graph identity to reject connection")
         } catch {
             XCTAssertEqual(
                 error as? TaskProviderError,
                 .providerFailure(
-                    "Microsoft did not return a valid Graph account identity required to connect To Do."
+                    "Microsoft did not return the Graph account identity required to connect To Do."
                 )
             )
         }

@@ -54,10 +54,11 @@ delta 결과가 삭제를 뜻하는지, 일시적으로 보이지 않는지를 p
 - update/delete의 `If-Match` version 계약을 transport test로 고정했다.
 - Microsoft authorization/token request는 개인 계정과 회사·학교 계정을 모두 받는
   `common` authority에서 `openid profile offline_access User.Read Tasks.ReadWrite`로
-  제한한다. token response의 transient `tid`와 해당 access token으로 읽은 Graph `/me.id`를
-  조합해 `tenant:object` account key를 만든다. ID token `oid`는 별도 상호 검증에 사용하지
-  않는다. email/userPrincipalName은 표시용일 뿐 account key가 아니며 raw ID token은 저장하지
-  않는다.
+  제한한다. token response의 transient UUID `tid`와 해당 access token으로 읽은 Graph
+  `/me.id`를 조합해 `tenant:object` account key를 만든다. Graph user `id`는 형식을 해석하거나
+  대소문자를 바꾸지 않는 opaque string으로 보존하고, ID token `oid`는 별도 상호 검증에
+  사용하지 않는다. email/userPrincipalName은 표시용일 뿐 account key가 아니며 raw ID token은
+  저장하지 않는다.
 - `v7_microsoft_to_do_provider` migration은 기존 provider account/binding/destination/cursor
   FK를 보존한 채 Microsoft To Do provider kind를 추가한다.
 - coordinator는 Microsoft destination을 선택한 새 event task를 Graph CRUD adapter로 보내며,
