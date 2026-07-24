@@ -1378,6 +1378,29 @@
 - 결과: **Microsoft identity false mismatch fixed / full test and local universal ad-hoc Release
   passed / Developer ID notarized public distribution still blocked**.
 
+## 2026-07-24 — Microsoft To Do Graph identity 정본화
+
+- 실제 계정에서 GUID 대소문자 정규화 뒤에도 같은 연결 오류가 재현되어 최초 원인 가설을
+  재검토했다. 같은 authorization-code 교환의 ID token `oid`와 Graph `/me.id`를 앱이 다시
+  일치 검증하는 것은 To Do API 접근에 필요하지 않았고, 이 앱 내부 검사가 정상 로그인을
+  차단하고 있었다.
+- Microsoft To Do를 실제로 읽고 쓰는 access token의 Graph `/me.id`를 계정 object identity의
+  정본으로 사용한다. ID token에서는 tenant `tid`와 표시 이름 fallback만 읽으며 `oid`는 계정
+  키나 상호 검증에 사용하지 않는다.
+- tenant와 Graph object ID는 모두 UUID로 검증하고 소문자 표준형으로 저장한다. 회귀는 서로
+  다른 token `oid`가 있어도 Graph identity로 연결되는 경로와 잘못된 Graph ID가 credential
+  저장 전에 거부되는 경로를 검증한다.
+- 전체 XCTest는 **293 executed / 292 passed / 1 intentional manual-only skip / 0 failures**로
+  통과했다. result bundle은
+  `/tmp/KaosCalMicrosoftGraphIdentityFull/Logs/Test/Test-KaosCal-2026.07.24_09-34-30-+0900.xcresult`다.
+- universal ad-hoc Release는
+  `/tmp/KaosCalMicrosoftGraphIdentityRelease-20260724/Build/Products/Release/KaosCal.app`에
+  생성했다. CDHash `014408484340bed1a501d52b0a0a5d34b2549d1d`, `x86_64`/`arm64`, hardened
+  runtime, strict code-sign, sandbox·Calendar·Reminders·파일 선택·network entitlement, XCTest와
+  기존 inconsistent-identity 오류 문자열 미포함을 검증했다.
+- 결과: **Graph identity-authoritative Microsoft connection fixed / full test and local universal
+  ad-hoc Release passed / live account retry pending**.
+
 ## 다음 항목 템플릿
 
 ```markdown

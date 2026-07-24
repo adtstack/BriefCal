@@ -1,6 +1,6 @@
 # Current Status
 
-> 기준 시각: 2026-07-23, Asia/Seoul
+> 기준 시각: 2026-07-24, Asia/Seoul
 >
 > 용도: 현재 진행 상태의 요약. 범위·판정·실행 증거의 원문은 아래 근거 문서를 따른다.
 
@@ -29,8 +29,9 @@
   residue 0 판정은 남아 있다. Google Cloud 준비와 Desktop client ID 주입은 완료했다. 첫 live
   token 교환에서 Desktop client secret 누락을 확인해 Git 밖 `.env`/CI build injection 경로를
   구현했다. 실제 로컬 값이 주입된 clean Debug build와 strict code-sign 검증까지 통과했고 live
-  연결 재실행은 대기 중이다. Microsoft To Do의 ID token `oid`와 Graph `/me.id`는 GUID 값으로
-  비교해 대소문자 표현 차이를 허용하고 실제 다른 계정은 계속 거부한다.
+  연결 재실행은 대기 중이다. Microsoft To Do는 ID token `oid`와 Graph `/me.id`를 중복
+  상호 검증하지 않고, 실제 To Do API access token으로 조회한 Graph `/me.id`를 tenant와 함께
+  계정 키의 정본으로 사용한다.
 - **외부 베타 판정:** v1에서는 더 이상 추진하지 않는다. final live UI/accessibility/Exchange gate, 실제 bootstrap fault와 Developer ID/notary/license/support 입력은 알려진 제한으로 보존한다.
 - **증거 경계:** 최신 Phase 10 Release는 EventKit/Exchange write나 실제 손상 DB recovery를 실행하지 않았다. 실제 Exchange 결과는 아래의 별도 과거 live run에만 귀속한다.
 
@@ -42,7 +43,7 @@
 | 1 · EventKit read-only | 실계정 부분 통과 | full access와 `KAOS-TEST`·`일정`의 Exchange/writable 표시 | 권한 거부·복구 UI, shared read-only, live all-day/recurrence 표시, Calendar.app 변경 반영 |
 | 2 · Calendar layout | 구현·자동·offscreen 검증 완료, event dot live 대기 | Day/Week/Agenda 공통 범위, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count | `CAL-007`/`UI-005` 실창·VoiceOver, 실제 고밀도 scroll·선택·inspector, live all-day/recurrence 배치 |
 | 3 · Local context DB | 구현 기준 완료 | v1 DB, repository, identity, 재열기·동시 저장 자동 회귀 | 실제 UI 재실행 유지, identifier churn·detached recurrence |
-| 4 · Event Brief / Task Center | 구현·Google credential/Microsoft identity 보강 포함 293-test 자동 검증 완료·live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Google Cloud External/Testing Desktop client·dynamic loopback·scope/date-only due·revoke local preservation, Git 밖 Desktop credential build injection, Microsoft tenant/object GUID identity 검증, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter | Google `.env` 실제 값 주입 뒤 실계정 consent·CRUD·revoke/reconnect/residue 0, 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
+| 4 · Event Brief / Task Center | 구현·Google credential/Microsoft identity 보강 포함 293-test 자동 검증 완료·live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Google Cloud External/Testing Desktop client·dynamic loopback·scope/date-only due·revoke local preservation, Git 밖 Desktop credential build injection, Microsoft tenant + Graph object GUID identity, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter | Google `.env` 실제 값 주입 뒤 실계정 consent·CRUD·revoke/reconnect/residue 0, 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
 | 5 · Real event editing | 비반복 live CRUD 부분 통과 | attendee 없는 writable 단일 일정 create→restart/refetch→update→delete와 서버 residue 0 | Calendar.app 시각 round-trip, all-day, floating/zoned time, identifier churn |
 | 6 · Recurrence / safe move | 구현·자동·Release checkpoint 완료 | 명시적 scope, impact Confirm, linked safe move, change log, 좁은 session Undo | 지원 범위 내 recurrence scope/future split과 calendar move의 live 검증 |
 | 7 · Lifecycle / After Review | 7A–7C 구현, 비반복 linked delete live 통과 | lifecycle, missing/orphan/relink, linked original delete 뒤 local Brief/task 보존 | recurring `thisEvent`, 외부 삭제 지연·one-off exception, crash-window recovery, 남겨 둔 live Brief 정리 |
@@ -54,6 +55,23 @@
 review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
+
+### 2026-07-24 Microsoft Graph identity 정본화·universal Release gate
+
+- 결과: **293 executed / 292 passed / 1 intentional manual-only skip / 0 failures**,
+  `TEST SUCCEEDED`
+- result bundle:
+  `/tmp/KaosCalMicrosoftGraphIdentityFull/Logs/Test/Test-KaosCal-2026.07.24_09-34-30-+0900.xcresult`
+- Microsoft ID token `oid`와 Graph `/me.id`의 앱 내부 상호 검증을 제거했다. token의 `tid`와
+  실제 To Do access token으로 조회한 Graph `/me.id`를 UUID 표준형으로 계정 키에 사용한다.
+  서로 다른 token `oid`를 받은 정상 연결과 잘못된 Graph ID의 credential 미저장 회귀가
+  통과했다.
+- universal ad-hoc Release:
+  `/tmp/KaosCalMicrosoftGraphIdentityRelease-20260724/Build/Products/Release/KaosCal.app`, CDHash
+  `014408484340bed1a501d52b0a0a5d34b2549d1d`.
+- `x86_64`/`arm64`, hardened runtime, strict code-sign, app sandbox·Calendar·Reminders·파일 선택·
+  network client/server entitlement, XCTest 미포함과 기존 inconsistent-identity 오류 문자열
+  미포함을 확인했다. Developer ID 서명·notarization을 거친 공개 배포물은 아니다.
 
 ### 2026-07-23 Microsoft identity 정규화·최종 universal Release gate
 

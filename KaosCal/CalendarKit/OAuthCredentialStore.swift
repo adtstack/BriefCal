@@ -298,7 +298,8 @@ struct OAuthAuthorizationRequest: Equatable {
             scopes = ["data:read_write"]
         case .microsoftToDo:
             endpoint = URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
-            // `profile` is required for the stable `oid` claim consumed below.
+            // `profile` supplies display metadata; Graph `/me.id` is the
+            // authoritative account identity for the access token below.
             scopes = [
                 "openid", "profile", "offline_access", "User.Read",
                 "Tasks.ReadWrite"
@@ -468,7 +469,7 @@ struct OAuthTokenResponse: Decodable, Equatable {
     let refreshToken: String?
     let expiresIn: TimeInterval?
     let scope: String?
-    /// Used transiently to derive the Microsoft tenant/object account key.
+    /// Used transiently to derive Microsoft tenant and display metadata.
     /// It is never written to SQLite or Keychain.
     let idToken: String?
 
@@ -526,15 +527,17 @@ enum OAuthAccountIdentityResolver {
                 accessToken: tokenResponse.accessToken,
                 transport: transport
             )
-            guard let graphObjectID = UUID(uuidString: profile.id),
-                  let claimedObjectID = UUID(uuidString: claims.objectID),
-                  graphObjectID == claimedObjectID else {
+            guard let graphObjectID = UUID(uuidString: profile.id) else {
                 throw TaskProviderError.providerFailure(
-                    "Microsoft returned inconsistent account identity information."
+                    "Microsoft did not return a valid Graph account identity required to connect To Do."
                 )
             }
+            let accountKey = [
+                claims.tenantID.uuidString.lowercased(),
+                graphObjectID.uuidString.lowercased()
+            ].joined(separator: ":")
             return OAuthAccountIdentity(
-                accountKey: "\(claims.tenantID):\(claims.objectID)",
+                accountKey: accountKey,
                 displayName: nonEmpty(profile.displayName)
                     ?? nonEmpty(claims.name)
                     ?? nonEmpty(profile.userPrincipalName)
@@ -623,8 +626,7 @@ enum OAuthAccountIdentityResolver {
     }
 
     private struct MicrosoftIDTokenClaims {
-        let tenantID: String
-        let objectID: String
+        let tenantID: UUID
         let name: String?
 
         init(token: String?) throws {
@@ -632,22 +634,20 @@ enum OAuthAccountIdentityResolver {
                   let payload = token.split(separator: ".").dropFirst().first,
                   let data = Self.base64URLData(String(payload)),
                   let claims = try? JSONDecoder().decode(Claims.self, from: data),
-                  let tenantID = OAuthAccountIdentityResolver.nonEmpty(claims.tenantID),
-                  let objectID = OAuthAccountIdentityResolver.nonEmpty(claims.objectID) else {
+                  let rawTenantID = OAuthAccountIdentityResolver.nonEmpty(claims.tenantID),
+                  let tenantID = UUID(uuidString: rawTenantID) else {
                 throw TaskProviderError.providerFailure(
-                    "Microsoft did not return the tenant and account identity required to connect To Do."
+                    "Microsoft did not return a valid tenant identity required to connect To Do."
                 )
             }
             self.tenantID = tenantID
-            self.objectID = objectID
             name = OAuthAccountIdentityResolver.nonEmpty(claims.name)
         }
 
         private struct Claims: Decodable {
             let tenantID: String?
-            let objectID: String?
             let name: String?
-            enum CodingKeys: String, CodingKey { case tenantID = "tid", objectID = "oid", name }
+            enum CodingKeys: String, CodingKey { case tenantID = "tid", name }
         }
 
         private static func base64URLData(_ value: String) -> Data? {

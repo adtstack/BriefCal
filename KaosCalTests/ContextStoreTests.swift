@@ -3612,10 +3612,9 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertNil(try credentialStore.loadCredential(for: .googleTasks))
     }
 
-    func testOAuthConnectionDerivesMatchingMicrosoftTenantAndGraphIdentity() async throws {
+    func testOAuthConnectionUsesMicrosoftGraphIdentityForAccountKey() async throws {
         let tenantID = "11111111-2222-3333-4444-555555555555"
-        let tokenObjectID = "AAAAAAAA-BBBB-4CCC-8DDD-EEEEEEEEEEEE"
-        let graphObjectID = tokenObjectID.lowercased()
+        let graphObjectID = "FFFFFFFF-1111-4222-8333-444444444444"
         let configuration = OAuthProviderConfiguration(
             provider: .microsoftToDo,
             clientID: "microsoft-public-client",
@@ -3626,7 +3625,7 @@ final class ContextStoreTests: XCTestCase {
         let credentialStore = InMemoryOAuthCredentialStore()
         let payload = Data(
             """
-            {"tid":"\(tenantID)","oid":"\(tokenObjectID)","name":"Token Name"}
+            {"tid":"\(tenantID)","oid":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","name":"Token Name"}
             """.utf8
         ).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
@@ -3658,7 +3657,10 @@ final class ContextStoreTests: XCTestCase {
             transport: transport
         )
 
-        XCTAssertEqual(credential.accountKey, "\(tenantID):\(tokenObjectID)")
+        XCTAssertEqual(
+            credential.accountKey,
+            "\(tenantID):\(graphObjectID.lowercased())"
+        )
         XCTAssertEqual(credential.displayName, "Microsoft User")
         XCTAssertEqual(
             try credentialStore.loadCredential(for: .microsoftToDo),
@@ -3666,7 +3668,7 @@ final class ContextStoreTests: XCTestCase {
         )
     }
 
-    func testOAuthConnectionRejectsDifferentMicrosoftTokenAndGraphIdentities() async throws {
+    func testOAuthConnectionRejectsInvalidMicrosoftGraphIdentity() async throws {
         let configuration = OAuthProviderConfiguration(
             provider: .microsoftToDo,
             clientID: "microsoft-public-client",
@@ -3676,7 +3678,7 @@ final class ContextStoreTests: XCTestCase {
         )
         let credentialStore = InMemoryOAuthCredentialStore()
         let payload = Data(
-            #"{"tid":"11111111-2222-3333-4444-555555555555","oid":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","name":"Token Name"}"#.utf8
+            #"{"tid":"11111111-2222-3333-4444-555555555555","name":"Token Name"}"#.utf8
         ).base64EncodedString()
             .replacingOccurrences(of: "+", with: "-")
             .replacingOccurrences(of: "/", with: "_")
@@ -3692,7 +3694,7 @@ final class ContextStoreTests: XCTestCase {
             "graph.microsoft.com": Self.httpResponse(
                 host: "graph.microsoft.com",
                 json: """
-                {"id":"ffffffff-1111-4222-8333-444444444444","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
+                {"id":"not-a-guid","displayName":"Microsoft User","userPrincipalName":"person@example.invalid"}
                 """
             )
         ])
@@ -3707,12 +3709,12 @@ final class ContextStoreTests: XCTestCase {
                 credentials: credentialStore,
                 transport: transport
             )
-            XCTFail("Expected mismatched Microsoft identities to reject connection")
+            XCTFail("Expected an invalid Microsoft Graph identity to reject connection")
         } catch {
             XCTAssertEqual(
                 error as? TaskProviderError,
                 .providerFailure(
-                    "Microsoft returned inconsistent account identity information."
+                    "Microsoft did not return a valid Graph account identity required to connect To Do."
                 )
             )
         }
