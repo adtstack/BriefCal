@@ -347,6 +347,8 @@ final class AppState: ObservableObject {
     @Published private(set) var selectedReferences: [ContextReference] = []
     @Published private(set) var notesSaveState: NotesSaveState = .idle
     @Published private(set) var taskCenterState: TaskCenterState = .unavailable
+    @Published private(set) var isTaskCenterRefreshing = false
+    @Published private(set) var taskCenterRefreshError: String?
     @Published private(set) var taskProviderCoordinator: TaskProviderCoordinator?
     @Published private(set) var recoveryBriefs: [EventBriefSnapshot] = []
     @Published private(set) var linkedEventRecoverySession: LinkedEventRecoverySession?
@@ -384,6 +386,7 @@ final class AppState: ObservableObject {
     private var miniMonthSummaryEvents: [DisplayEvent] = []
     private var miniMonthSummaryRequestGeneration = 0
     private var pendingTaskTimeBlock: PendingTaskTimeBlock?
+    private var loadedTaskCenterFilter: TaskFilter?
 
     init(
         calendar: Calendar = .autoupdatingCurrent,
@@ -4058,10 +4061,23 @@ final class AppState: ObservableObject {
         guard localDataOperationState == .idle else { return }
         guard let contextStore else {
             taskCenterState = .unavailable
+            isTaskCenterRefreshing = false
+            taskCenterRefreshError = nil
+            loadedTaskCenterFilter = nil
             recoveryBriefs = []
             return
         }
-        taskCenterState = .loading
+        let preservesLoadedContent: Bool
+        if case .loaded = taskCenterState,
+           loadedTaskCenterFilter == selectedTaskFilter {
+            preservesLoadedContent = true
+        } else {
+            preservesLoadedContent = false
+            taskCenterState = .loading
+        }
+        isTaskCenterRefreshing = true
+        taskCenterRefreshError = nil
+        defer { isTaskCenterRefreshing = false }
         do {
             let referenceDate = now()
             let changedContextIDs = try contextStore.refreshTemporalLifecycle(
@@ -4082,6 +4098,7 @@ final class AppState: ObservableObject {
                 calendar: calendar
             )
             taskCenterState = .loaded(items)
+            loadedTaskCenterFilter = selectedTaskFilter
             recoveryBriefs = try contextStore.fetchRecoveryBriefs()
             reconcileLinkedEventRecoverySession(with: recoveryBriefs)
             if case let .loaded(snapshot) = eventBriefState,
@@ -4089,9 +4106,19 @@ final class AppState: ObservableObject {
                 refreshSelectedBriefPreservingDraft()
             }
         } catch {
-            taskCenterState = .failed(Self.message(for: error))
-            recoveryBriefs = []
+            let message = Self.message(for: error)
+            if preservesLoadedContent {
+                taskCenterRefreshError = message
+            } else {
+                taskCenterState = .failed(message)
+                loadedTaskCenterFilter = nil
+                recoveryBriefs = []
+            }
         }
+    }
+
+    func clearTaskCenterRefreshError() {
+        taskCenterRefreshError = nil
     }
 
     private func reconcileLinkedEventRecoverySession(

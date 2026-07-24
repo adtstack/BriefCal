@@ -437,11 +437,16 @@ final class TaskProviderCoordinator: ObservableObject {
     private var applicationDidBecomeActiveObserver: NSObjectProtocol?
     private var appleRemindersRefreshTask: Task<Void, Never>?
     private var activeOAuthListRefreshes = Set<UUID>()
+    private var oauthRefreshPending = false
     private var microsoftTaskDetails = [String: String]()
     private var microsoftTaskDeepLinks = [String: URL]()
     private var microsoftTaskPriorities = [String: TaskPriority]()
     private var hydratedMicrosoftListKeys = Set<String>()
     private var sidebarUndoOperations = [SidebarUndoOperation]()
+    private var lastSuccessfulSidebarItems =
+        [TaskProviderKind: [ProviderTaskListItem]]()
+    private var sidebarTaskSnapshotProviders = Set<TaskProviderKind>()
+    private var hasStartedRefresh = false
 
     @Published private(set) var authorizationState: TaskProviderAuthorizationState
     @Published private(set) var providerAuthorizationStates = [TaskProviderKind: TaskProviderAuthorizationState]()
@@ -513,6 +518,7 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     func refresh() {
+        hasStartedRefresh = true
         provider.refreshAuthorizationState()
         reloadSidebarCalendarLinks()
         authorizationState = provider.authorizationState
@@ -522,7 +528,7 @@ final class TaskProviderCoordinator: ObservableObject {
             guard authorizationState == .authorized else {
                 taskListRefreshFailures.remove(provider.provider)
                 appleRemindersRefreshTask?.cancel()
-                appleRemindersTaskState = .unavailable
+                setSidebarTaskState(.unavailable, for: .appleReminders)
                 replaceTaskLists(for: provider.provider, with: [])
                 markProviderBindingsDisconnected(provider.provider)
                 scheduleOAuthProviderRefresh()
@@ -545,20 +551,28 @@ final class TaskProviderCoordinator: ObservableObject {
             lastErrorMessage = nil
         } catch {
             taskListRefreshFailures.insert(provider.provider)
-            appleRemindersTaskState = .failed(Self.message(for: error))
+            setSidebarTaskState(
+                .failed(Self.message(for: error)),
+                for: .appleReminders
+            )
             lastErrorMessage = Self.message(for: error)
         }
         scheduleOAuthProviderRefresh()
     }
 
+    func refreshIfNeeded() {
+        guard !hasStartedRefresh else { return }
+        refresh()
+    }
+
     private func scheduleAppleRemindersTaskRefresh(_ lists: [RemoteTaskList]) {
         appleRemindersRefreshTask?.cancel()
         guard let listingProvider = provider as? any TaskSnapshotListing else {
-            appleRemindersTaskState = .unavailable
+            setSidebarTaskState(.unavailable, for: .appleReminders)
             return
         }
 
-        appleRemindersTaskState = .loading
+        setSidebarTaskState(.loading, for: .appleReminders)
         appleRemindersRefreshTask = Task { [weak self] in
             do {
                 let snapshots = try await listingProvider.listTasks(in: lists)
@@ -597,11 +611,14 @@ final class TaskProviderCoordinator: ObservableObject {
                         accountTitle: list.sourceTitle
                     )
                 }
-                appleRemindersTaskState = .loaded(items)
+                setSidebarTaskState(.loaded(items), for: .appleReminders)
                 lastSidebarSyncAt = now()
             } catch {
                 guard !Task.isCancelled else { return }
-                self?.appleRemindersTaskState = .failed(Self.message(for: error))
+                self?.setSidebarTaskState(
+                    .failed(Self.message(for: error)),
+                    for: .appleReminders
+                )
             }
         }
     }
@@ -659,10 +676,20 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     var allSidebarTaskItems: [ProviderTaskListItem] {
-        appleRemindersTaskState.items
-            + googleTasksTaskState.items
-            + todoistTaskState.items
-            + microsoftToDoTaskState.items
+        sidebarItems(
+            for: .appleReminders,
+            state: appleRemindersTaskState
+        )
+            + sidebarItems(for: .googleTasks, state: googleTasksTaskState)
+            + sidebarItems(for: .todoist, state: todoistTaskState)
+            + sidebarItems(
+                for: .microsoftToDo,
+                state: microsoftToDoTaskState
+            )
+    }
+
+    func hasSidebarTaskSnapshot(for provider: TaskProviderKind) -> Bool {
+        sidebarTaskSnapshotProviders.contains(provider)
     }
 
     func capabilities(
@@ -1754,7 +1781,7 @@ final class TaskProviderCoordinator: ObservableObject {
                 ? .notDetermined
                 : .notConfigured
             replaceTaskLists(for: provider, with: [])
-            setOAuthSidebarTaskState(.unavailable, for: provider)
+            setSidebarTaskState(.unavailable, for: provider)
             destinations = try repository.fetchDestinations()
             lastErrorMessage = nil
         } catch {
@@ -1813,6 +1840,10 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     private func scheduleOAuthProviderRefresh() {
+        guard activeOAuthListRefreshes.isEmpty else {
+            oauthRefreshPending = true
+            return
+        }
         let token = beginOAuthListRefresh()
         Task { [weak self] in
             await self?.refreshOAuthProviders(token: token)
@@ -1829,6 +1860,10 @@ final class TaskProviderCoordinator: ObservableObject {
     private func endOAuthListRefresh(_ token: UUID) {
         activeOAuthListRefreshes.remove(token)
         isRefreshingOAuthTaskLists = !activeOAuthListRefreshes.isEmpty
+        if activeOAuthListRefreshes.isEmpty, oauthRefreshPending {
+            oauthRefreshPending = false
+            scheduleOAuthProviderRefresh()
+        }
     }
 
     private func refreshOAuthProviders(token suppliedToken: UUID? = nil) async {
@@ -1844,7 +1879,7 @@ final class TaskProviderCoordinator: ObservableObject {
                 taskListRefreshFailures.remove(kind)
                 replaceTaskLists(for: kind, with: [])
                 markProviderBindingsDisconnected(kind)
-                setOAuthSidebarTaskState(.unavailable, for: kind)
+                setSidebarTaskState(.unavailable, for: kind)
                 continue
             }
             providerAuthorizationStates[kind] = asyncProvider.authorizationState
@@ -1852,11 +1887,11 @@ final class TaskProviderCoordinator: ObservableObject {
                 taskListRefreshFailures.remove(kind)
                 replaceTaskLists(for: kind, with: [])
                 markProviderBindingsDisconnected(kind)
-                setOAuthSidebarTaskState(.unavailable, for: kind)
+                setSidebarTaskState(.unavailable, for: kind)
                 continue
             }
             if kind != .microsoftToDo {
-                setOAuthSidebarTaskState(.loading, for: kind)
+                setSidebarTaskState(.loading, for: kind)
             }
             do {
                 let lists = try await asyncProvider.listTaskLists()
@@ -1886,7 +1921,7 @@ final class TaskProviderCoordinator: ObservableObject {
                 )
                 taskListRefreshFailures.insert(kind)
                 lastErrorMessage = Self.message(for: error)
-                setOAuthSidebarTaskState(
+                setSidebarTaskState(
                     .failed(Self.message(for: error)),
                     for: kind
                 )
@@ -1942,7 +1977,7 @@ final class TaskProviderCoordinator: ObservableObject {
                     originalURL: snapshot.deepLink
                 )
             }
-            setOAuthSidebarTaskState(.loaded(items), for: kind)
+            setSidebarTaskState(.loaded(items), for: kind)
             lastSidebarSyncAt = now()
         } catch {
             markOAuthProviderAuthorizationRequiredIfNeeded(
@@ -1950,24 +1985,49 @@ final class TaskProviderCoordinator: ObservableObject {
                 provider: kind
             )
             let message = Self.message(for: error)
-            setOAuthSidebarTaskState(.failed(message), for: kind)
+            setSidebarTaskState(.failed(message), for: kind)
             lastErrorMessage = message
         }
     }
 
-    private func setOAuthSidebarTaskState(
+    private func setSidebarTaskState(
         _ state: ProviderTaskListState,
         for provider: TaskProviderKind
     ) {
+        switch state {
+        case let .loaded(items):
+            lastSuccessfulSidebarItems[provider] = items
+            sidebarTaskSnapshotProviders.insert(provider)
+        case .unavailable:
+            lastSuccessfulSidebarItems[provider] = nil
+            sidebarTaskSnapshotProviders.remove(provider)
+        case .loading, .failed:
+            break
+        }
+
         switch provider {
+        case .appleReminders:
+            appleRemindersTaskState = state
         case .googleTasks:
             googleTasksTaskState = state
         case .todoist:
             todoistTaskState = state
         case .microsoftToDo:
             microsoftToDoTaskState = state
-        case .appleReminders:
-            break
+        }
+    }
+
+    private func sidebarItems(
+        for provider: TaskProviderKind,
+        state: ProviderTaskListState
+    ) -> [ProviderTaskListItem] {
+        switch state {
+        case let .loaded(items):
+            items
+        case .loading, .failed:
+            lastSuccessfulSidebarItems[provider] ?? []
+        case .unavailable:
+            []
         }
     }
 
@@ -1975,9 +2035,9 @@ final class TaskProviderCoordinator: ObservableObject {
         for provider: TaskProviderKind,
         with lists: [RemoteTaskList]
     ) {
-        taskLists.removeAll { $0.provider == provider }
-        taskLists.append(contentsOf: lists)
-        taskLists.sort {
+        var nextTaskLists = taskLists.filter { $0.provider != provider }
+        nextTaskLists.append(contentsOf: lists)
+        nextTaskLists.sort {
             if $0.provider == $1.provider {
                 if $0.sourceTitle == $1.sourceTitle {
                     let titleOrder = $0.title.localizedCaseInsensitiveCompare(
@@ -1996,6 +2056,9 @@ final class TaskProviderCoordinator: ObservableObject {
             }
             return $0.provider.title.localizedCaseInsensitiveCompare($1.provider.title)
                 == .orderedAscending
+        }
+        if nextTaskLists != taskLists {
+            taskLists = nextTaskLists
         }
     }
 
@@ -3570,7 +3633,7 @@ final class TaskProviderCoordinator: ObservableObject {
               asyncMicrosoft.authorizationState == .authorized,
               let microsoft = asyncMicrosoft as? any MicrosoftToDoDeltaProviding,
               let accounts = try? repository.fetchAccounts() else {
-            microsoftToDoTaskState = .unavailable
+            setSidebarTaskState(.unavailable, for: .microsoftToDo)
             return
         }
         let authorizedAccounts = accounts.filter {
@@ -3578,7 +3641,7 @@ final class TaskProviderCoordinator: ObservableObject {
                 && $0.authorizationState == .authorized
         }
         guard !authorizedAccounts.isEmpty else {
-            microsoftToDoTaskState = .unavailable
+            setSidebarTaskState(.unavailable, for: .microsoftToDo)
             return
         }
 
@@ -3590,7 +3653,7 @@ final class TaskProviderCoordinator: ObservableObject {
             return
         }
 
-        microsoftToDoTaskState = .loading
+        setSidebarTaskState(.loading, for: .microsoftToDo)
         var projectionChanged = false
         var completedRefresh = false
         var refreshError: String?
@@ -3718,8 +3781,12 @@ final class TaskProviderCoordinator: ObservableObject {
             refreshMicrosoftToDoTaskState()
             lastSidebarSyncAt = now()
         } else {
-            microsoftToDoTaskState = .failed(
-                refreshError ?? "Microsoft To Do could not refresh its tasks."
+            setSidebarTaskState(
+                .failed(
+                    refreshError
+                        ?? "Microsoft To Do could not refresh its tasks."
+                ),
+                for: .microsoftToDo
             )
         }
     }
@@ -3780,9 +3847,12 @@ final class TaskProviderCoordinator: ObservableObject {
                     ]
                 )
             }
-            microsoftToDoTaskState = .loaded(items)
+            setSidebarTaskState(.loaded(items), for: .microsoftToDo)
         } catch {
-            microsoftToDoTaskState = .failed(Self.message(for: error))
+            setSidebarTaskState(
+                .failed(Self.message(for: error)),
+                for: .microsoftToDo
+            )
         }
     }
 

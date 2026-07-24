@@ -109,10 +109,21 @@ struct TaskCenterView: View {
                 .padding(.top, 12)
             }
 
+            if let error = appState.taskCenterRefreshError {
+                LocalOperationErrorView(
+                    message: "Tasks could not be refreshed. The last loaded list is still shown. \(error)",
+                    dismiss: appState.clearTaskCenterRefreshError
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+            }
+
             content
         }
         .task {
-            appState.refreshTaskCenter()
+            if case .unavailable = appState.taskCenterState {
+                appState.refreshTaskCenter()
+            }
         }
         .onChange(of: appState.selectedTaskFilter) { _, filter in
             if filter == .noDate {
@@ -730,6 +741,11 @@ private struct TaskCenterProviderSection: View {
                             .foregroundStyle(.secondary)
                             .textCase(.uppercase)
                         Spacer()
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                                .accessibilityLabel("Refreshing provider tasks")
+                        }
                         Text("Not yet linked to an Event Brief")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
@@ -769,7 +785,7 @@ private struct TaskCenterProviderSection: View {
                         }
                     }
                 }
-            } else if showsEmptyState && !isLoading {
+            } else if showsEmptyState && (!isLoading || hasLoadedSnapshot) {
                 ContentUnavailableView(
                     emptyTitle,
                     systemImage: "checkmark.circle",
@@ -968,6 +984,17 @@ private struct TaskCenterProviderSection: View {
             if case .loading = state { return true }
         }
         return false
+    }
+
+    private var hasLoadedSnapshot: Bool {
+        [
+            TaskProviderKind.appleReminders,
+            .googleTasks,
+            .todoist,
+            .microsoftToDo
+        ].contains {
+            coordinator.hasSidebarTaskSnapshot(for: $0)
+        }
     }
 
     private var emptyTitle: String {

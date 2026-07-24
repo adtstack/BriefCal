@@ -440,6 +440,24 @@ final class ContextStoreTests: XCTestCase {
             )
         )
 
+        provider.pauseNextTaskListing()
+        coordinator.refresh()
+        guard case .loading = coordinator.appleRemindersTaskState else {
+            return XCTFail("Expected Apple Reminders refresh to be in progress")
+        }
+        XCTAssertTrue(
+            coordinator.hasSidebarTaskSnapshot(for: .appleReminders)
+        )
+        XCTAssertEqual(
+            coordinator.allSidebarTaskItems.map(\.title),
+            ["Buy milk", "Review notes"]
+        )
+        provider.resumeTaskListing()
+        for _ in 0..<20 {
+            if case .loaded = coordinator.appleRemindersTaskState { break }
+            await Task.yield()
+        }
+
         provider.listTaskListsError = .providerFailure("Temporary list error")
         coordinator.refresh()
         for _ in 0..<20 {
@@ -449,6 +467,10 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertEqual(coordinator.taskLists.count, 2)
         XCTAssertTrue(
             coordinator.taskListRefreshFailures.contains(.appleReminders)
+        )
+        XCTAssertEqual(
+            coordinator.allSidebarTaskItems.map(\.title),
+            ["Buy milk", "Review notes"]
         )
 
         provider.listTaskListsError = nil
@@ -7941,6 +7963,8 @@ final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotListing {
     private(set) var updateTaskCount = 0
     private(set) var deleteTaskCount = 0
     private(set) var moveTaskCount = 0
+    private var pausesNextTaskListing = false
+    private var taskListingContinuation: CheckedContinuation<Void, Never>?
 
     private let lists: [RemoteTaskList]
     private var tasks: [RemoteTaskSnapshot]
@@ -7975,8 +7999,23 @@ final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotListing {
     }
 
     func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
+        if pausesNextTaskListing {
+            await withCheckedContinuation { continuation in
+                taskListingContinuation = continuation
+            }
+        }
         let listIDs = Set(lists.map(\.id))
         return tasks.filter { listIDs.contains($0.parentID) }
+    }
+
+    func pauseNextTaskListing() {
+        pausesNextTaskListing = true
+    }
+
+    func resumeTaskListing() {
+        pausesNextTaskListing = false
+        taskListingContinuation?.resume()
+        taskListingContinuation = nil
     }
 
     func replaceSnapshot(_ snapshot: RemoteTaskSnapshot) {

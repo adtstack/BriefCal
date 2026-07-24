@@ -1386,8 +1386,15 @@ private struct WorkspaceView: View {
                 ProgressView()
                     .controlSize(.small)
             case let .loaded(items):
-                Text("\(items.count) tasks")
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("\(items.count) tasks")
+                    if appState.isTaskCenterRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Refreshing tasks")
+                    }
+                }
+                .foregroundStyle(.secondary)
             case .failed:
                 Label("Couldn’t load tasks", systemImage: "exclamationmark.circle")
                     .foregroundStyle(.red)
@@ -2066,7 +2073,7 @@ struct ProviderTaskSidebarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task {
-            coordinator.refresh()
+            coordinator.refreshIfNeeded()
             if remindersAuthorizationState == .notDetermined {
                 await connectAppleReminders()
             }
@@ -2223,11 +2230,19 @@ struct ProviderTaskSidebarView: View {
             Button {
                 coordinator.refresh()
             } label: {
-                Image(systemName: "arrow.clockwise")
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.clockwise")
+                }
             }
             .buttonStyle(.plain)
             .frame(width: 28, height: 28)
-            .accessibilityLabel("Refresh tasks")
+            .disabled(isLoading)
+            .accessibilityLabel(
+                isLoading ? "Refreshing tasks" : "Refresh tasks"
+            )
         }
         .padding(.horizontal, 14)
         .padding(.top, 14)
@@ -2377,7 +2392,11 @@ struct ProviderTaskSidebarView: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
                 Spacer()
-                if !coordinator.activeSidebarMutationIDs.isEmpty {
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .accessibilityLabel("Refreshing tasks")
+                } else if !coordinator.activeSidebarMutationIDs.isEmpty {
                     ProgressView()
                         .controlSize(.small)
                         .accessibilityLabel("Syncing task changes")
@@ -2409,7 +2428,7 @@ struct ProviderTaskSidebarView: View {
             taskList(displayedItems)
         } else if shouldShowStandaloneRemindersConnection {
             remindersConnectionContent
-        } else if isContentLoading {
+        } else if isInitialContentLoading {
             ProgressView("Refreshing tasks…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let contentFailureMessage {
@@ -2464,6 +2483,18 @@ struct ProviderTaskSidebarView: View {
 
     private var fallbackListProviders: Set<TaskProviderKind> {
         var providers = coordinator.taskListRefreshFailures
+        if case .loading = coordinator.appleRemindersTaskState {
+            providers.insert(.appleReminders)
+        }
+        if case .loading = coordinator.microsoftToDoTaskState {
+            providers.insert(.microsoftToDo)
+        }
+        if case .loading = coordinator.googleTasksTaskState {
+            providers.insert(.googleTasks)
+        }
+        if case .loading = coordinator.todoistTaskState {
+            providers.insert(.todoist)
+        }
         if coordinator.isRefreshingOAuthTaskLists {
             providers.insert(.microsoftToDo)
             providers.insert(.googleTasks)
@@ -2649,6 +2680,16 @@ struct ProviderTaskSidebarView: View {
             if case .loading = coordinator.todoistTaskState { return true }
         }
         return false
+    }
+
+    private var isInitialContentLoading: Bool {
+        guard isContentLoading else { return false }
+        if let provider = selectedList?.provider {
+            return !coordinator.hasSidebarTaskSnapshot(for: provider)
+        }
+        return !supportedSidebarProviders.contains {
+            coordinator.hasSidebarTaskSnapshot(for: $0)
+        }
     }
 
     private var shouldShowStandaloneRemindersConnection: Bool {
@@ -3040,13 +3081,9 @@ struct ProviderTaskSidebarView: View {
 
     private var hasProviderStatusNotice: Bool {
         if remindersAuthorizationState != .authorized { return true }
-        if case .loading = coordinator.appleRemindersTaskState { return true }
         if case .failed = coordinator.appleRemindersTaskState { return true }
-        if case .loading = coordinator.microsoftToDoTaskState { return true }
         if case .failed = coordinator.microsoftToDoTaskState { return true }
-        if case .loading = coordinator.googleTasksTaskState { return true }
         if case .failed = coordinator.googleTasksTaskState { return true }
-        if case .loading = coordinator.todoistTaskState { return true }
         if case .failed = coordinator.todoistTaskState { return true }
         return false
     }
@@ -3077,8 +3114,7 @@ struct ProviderTaskSidebarView: View {
         if remindersAuthorizationState == .authorized {
             switch coordinator.appleRemindersTaskState {
             case .loading:
-                Label("Refreshing Apple Reminders…", systemImage: "arrow.clockwise")
-                    .foregroundStyle(.secondary)
+                EmptyView()
             case let .failed(message):
                 Label("Apple Reminders: \(message)", systemImage: "exclamationmark.circle")
                     .foregroundStyle(.secondary)
@@ -3088,8 +3124,7 @@ struct ProviderTaskSidebarView: View {
         }
         switch coordinator.microsoftToDoTaskState {
         case .loading:
-            Label("Refreshing Microsoft To Do…", systemImage: "arrow.clockwise")
-                .foregroundStyle(.secondary)
+            EmptyView()
         case let .failed(message):
             Label("Microsoft To Do: \(message)", systemImage: "exclamationmark.circle")
                 .foregroundStyle(.secondary)
@@ -3098,8 +3133,7 @@ struct ProviderTaskSidebarView: View {
         }
         switch coordinator.googleTasksTaskState {
         case .loading:
-            Label("Refreshing Google Tasks…", systemImage: "arrow.clockwise")
-                .foregroundStyle(.secondary)
+            EmptyView()
         case let .failed(message):
             Label("Google Tasks: \(message)", systemImage: "exclamationmark.circle")
                 .foregroundStyle(.secondary)
@@ -3108,8 +3142,7 @@ struct ProviderTaskSidebarView: View {
         }
         switch coordinator.todoistTaskState {
         case .loading:
-            Label("Refreshing Todoist…", systemImage: "arrow.clockwise")
-                .foregroundStyle(.secondary)
+            EmptyView()
         case let .failed(message):
             Label("Todoist: \(message)", systemImage: "exclamationmark.circle")
                 .foregroundStyle(.secondary)
