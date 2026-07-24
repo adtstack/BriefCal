@@ -2491,6 +2491,13 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertEqual(pending.operation, .create)
         XCTAssertEqual(pending.attemptCount, 1)
         XCTAssertEqual(provider.createTaskCount, 1)
+        let eventBriefStatus = try harness.store.taskProviders
+            .fetchEventTaskProviderStatus(eventTaskID: task.id)
+        XCTAssertEqual(eventBriefStatus.providerLink?.provider, .appleReminders)
+        XCTAssertEqual(eventBriefStatus.providerLink?.syncState, .pendingCreate)
+        XCTAssertEqual(eventBriefStatus.providerLink?.pendingOperation, .create)
+        XCTAssertEqual(eventBriefStatus.providerLink?.pendingAttemptCount, 1)
+        XCTAssertFalse(eventBriefStatus.isLocalOnly)
 
         let relaunched = TaskProviderCoordinator(
             contextStore: harness.store,
@@ -2527,6 +2534,89 @@ final class ContextStoreTests: XCTestCase {
             task: task
         )
         XCTAssertEqual(provider.createTaskCount, 1)
+    }
+
+    @MainActor
+    func testEventBriefProviderStatusShowsDestinationLinkedAndLocalOnlyStates() throws {
+        let harness = try makeHarness()
+        let list = RemoteTaskList(
+            provider: .appleReminders,
+            id: "event-brief-status-list",
+            accountKey: "icloud-account",
+            title: "Work",
+            sourceTitle: "iCloud",
+            isWritable: true
+        )
+        let provider = StubAppleTaskListingProvider(
+            lists: [list],
+            tasks: []
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+
+        XCTAssertNil(coordinator.destinationSummary(for: "calendar"))
+        coordinator.saveDestination(
+            calendarIdentifier: "calendar",
+            list: list
+        )
+        XCTAssertEqual(
+            coordinator.destinationSummary(for: "calendar"),
+            CalendarTaskDestinationSummary(
+                provider: .appleReminders,
+                accountTitle: "iCloud",
+                listTitle: "Work",
+                authorizationState: .authorized
+            )
+        )
+
+        let context = try XCTUnwrap(
+            harness.store.saveNotes(
+                for: makeEvent(id: "event-brief-provider-status"),
+                notes: "Status fixture"
+            )
+        )
+        let task = try harness.store.eventTasks.create(
+            contextID: context.id,
+            section: .before,
+            title: "Prepare status",
+            sortOrder: 0
+        )
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchEventTaskProviderStatus(
+                eventTaskID: task.id
+            ),
+            EventTaskProviderStatus(
+                providerLink: nil,
+                isLocalOnly: false
+            )
+        )
+
+        coordinator.syncEventTask(
+            in: harness.store,
+            contextID: context.id,
+            task: task
+        )
+        let linked = try harness.store.taskProviders
+            .fetchEventTaskProviderStatus(eventTaskID: task.id)
+        XCTAssertEqual(linked.providerLink?.provider, .appleReminders)
+        XCTAssertEqual(linked.providerLink?.accountTitle, "iCloud")
+        XCTAssertEqual(linked.providerLink?.remoteParentID, list.id)
+        XCTAssertEqual(linked.providerLink?.syncState, .linked)
+        XCTAssertFalse(linked.isLocalOnly)
+
+        try coordinator.keepTaskLocalOnly(eventTaskID: task.id)
+        XCTAssertEqual(
+            try harness.store.taskProviders.fetchEventTaskProviderStatus(
+                eventTaskID: task.id
+            ),
+            EventTaskProviderStatus(
+                providerLink: nil,
+                isLocalOnly: true
+            )
+        )
     }
 
     @MainActor

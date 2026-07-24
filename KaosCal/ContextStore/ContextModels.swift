@@ -763,6 +763,13 @@ struct TaskCenterProviderLink: Equatable {
     }
 }
 
+/// Provider state for one Event Brief task, independent of the currently
+/// selected Task Center filter.
+struct EventTaskProviderStatus: Equatable {
+    let providerLink: TaskCenterProviderLink?
+    let isLocalOnly: Bool
+}
+
 struct TaskCenterItem: Equatable, Identifiable {
     let id: TaskCenterItemID
     let title: String

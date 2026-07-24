@@ -164,6 +164,71 @@ final class TaskProviderRepository {
         }
     }
 
+    func fetchEventTaskProviderStatus(
+        eventTaskID: String
+    ) throws -> EventTaskProviderStatus {
+        try database.read { db in
+            let isLocalOnly = try TaskProviderPreferenceRecord.fetchOne(
+                db,
+                key: eventTaskID
+            )?.linkMode == .localOnly
+            let pending = try ProviderPendingOperationRecord
+                .filter(Column("event_task_id") == eventTaskID)
+                .fetchOne(db)
+            let binding = try TaskBindingRecord
+                .filter(Column("event_task_id") == eventTaskID)
+                .fetchOne(db)
+
+            let providerLink: TaskCenterProviderLink?
+            if let binding,
+               let item = try ProviderItemRecord.fetchOne(
+                   db,
+                   key: binding.providerItemID
+               ),
+               let account = try ProviderAccountRecord.fetchOne(
+                   db,
+                   key: item.accountID
+               ) {
+                providerLink = TaskCenterProviderLink(
+                    bindingID: binding.id,
+                    provider: account.provider,
+                    accountKey: account.accountKey,
+                    accountTitle: account.displayName,
+                    remoteParentID: item.remoteParentID,
+                    syncState: binding.syncState,
+                    authorizationState: account.authorizationState,
+                    pendingOperation: pending?.operation,
+                    pendingAttemptCount: pending?.attemptCount ?? 0,
+                    pendingLastError: pending?.lastError
+                )
+            } else if let pending,
+                      let account = try ProviderAccountRecord.fetchOne(
+                          db,
+                          key: pending.accountID
+                      ) {
+                providerLink = TaskCenterProviderLink(
+                    bindingID: pending.id,
+                    provider: account.provider,
+                    accountKey: account.accountKey,
+                    accountTitle: account.displayName,
+                    remoteParentID: pending.remoteParentID,
+                    syncState: .pendingCreate,
+                    authorizationState: account.authorizationState,
+                    pendingOperation: pending.operation,
+                    pendingAttemptCount: pending.attemptCount,
+                    pendingLastError: pending.lastError
+                )
+            } else {
+                providerLink = nil
+            }
+
+            return EventTaskProviderStatus(
+                providerLink: providerLink,
+                isLocalOnly: isLocalOnly
+            )
+        }
+    }
+
     func setLocalOnly(eventTaskID: String) throws {
         let timestamp = now()
         try database.write { db in

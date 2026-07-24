@@ -6,7 +6,7 @@ struct EventBriefView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            localEditingBadge
+            storageAndDestinationBadges
 
             if let error = appState.localOperationError {
                 LocalOperationErrorView(
@@ -57,13 +57,61 @@ struct EventBriefView: View {
         .accessibilityIdentifier("eventBrief.content")
     }
 
+    private var storageAndDestinationBadges: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            localEditingBadge
+            taskDestinationBadge
+        }
+    }
+
     private var localEditingBadge: some View {
-        Label("Event Brief · Local editable", systemImage: "macbook")
+        Label("Event Brief notes · On this Mac", systemImage: "macbook")
             .font(.caption.weight(.medium))
             .foregroundStyle(KaosCalTheme.accent)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(KaosCalTheme.accentSoft, in: Capsule())
+            .accessibilityIdentifier("eventBrief.notesStorage")
+    }
+
+    @ViewBuilder
+    private var taskDestinationBadge: some View {
+        if let destination = appState.taskDestinationSummary(
+            calendarIdentifier: event.calendarIdentifier
+        ) {
+            let title = appState.taskDestinationTitle(for: destination)
+            let isAuthorized = destination.authorizationState == .authorized
+            Label(
+                isAuthorized
+                    ? "New tasks · \(title)"
+                    : "New tasks · \(title) · \(destination.authorizationState.title)",
+                systemImage: isAuthorized
+                    ? destination.provider.settingsIcon
+                    : "exclamationmark.triangle.fill"
+            )
+            .font(.caption.weight(.medium))
+            .foregroundStyle(
+                isAuthorized ? KaosCalTheme.accent : Color.orange
+            )
+            .lineLimit(2)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                isAuthorized
+                    ? KaosCalTheme.accentSoft
+                    : Color.orange.opacity(0.12),
+                in: Capsule()
+            )
+            .accessibilityIdentifier("eventBrief.taskDestination")
+        } else {
+            Label("New tasks · Local only", systemImage: "link.slash")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.quaternary.opacity(0.45), in: Capsule())
+                .accessibilityIdentifier("eventBrief.taskDestination")
+        }
     }
 
     private func identityBlockedContent(
@@ -388,6 +436,8 @@ private struct EventTaskRow: View {
                 .buttonStyle(.plain)
                 .help("Edit this task’s fixed or event-relative due time")
                 .accessibilityIdentifier("eventBrief.task.\(task.id).due")
+
+                providerStatus
             }
 
             Spacer(minLength: 4)
@@ -464,6 +514,88 @@ private struct EventTaskRow: View {
                 event: event,
                 task: task
             )
+        }
+    }
+
+    private var providerStatus: some View {
+        Group {
+            providerStatusContent
+        }
+        .accessibilityIdentifier(
+            "eventBrief.task.\(task.id).providerStatus"
+        )
+    }
+
+    @ViewBuilder
+    private var providerStatusContent: some View {
+        if let status = appState.eventTaskProviderStatus(
+            eventTaskID: task.id
+        ) {
+            if let link = status.providerLink {
+                HStack(spacing: 4) {
+                    Label(
+                        appState.taskProviderSourceTitle(for: link),
+                        systemImage: link.provider.settingsIcon
+                    )
+                    .foregroundStyle(.secondary)
+
+                    Text("·")
+                        .foregroundStyle(.tertiary)
+
+                    Label(
+                        link.needsAttention
+                            ? "Needs attention · \(link.statusTitle)"
+                            : link.statusTitle,
+                        systemImage: link.needsAttention
+                            ? "exclamationmark.triangle.fill"
+                            : link.syncState == .pendingCreate
+                                ? "arrow.triangle.2.circlepath"
+                                : "checkmark.circle.fill"
+                    )
+                    .foregroundStyle(
+                        link.needsAttention ? Color.orange : Color.secondary
+                    )
+                }
+                .font(.caption2)
+                .lineLimit(2)
+                .help(
+                    link.recoveryMessage
+                        ?? "This Event Brief task is linked to \(link.provider.title)."
+                )
+            } else if status.isLocalOnly {
+                Label(
+                    "Local only · provider sync disabled for this task",
+                    systemImage: "link.slash"
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            } else if let destination = appState.taskDestinationSummary(
+                calendarIdentifier: event.calendarIdentifier
+            ) {
+                Label(
+                    "\(appState.taskDestinationTitle(for: destination)) · Not linked",
+                    systemImage: "exclamationmark.circle"
+                )
+                .font(.caption2)
+                .foregroundStyle(.orange)
+                .help(
+                    "This task has not been linked to the calendar’s configured destination. Use the task menu to link an existing provider task."
+                )
+            } else {
+                Label(
+                    "Local only · no task destination",
+                    systemImage: "link.slash"
+                )
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+        } else {
+            Label(
+                "Provider status unavailable",
+                systemImage: "exclamationmark.circle"
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
         }
     }
 

@@ -2003,6 +2003,29 @@ final class TaskProviderCoordinator: ObservableObject {
         destinations.first { $0.calendarIdentifier == calendarIdentifier }
     }
 
+    func destinationSummary(
+        for calendarIdentifier: String
+    ) -> CalendarTaskDestinationSummary? {
+        guard let destination = destination(for: calendarIdentifier),
+              destination.isEnabled,
+              let account = try? repository.fetchAccount(
+                  id: destination.providerAccountID
+              ) else {
+            return nil
+        }
+        let listTitle = taskLists.first {
+            $0.provider == account.provider
+                && $0.accountKey == account.accountKey
+                && $0.id == destination.remoteParentID
+        }?.title
+        return CalendarTaskDestinationSummary(
+            provider: account.provider,
+            accountTitle: account.displayName,
+            listTitle: listTitle,
+            authorizationState: account.authorizationState
+        )
+    }
+
     func destinationSelection(for calendarIdentifier: String) -> String {
         guard let destination = destination(for: calendarIdentifier),
               let account = try? repository.fetchAccount(

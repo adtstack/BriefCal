@@ -513,6 +513,15 @@ struct CalendarTaskDestinationRecord: Equatable, Identifiable {
     var id: String { calendarIdentifier }
 }
 
+/// Read-only display metadata for the destination used by newly created
+/// Event Brief tasks. Remote identifiers stay out of the UI.
+struct CalendarTaskDestinationSummary: Equatable {
+    let provider: TaskProviderKind
+    let accountTitle: String
+    let listTitle: String?
+    let authorizationState: TaskProviderAuthorizationState
+}
+
 extension CalendarTaskDestinationRecord: Codable, FetchableRecord, PersistableRecord {
     static let databaseTableName = "calendar_task_destinations"
 

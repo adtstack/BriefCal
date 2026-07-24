@@ -1918,6 +1918,39 @@ final class AppState: ObservableObject {
         return parts.joined(separator: " · ")
     }
 
+    func eventTaskProviderStatus(
+        eventTaskID: String
+    ) -> EventTaskProviderStatus? {
+        guard let contextStore else { return nil }
+        return try? contextStore.taskProviders.fetchEventTaskProviderStatus(
+            eventTaskID: eventTaskID
+        )
+    }
+
+    func taskDestinationSummary(
+        calendarIdentifier: String
+    ) -> CalendarTaskDestinationSummary? {
+        taskProviderCoordinator?.destinationSummary(
+            for: calendarIdentifier
+        )
+    }
+
+    func taskDestinationTitle(
+        for summary: CalendarTaskDestinationSummary
+    ) -> String {
+        var parts = [summary.provider.title]
+        if let listTitle = summary.listTitle, !listTitle.isEmpty {
+            parts.append(listTitle)
+        }
+        if !summary.accountTitle.isEmpty,
+           summary.listTitle?.localizedCaseInsensitiveCompare(
+               summary.accountTitle
+           ) != .orderedSame {
+            parts.append(summary.accountTitle)
+        }
+        return parts.joined(separator: " · ")
+    }
+
     @discardableResult
     func checkTaskProviderLink(_ id: TaskCenterItemID) -> Bool {
         guard localDataOperationState == .idle else {
