@@ -9,16 +9,19 @@ final class OAuthTaskProviderSession {
     private let credentials: OAuthCredentialStoring
     private let transport: any OAuthHTTPTransport
     private let now: () -> Date
+    private var cachedCredential: OAuthCredential?
 
     init(
         configuration: OAuthProviderConfiguration,
         credentials: OAuthCredentialStoring = KeychainOAuthCredentialStore(),
         transport: any OAuthHTTPTransport = URLSessionOAuthHTTPTransport(),
+        initialCredential: OAuthCredential? = nil,
         now: @escaping () -> Date = Date.init
     ) {
         self.configuration = configuration
         self.credentials = credentials
         self.transport = transport
+        cachedCredential = initialCredential
         self.now = now
     }
 
@@ -27,9 +30,20 @@ final class OAuthTaskProviderSession {
                 || configuration.clientID.isEmpty == false else {
             return .notConfigured
         }
-        return (try? credentials.loadCredential(for: configuration.provider)) == nil
-            ? .notDetermined
-            : .authorized
+        if cachedCredential != nil {
+            return .authorized
+        }
+        do {
+            guard let credential = try credentials.loadCredential(
+                for: configuration.provider
+            ) else {
+                return .notDetermined
+            }
+            cachedCredential = credential
+            return .authorized
+        } catch {
+            return .unknown
+        }
     }
 
     func send(_ makeRequest: (String) throws -> URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -50,6 +64,7 @@ final class OAuthTaskProviderSession {
             // used. Remove only the Keychain value; account metadata and local
             // tasks remain available for the reconnect flow.
             try? credentials.deleteCredential(for: configuration.provider)
+            cachedCredential = nil
             throw TaskProviderError.authorizationRequired
         }
     }
@@ -81,7 +96,15 @@ final class OAuthTaskProviderSession {
     }
 
     private func currentCredential() async throws -> OAuthCredential {
-        guard let credential = try credentials.loadCredential(for: configuration.provider) else {
+        let credential: OAuthCredential
+        if let cachedCredential {
+            credential = cachedCredential
+        } else if let stored = try credentials.loadCredential(
+            for: configuration.provider
+        ) {
+            cachedCredential = stored
+            credential = stored
+        } else {
             throw TaskProviderError.authorizationRequired
         }
         guard credential.needsRefresh else { return credential }
@@ -93,6 +116,7 @@ final class OAuthTaskProviderSession {
     ) async throws -> OAuthCredential {
         guard let refreshToken = credential.refreshToken else {
             try? credentials.deleteCredential(for: configuration.provider)
+            cachedCredential = nil
             throw TaskProviderError.authorizationRequired
         }
         let response: OAuthTokenResponse
@@ -109,6 +133,7 @@ final class OAuthTaskProviderSession {
             // do the same when a Testing refresh token expires). Keeping that
             // token would leave Settings looking connected forever.
             try? credentials.deleteCredential(for: configuration.provider)
+            cachedCredential = nil
             throw TaskProviderError.authorizationRequired
         }
         let refreshed = OAuthCredential(
@@ -121,6 +146,7 @@ final class OAuthTaskProviderSession {
             scopes: response.scope?.split(separator: " ").map(String.init) ?? credential.scopes
         )
         try credentials.saveCredential(refreshed)
+        cachedCredential = refreshed
         return refreshed
     }
 }

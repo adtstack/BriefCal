@@ -136,6 +136,7 @@ struct CalendarShellView: View {
                 if appState.selectedSection == .tasks {
                     Button {
                         appState.refreshTaskCenter()
+                        appState.taskProviderCoordinator?.requestProviderSync()
                     } label: {
                         Label("Reload tasks", systemImage: "arrow.clockwise")
                     }
@@ -2228,7 +2229,7 @@ struct ProviderTaskSidebarView: View {
             .accessibilityLabel("New task")
             .accessibilityIdentifier("tasks.create")
             Button {
-                coordinator.refresh()
+                coordinator.requestProviderSync()
             } label: {
                 if isLoading {
                     ProgressView()
@@ -2242,6 +2243,11 @@ struct ProviderTaskSidebarView: View {
             .disabled(isLoading)
             .accessibilityLabel(
                 isLoading ? "Refreshing tasks" : "Refresh tasks"
+            )
+            .help(
+                coordinator.hasDeferredOAuthCredentialAccess
+                    ? "Refresh tasks. macOS may ask to access saved provider credentials."
+                    : "Refresh tasks"
             )
         }
         .padding(.horizontal, 14)
@@ -2426,8 +2432,6 @@ struct ProviderTaskSidebarView: View {
     private var content: some View {
         if !displayedItems.isEmpty {
             taskList(displayedItems)
-        } else if shouldShowStandaloneRemindersConnection {
-            remindersConnectionContent
         } else if isInitialContentLoading {
             ProgressView("Refreshing tasks…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2435,6 +2439,10 @@ struct ProviderTaskSidebarView: View {
             failureContent(contentFailureMessage)
         } else if hasSearchQuery {
             noSearchResultsContent
+        } else if coordinator.hasDeferredOAuthCredentialAccess {
+            oauthSyncContent
+        } else if shouldShowStandaloneRemindersConnection {
+            remindersConnectionContent
         } else if relevantProvidersUnavailable {
             unavailableContent
         } else {
@@ -2803,6 +2811,24 @@ struct ProviderTaskSidebarView: View {
         }
     }
 
+    private var oauthSyncContent: some View {
+        ContentUnavailableView {
+            Label("Sync connected providers", systemImage: "key.horizontal")
+        } description: {
+            Text(
+                "KaosCal will use the provider credentials already saved in your macOS Keychain. macOS may ask you to allow access."
+            )
+        } actions: {
+            Button("Sync Tasks") {
+                coordinator.requestProviderSync()
+            }
+            .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("tasks.syncConnectedProviders")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("tasks.oauthSyncPrompt")
+    }
+
     private var remindersConnectionContent: some View {
         ContentUnavailableView {
             Label(remindersConnectionTitle, systemImage: "checklist")
@@ -2902,7 +2928,7 @@ struct ProviderTaskSidebarView: View {
             Text(message)
         } actions: {
             Button("Retry") {
-                coordinator.refresh()
+                coordinator.requestProviderSync()
             }
         }
     }
@@ -3624,7 +3650,7 @@ private struct ProviderTaskSidebarRow: View {
                     HStack(spacing: 12) {
                         Button("Refresh") {
                             self.errorMessage = nil
-                            coordinator.refresh()
+                            coordinator.requestProviderSync()
                         }
                         if item.provider == .appleReminders,
                            coordinator.authorizationState(
@@ -4102,7 +4128,7 @@ struct ProviderTaskEditorSheet: View {
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         Button("Refresh List Metadata") {
-                            coordinator.refresh()
+                            coordinator.requestProviderSync()
                         }
                     }
                 }
@@ -4386,7 +4412,7 @@ struct ProviderTaskEditorSheet: View {
     }
 
     private func refreshAndReload() async {
-        coordinator.refresh()
+        coordinator.requestProviderSync()
         await reloadLatest()
     }
 

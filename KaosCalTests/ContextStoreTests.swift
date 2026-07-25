@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import GRDB
+import Security
 import SwiftUI
 import XCTest
 @testable import KaosCal
@@ -581,6 +582,170 @@ final class ContextStoreTests: XCTestCase {
             coordinator.authorizationState(for: .appleReminders),
             .authorized
         )
+    }
+
+    @MainActor
+    func testCoordinatorDefersKeychainReadUntilUserRequestsProviderSync() async throws {
+        let harness = try makeHarness()
+        let repository = harness.store.taskProviders
+        let account = try repository.upsertAccount(
+            provider: .googleTasks,
+            accountKey: "google-account",
+            displayName: "Google User",
+            authorizationState: .authorized
+        )
+        let credentials = RecordingOAuthCredentialStore()
+        let notificationCenter = NotificationCenter()
+        let googleConfiguration = try Self.oauthConfiguration(.googleTasks)
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: StubAppleTaskListingProvider(
+                lists: [],
+                tasks: [],
+                authorizationState: .denied
+            ),
+            oauthCredentials: credentials,
+            oauthConfiguration: { provider in
+                provider == .googleTasks ? googleConfiguration : nil
+            },
+            notificationCenter: notificationCenter
+        )
+
+        XCTAssertTrue(coordinator.hasDeferredOAuthCredentialAccess)
+        XCTAssertTrue(
+            coordinator.isOAuthCredentialAccessDeferred(for: .googleTasks)
+        )
+        XCTAssertEqual(
+            coordinator.authorizationState(for: .googleTasks),
+            .authorized
+        )
+        XCTAssertTrue(credentials.loadRequests.isEmpty)
+
+        coordinator.refresh()
+        notificationCenter.post(
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(credentials.loadRequests.isEmpty)
+
+        coordinator.requestProviderSync()
+        for _ in 0..<100 {
+            if !coordinator.isRefreshingOAuthTaskLists,
+               credentials.loadRequests.count == 1 {
+                break
+            }
+            await Task.yield()
+        }
+
+        XCTAssertEqual(credentials.loadRequests, [.googleTasks])
+        XCTAssertFalse(coordinator.hasDeferredOAuthCredentialAccess)
+        XCTAssertEqual(
+            coordinator.authorizationState(for: .googleTasks),
+            .notDetermined
+        )
+        XCTAssertEqual(
+            try repository.fetchAccount(id: account.id)?.authorizationState,
+            .notDetermined
+        )
+    }
+
+    @MainActor
+    func testCancelledKeychainReadNeedsExplicitRetryAndKeepsProviderLink() async throws {
+        let harness = try makeHarness()
+        let eventTask = try harness.store.appendEventTask(
+            for: makeEvent(id: "deferred-keychain-error"),
+            section: .before,
+            title: "Keep this local task"
+        )
+        let repository = harness.store.taskProviders
+        let account = try repository.upsertAccount(
+            provider: .googleTasks,
+            accountKey: "google-account",
+            displayName: "Google User",
+            authorizationState: .authorized
+        )
+        let remote = RemoteTaskSnapshot(
+            id: "remote-task",
+            parentID: "google-list",
+            parentAccountKey: account.accountKey,
+            title: eventTask.title,
+            notes: "",
+            dueAt: nil,
+            isCompleted: false,
+            version: "etag",
+            deepLink: nil
+        )
+        let binding = try repository.insertLinkedTask(
+            account: account,
+            remote: remote,
+            eventTaskID: eventTask.id,
+            occurrenceKey: nil,
+            syncHash: "sync-hash"
+        )
+        let credentials = RecordingOAuthCredentialStore(
+            loadError: OAuthCredentialStoreError.keychain(errSecUserCanceled)
+        )
+        let notificationCenter = NotificationCenter()
+        let googleConfiguration = try Self.oauthConfiguration(.googleTasks)
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: StubAppleTaskListingProvider(
+                lists: [],
+                tasks: [],
+                authorizationState: .denied
+            ),
+            oauthCredentials: credentials,
+            oauthConfiguration: { provider in
+                provider == .googleTasks ? googleConfiguration : nil
+            },
+            notificationCenter: notificationCenter
+        )
+
+        coordinator.requestProviderSync()
+        for _ in 0..<100 {
+            if !coordinator.isRefreshingOAuthTaskLists,
+               credentials.loadRequests.count == 1 {
+                break
+            }
+            await Task.yield()
+        }
+
+        XCTAssertEqual(credentials.loadRequests, [.googleTasks])
+        XCTAssertTrue(
+            coordinator.isOAuthCredentialAccessDeferred(for: .googleTasks)
+        )
+        XCTAssertNotNil(coordinator.oauthConnectionError(for: .googleTasks))
+        XCTAssertEqual(
+            try repository.fetchAccount(id: account.id)?.authorizationState,
+            .authorized
+        )
+        XCTAssertEqual(
+            try repository.fetchBinding(eventTaskID: eventTask.id)?.id,
+            binding.id
+        )
+        XCTAssertEqual(
+            try repository.fetchBinding(eventTaskID: eventTask.id)?.syncState,
+            .linked
+        )
+
+        coordinator.refresh()
+        notificationCenter.post(
+            name: NSApplication.didBecomeActiveNotification,
+            object: nil
+        )
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertEqual(credentials.loadRequests.count, 1)
+
+        coordinator.requestProviderSync()
+        for _ in 0..<100 {
+            if !coordinator.isRefreshingOAuthTaskLists,
+               credentials.loadRequests.count == 2 {
+                break
+            }
+            await Task.yield()
+        }
+        XCTAssertEqual(credentials.loadRequests.count, 2)
     }
 
     func testProviderTaskSidebarSortsByDueDateOrTitleAndKeepsCompletedLast() {
@@ -3871,6 +4036,29 @@ final class ContextStoreTests: XCTestCase {
             "new-access"
         )
         XCTAssertEqual(transport.requestCount, 3)
+    }
+
+    func testOAuthSessionUsesExplicitCredentialWithoutAnotherStoreRead() throws {
+        let credential = OAuthCredential(
+            provider: .googleTasks,
+            accessToken: "access",
+            refreshToken: "refresh",
+            expiresAt: Date.distantFuture,
+            accountKey: "subject",
+            displayName: "Google",
+            scopes: []
+        )
+        let credentialStore = RecordingOAuthCredentialStore(
+            loadError: OAuthCredentialStoreError.keychain(errSecUserCanceled)
+        )
+        let session = OAuthTaskProviderSession(
+            configuration: try Self.oauthConfiguration(.googleTasks),
+            credentials: credentialStore,
+            initialCredential: credential
+        )
+
+        XCTAssertEqual(session.authorizationState, .authorized)
+        XCTAssertTrue(credentialStore.loadRequests.isEmpty)
     }
 
     func testOAuthSessionMapsProviderFailuresWithoutAutomaticWriteFallback() async throws {
@@ -7926,6 +8114,36 @@ final class InMemoryOAuthCredentialStore: OAuthCredentialStoring {
 
     func loadCredential(for provider: TaskProviderKind) throws -> OAuthCredential? {
         credentials[provider]
+    }
+
+    func saveCredential(_ credential: OAuthCredential) throws {
+        credentials[credential.provider] = credential
+    }
+
+    func deleteCredential(for provider: TaskProviderKind) throws {
+        credentials[provider] = nil
+    }
+}
+
+private final class RecordingOAuthCredentialStore: OAuthCredentialStoring {
+    private var credentials: [TaskProviderKind: OAuthCredential]
+    private let loadError: Error?
+    private(set) var loadRequests = [TaskProviderKind]()
+
+    init(
+        _ credentials: [TaskProviderKind: OAuthCredential] = [:],
+        loadError: Error? = nil
+    ) {
+        self.credentials = credentials
+        self.loadError = loadError
+    }
+
+    func loadCredential(
+        for provider: TaskProviderKind
+    ) throws -> OAuthCredential? {
+        loadRequests.append(provider)
+        if let loadError { throw loadError }
+        return credentials[provider]
     }
 
     func saveCredential(_ credential: OAuthCredential) throws {

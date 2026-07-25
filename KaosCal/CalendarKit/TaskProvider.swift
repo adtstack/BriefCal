@@ -431,9 +431,13 @@ final class TaskProviderCoordinator: ObservableObject {
     private let contextStore: ContextStore
     private let now: () -> Date
     private let oauthCredentials: OAuthCredentialStoring
+    private let loadOAuthConfiguration:
+        (TaskProviderKind) -> OAuthProviderConfiguration?
     private let notificationCenter: NotificationCenter
     private var asyncProviders = [TaskProviderKind: any AsyncTaskProviding]()
     private let injectedAsyncProviderKinds: Set<TaskProviderKind>
+    private var oauthCredentialReadyProviders = Set<TaskProviderKind>()
+    private var pendingOAuthCredentialAccessProviders = Set<TaskProviderKind>()
     private var applicationDidBecomeActiveObserver: NSObjectProtocol?
     private var appleRemindersRefreshTask: Task<Void, Never>?
     private var activeOAuthListRefreshes = Set<UUID>()
@@ -463,6 +467,8 @@ final class TaskProviderCoordinator: ObservableObject {
     @Published private(set) var isRefreshingOAuthTaskLists = false
     @Published private(set) var connectingOAuthProviders = Set<TaskProviderKind>()
     @Published private(set) var oauthConnectionErrors = [TaskProviderKind: String]()
+    @Published private(set) var deferredOAuthCredentialProviders =
+        Set<TaskProviderKind>()
     @Published private(set) var taskListRefreshFailures = Set<TaskProviderKind>()
     @Published private(set) var activeSidebarMutationIDs = Set<String>()
     @Published private(set) var sidebarUndoState: SidebarTaskUndoState?
@@ -476,6 +482,9 @@ final class TaskProviderCoordinator: ObservableObject {
         contextStore: ContextStore,
         provider: (any TaskProviding)? = nil,
         oauthCredentials: OAuthCredentialStoring = KeychainOAuthCredentialStore(),
+        oauthConfiguration: @escaping (TaskProviderKind) -> OAuthProviderConfiguration? = {
+            OAuthProviderConfiguration.load(provider: $0)
+        },
         asyncProviders injectedAsyncProviders:
             [TaskProviderKind: any AsyncTaskProviding] = [:],
         notificationCenter: NotificationCenter = .default,
@@ -487,6 +496,7 @@ final class TaskProviderCoordinator: ObservableObject {
         repository = contextStore.taskProviders
         self.now = now
         self.oauthCredentials = oauthCredentials
+        loadOAuthConfiguration = oauthConfiguration
         self.notificationCenter = notificationCenter
         asyncProviders = injectedAsyncProviders
         injectedAsyncProviderKinds = Set(injectedAsyncProviders.keys)
@@ -507,7 +517,7 @@ final class TaskProviderCoordinator: ObservableObject {
                 self?.refresh()
             }
         }
-        configureOAuthProviders()
+        prepareOAuthProvidersWithoutCredentialAccess()
         refresh()
     }
 
@@ -636,6 +646,32 @@ final class TaskProviderCoordinator: ObservableObject {
 
     func authorizationState(for provider: TaskProviderKind) -> TaskProviderAuthorizationState {
         providerAuthorizationStates[provider] ?? .notConfigured
+    }
+
+    var hasDeferredOAuthCredentialAccess: Bool {
+        !deferredOAuthCredentialProviders.isEmpty
+    }
+
+    func isOAuthCredentialAccessDeferred(
+        for provider: TaskProviderKind
+    ) -> Bool {
+        deferredOAuthCredentialProviders.contains(provider)
+    }
+
+    /// Starts the user-requested provider refresh. OAuth credentials are never
+    /// read during bootstrap; only providers whose local account metadata says
+    /// they were connected are unlocked here.
+    func requestProviderSync() {
+        let requested = deferredOAuthCredentialProviders.filter {
+            !injectedAsyncProviderKinds.contains($0)
+                && loadOAuthConfiguration($0) != nil
+        }
+        pendingOAuthCredentialAccessProviders.formUnion(requested)
+        for provider in requested {
+            oauthConnectionErrors[provider] = nil
+        }
+        configureOAuthProvidersForPendingAccess()
+        refresh()
     }
 
     func isSidebarTaskWritable(_ item: ProviderTaskListItem) -> Bool {
@@ -1712,12 +1748,11 @@ final class TaskProviderCoordinator: ObservableObject {
 
     func isConfigured(_ provider: TaskProviderKind) -> Bool {
         provider == self.provider.provider
-            || OAuthProviderConfiguration.load(provider: provider) != nil
+            || loadOAuthConfiguration(provider) != nil
     }
 
     func supportsInAppOAuthConnection(_ provider: TaskProviderKind) -> Bool {
-        guard let redirect = OAuthProviderConfiguration
-            .load(provider: provider)?.redirectURI,
+        guard let redirect = loadOAuthConfiguration(provider)?.redirectURI,
               redirect.scheme?.lowercased() == "http",
               let host = redirect.host?.lowercased() else {
             return false
@@ -1735,7 +1770,7 @@ final class TaskProviderCoordinator: ObservableObject {
 
     func connectOAuthProvider(_ provider: TaskProviderKind) async {
         guard provider != self.provider.provider,
-              let configuration = OAuthProviderConfiguration.load(provider: provider) else {
+              let configuration = loadOAuthConfiguration(provider) else {
             lastErrorMessage = "This provider is not configured for this build."
             return
         }
@@ -1749,13 +1784,19 @@ final class TaskProviderCoordinator: ObservableObject {
             let effectiveConfiguration = configuration.replacingRedirectURI(
                 authorization.effectiveRedirectURI
             )
-            _ = try await OAuthProviderConnection.connect(
+            let credential = try await OAuthProviderConnection.connect(
                 configuration: effectiveConfiguration,
                 code: authorization.code,
                 pkce: authorization.pkce,
                 credentials: oauthCredentials
             )
-            configureOAuthProviders()
+            installOAuthProvider(
+                configuration: configuration,
+                credential: credential
+            )
+            pendingOAuthCredentialAccessProviders.remove(provider)
+            deferredOAuthCredentialProviders.remove(provider)
+            oauthConnectionErrors[provider] = nil
             lastErrorMessage = nil
             await refreshOAuthProviders()
         } catch {
@@ -1775,6 +1816,9 @@ final class TaskProviderCoordinator: ObservableObject {
             try oauthCredentials.deleteCredential(for: provider)
             try repository.deleteAccounts(provider: provider)
             oauthConnectionErrors[provider] = nil
+            pendingOAuthCredentialAccessProviders.remove(provider)
+            deferredOAuthCredentialProviders.remove(provider)
+            oauthCredentialReadyProviders.remove(provider)
             asyncProviders[provider] = nil
             taskListRefreshFailures.remove(provider)
             providerAuthorizationStates[provider] = isConfigured(provider)
@@ -1789,7 +1833,8 @@ final class TaskProviderCoordinator: ObservableObject {
         }
     }
 
-    private func configureOAuthProviders() {
+    private func prepareOAuthProvidersWithoutCredentialAccess() {
+        let accounts = (try? repository.fetchAccounts()) ?? []
         for kind in [
             TaskProviderKind.googleTasks,
             .todoist,
@@ -1801,45 +1846,103 @@ final class TaskProviderCoordinator: ObservableObject {
                 continue
             }
             asyncProviders[kind] = nil
-            guard let configuration = OAuthProviderConfiguration.load(provider: kind) else {
+            guard loadOAuthConfiguration(kind) != nil else {
                 providerAuthorizationStates[kind] = .notConfigured
                 continue
             }
-            guard let credential = try? oauthCredentials.loadCredential(for: kind) else {
-                providerAuthorizationStates[kind] = .notDetermined
-                continue
+            let account = accounts
+                .filter { $0.provider == kind }
+                .max { $0.updatedAt < $1.updatedAt }
+            providerAuthorizationStates[kind] =
+                account?.authorizationState ?? .notDetermined
+            if account?.authorizationState == .authorized {
+                deferredOAuthCredentialProviders.insert(kind)
             }
-            let session = OAuthTaskProviderSession(
-                configuration: configuration,
-                credentials: oauthCredentials
-            )
-            switch kind {
-            case .googleTasks:
-                asyncProviders[kind] = GoogleTasksProvider(
-                    session: session,
-                    accountKey: credential.accountKey,
-                    displayName: credential.displayName
-                )
-            case .todoist:
-                asyncProviders[kind] = TodoistTasksProvider(
-                    session: session,
-                    accountKey: credential.accountKey,
-                    displayName: credential.displayName
-                )
-            case .microsoftToDo:
-                asyncProviders[kind] = MicrosoftToDoProvider(
-                    session: session,
-                    accountKey: credential.accountKey,
-                    displayName: credential.displayName
-                )
-            case .appleReminders:
-                break
-            }
-            providerAuthorizationStates[kind] = session.authorizationState
         }
     }
 
+    private func configureOAuthProvidersForPendingAccess() {
+        let requested = pendingOAuthCredentialAccessProviders
+        pendingOAuthCredentialAccessProviders.subtract(requested)
+        for kind in requested {
+            guard !injectedAsyncProviderKinds.contains(kind),
+                  let configuration = loadOAuthConfiguration(kind) else {
+                continue
+            }
+            do {
+                guard let credential = try oauthCredentials.loadCredential(
+                    for: kind
+                ) else {
+                    deferredOAuthCredentialProviders.remove(kind)
+                    oauthCredentialReadyProviders.remove(kind)
+                    asyncProviders[kind] = nil
+                    oauthConnectionErrors[kind] = nil
+                    markOAuthProviderAuthorizationRequiredIfNeeded(
+                        TaskProviderError.authorizationRequired,
+                        provider: kind
+                    )
+                    continue
+                }
+                installOAuthProvider(
+                    configuration: configuration,
+                    credential: credential
+                )
+                deferredOAuthCredentialProviders.remove(kind)
+                oauthConnectionErrors[kind] = nil
+            } catch {
+                oauthCredentialReadyProviders.remove(kind)
+                asyncProviders[kind] = nil
+                let message = Self.message(for: error)
+                oauthConnectionErrors[kind] = message
+                taskListRefreshFailures.insert(kind)
+                setSidebarTaskState(.failed(message), for: kind)
+                lastErrorMessage = message
+            }
+        }
+    }
+
+    private func installOAuthProvider(
+        configuration: OAuthProviderConfiguration,
+        credential: OAuthCredential
+    ) {
+        let kind = configuration.provider
+        let session = OAuthTaskProviderSession(
+            configuration: configuration,
+            credentials: oauthCredentials,
+            initialCredential: credential
+        )
+        switch kind {
+        case .googleTasks:
+            asyncProviders[kind] = GoogleTasksProvider(
+                session: session,
+                accountKey: credential.accountKey,
+                displayName: credential.displayName
+            )
+        case .todoist:
+            asyncProviders[kind] = TodoistTasksProvider(
+                session: session,
+                accountKey: credential.accountKey,
+                displayName: credential.displayName
+            )
+        case .microsoftToDo:
+            asyncProviders[kind] = MicrosoftToDoProvider(
+                session: session,
+                accountKey: credential.accountKey,
+                displayName: credential.displayName
+            )
+        case .appleReminders:
+            return
+        }
+        oauthCredentialReadyProviders.insert(kind)
+        providerAuthorizationStates[kind] = .authorized
+    }
+
     private func scheduleOAuthProviderRefresh() {
+        guard !oauthCredentialReadyProviders.isEmpty
+                || !pendingOAuthCredentialAccessProviders.isEmpty
+                || !injectedAsyncProviderKinds.isEmpty else {
+            return
+        }
         guard activeOAuthListRefreshes.isEmpty else {
             oauthRefreshPending = true
             return
@@ -1869,13 +1972,22 @@ final class TaskProviderCoordinator: ObservableObject {
     private func refreshOAuthProviders(token suppliedToken: UUID? = nil) async {
         let token = suppliedToken ?? beginOAuthListRefresh()
         defer { endOAuthListRefresh(token) }
-        configureOAuthProviders()
+        configureOAuthProvidersForPendingAccess()
         for kind in [
             TaskProviderKind.googleTasks,
             .todoist,
             .microsoftToDo
         ] {
             guard let asyncProvider = asyncProviders[kind] else {
+                if let message = oauthConnectionErrors[kind],
+                   deferredOAuthCredentialProviders.contains(kind) {
+                    taskListRefreshFailures.insert(kind)
+                    setSidebarTaskState(.failed(message), for: kind)
+                    continue
+                }
+                if deferredOAuthCredentialProviders.contains(kind) {
+                    continue
+                }
                 taskListRefreshFailures.remove(kind)
                 replaceTaskLists(for: kind, with: [])
                 markProviderBindingsDisconnected(kind)
@@ -3633,7 +3745,9 @@ final class TaskProviderCoordinator: ObservableObject {
               asyncMicrosoft.authorizationState == .authorized,
               let microsoft = asyncMicrosoft as? any MicrosoftToDoDeltaProviding,
               let accounts = try? repository.fetchAccounts() else {
-            setSidebarTaskState(.unavailable, for: .microsoftToDo)
+            if !deferredOAuthCredentialProviders.contains(.microsoftToDo) {
+                setSidebarTaskState(.unavailable, for: .microsoftToDo)
+            }
             return
         }
         let authorizedAccounts = accounts.filter {
@@ -4284,6 +4398,10 @@ final class TaskProviderCoordinator: ObservableObject {
         guard error as? TaskProviderError == .authorizationRequired else {
             return
         }
+        pendingOAuthCredentialAccessProviders.remove(provider)
+        deferredOAuthCredentialProviders.remove(provider)
+        oauthCredentialReadyProviders.remove(provider)
+        asyncProviders[provider] = nil
         providerAuthorizationStates[provider] = .notDetermined
         if let accounts = try? repository.fetchAccounts() {
             for account in accounts where account.provider == provider {

@@ -1849,6 +1849,7 @@ final class AppState: ObservableObject {
             return false
         }
         do {
+            taskProviderCoordinator?.requestProviderSync()
             try await taskProviderCoordinator?.deleteRemoteTaskIfBoundAsync(
                 eventTaskID: task.id
             )
@@ -1969,7 +1970,7 @@ final class AppState: ObservableObject {
             return false
         }
         localOperationError = nil
-        taskProviderCoordinator.refresh()
+        taskProviderCoordinator.requestProviderSync()
         taskProviderCoordinator.refreshLinkedTasks(in: contextStore)
         refreshTaskCenter()
         return true
@@ -1996,6 +1997,7 @@ final class AppState: ObservableObject {
         }
         localOperationError = nil
         do {
+            taskProviderCoordinator.requestProviderSync()
             try await taskProviderCoordinator.acceptLocalTaskVersion(
                 eventTaskID: taskID,
                 in: contextStore
@@ -2027,6 +2029,7 @@ final class AppState: ObservableObject {
         }
         localOperationError = nil
         do {
+            taskProviderCoordinator.requestProviderSync()
             try await taskProviderCoordinator.acceptRemoteTaskVersion(
                 eventTaskID: taskID,
                 in: contextStore
@@ -2084,6 +2087,7 @@ final class AppState: ObservableObject {
             return false
         }
         do {
+            taskProviderCoordinator.requestProviderSync()
             try taskProviderCoordinator.useCalendarDefaultProvider(
                 eventTaskID: taskID,
                 in: contextStore
@@ -2108,6 +2112,7 @@ final class AppState: ObservableObject {
               let taskProviderCoordinator else {
             throw TaskProviderError.taskNotFound
         }
+        taskProviderCoordinator.requestProviderSync()
         return try await taskProviderCoordinator.relinkCandidates(
             eventTaskID: taskID
         )
@@ -2131,6 +2136,7 @@ final class AppState: ObservableObject {
             return false
         }
         do {
+            taskProviderCoordinator.requestProviderSync()
             try await taskProviderCoordinator.relinkEventTask(
                 eventTaskID: taskID,
                 to: candidate,
@@ -2164,6 +2170,7 @@ final class AppState: ObservableObject {
             return false
         }
         do {
+            taskProviderCoordinator.requestProviderSync()
             let completedOperation = try await taskProviderCoordinator
                 .retryPendingOperation(
                     eventTaskID: taskID,
@@ -2476,6 +2483,7 @@ final class AppState: ObservableObject {
             return false
         }
         do {
+            taskProviderCoordinator?.requestProviderSync()
             try await taskProviderCoordinator?.deleteRemoteTaskIfBoundAsync(
                 eventTaskID: taskID
             )

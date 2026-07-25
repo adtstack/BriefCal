@@ -1427,6 +1427,23 @@ private struct TaskProviderSettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                if coordinator.hasDeferredOAuthCredentialAccess {
+                    HStack(alignment: .center, spacing: 12) {
+                        Text(
+                            "Saved credentials are checked only when you choose to sync. macOS may ask you to allow Keychain access."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button("Sync Connected Providers") {
+                            coordinator.requestProviderSync()
+                        }
+                    }
+                    .accessibilityIdentifier(
+                        "settings.taskProviders.syncConnected"
+                    )
+                }
                 Text("OAuth credentials are stored only in the macOS Keychain. Provider task descriptions are not copied to local backups.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -1483,15 +1500,24 @@ private struct TaskProviderSettingsView: View {
         )
     }
 
+    @ViewBuilder
     private func providerStateLabel(for provider: TaskProviderKind) -> some View {
-        let state = coordinator.authorizationState(for: provider)
-        return Label(
-            state.title,
-            systemImage: state == .authorized
-                ? "checkmark.circle.fill"
-                : "lock.circle"
-        )
-        .foregroundStyle(state == .authorized ? .green : .secondary)
+        if coordinator.isOAuthCredentialAccessDeferred(for: provider) {
+            Label(
+                "Ready to sync",
+                systemImage: "key.horizontal"
+            )
+            .foregroundStyle(.secondary)
+        } else {
+            let state = coordinator.authorizationState(for: provider)
+            Label(
+                state.title,
+                systemImage: state == .authorized
+                    ? "checkmark.circle.fill"
+                    : "lock.circle"
+            )
+            .foregroundStyle(state == .authorized ? .green : .secondary)
+        }
     }
 
     private func settingsGroup<Content: View>(

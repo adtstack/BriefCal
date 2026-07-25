@@ -71,6 +71,7 @@ private struct KaosCalCommands: Commands {
             Button("Reload Current View") {
                 if appState.selectedSection == .tasks {
                     appState.refreshTaskCenter()
+                    appState.taskProviderCoordinator?.requestProviderSync()
                 } else {
                     Task {
                         await appState.refreshCalendarData()
