@@ -95,11 +95,22 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")" = "$VERSION"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO")" = "$BUILD"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")" = "14.0"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$INFO")" = ""
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO")" = ""
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$INFO")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUEnableSystemProfiling' "$INFO")" = "false"
 
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$ENTITLEMENTS")" = "true"
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.personal-information.calendars' "$ENTITLEMENTS")" = "true"
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.files.user-selected.read-write' "$ENTITLEMENTS")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.temporary-exception.mach-lookup.global-name:0' "$ENTITLEMENTS")" = "com.adtstack.kaoscal-spks"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.temporary-exception.mach-lookup.global-name:1' "$ENTITLEMENTS")" = "com.adtstack.kaoscal-spki"
           ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$ENTITLEMENTS" >/dev/null 2>&1
+          test -d "$APP/Contents/Frameworks/Sparkle.framework"
+          test -x "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
           test -z "$(find "$APP" -name '*.xctest' -o -name '*XCTest*' -print -quit)"
 
       - name: Create DMG and checksum

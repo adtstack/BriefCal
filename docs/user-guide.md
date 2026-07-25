@@ -1,10 +1,11 @@
 # KaosCal 사용자 가이드
 
-> 기준 구현: 2026-07-20, Tasks 통합 관리·planning·Calendar 결합
+> 기준 구현: 2026-07-25, Tasks 통합 관리·planning·Calendar 결합과 signed updater
 >
 > 이 문서는 현재 저장소의 코드와 승인된 설계 문서를 기준으로 한다. KaosCal은 아직
-> 외부 베타 배포 준비 단계이며, 공개 다운로드 위치·최종 설치 패키지·자동 업데이트·
-> 일반 지원 창구는 확정되지 않았다.
+> 외부 베타 배포 준비 단계이며, 공개 다운로드 위치·최종 설치 패키지·일반 지원 창구는
+> 확정되지 않았다. 자동업데이트 코드는 준비됐지만 서명된 feed가 없는 개발 빌드에서는
+> 비활성 상태다.
 
 ## 1. 설치와 사전 준비
 
@@ -17,13 +18,24 @@ EventKit을 통해 저장한다. KaosCal 안에서 Exchange, iCloud 또는 다�
   구성하고 동기화한다.
 - 계정 비밀번호, MFA 코드, tenant/client secret 또는 OAuth token을 KaosCal에
   입력하지 않는다.
-- 현재 저장소에는 공용 notarized 설치 파일과 업데이트 경로가 확정되어 있지 않다.
+- 현재 저장소에는 공용 notarized 설치 파일과 실제 업데이트 feed가 확정되어 있지 않다.
   테스터는 빌드를 전달한 사람에게서 받은 신뢰 가능한 서명 빌드와 그 빌드에 포함된
   설치 안내만 사용한다. 출처를 확인할 수 없는 앱을 실행하거나 Gatekeeper 경고를
   임의로 우회하지 않는다.
 - 소스에서 직접 빌드하는 개발자는 [저장소 README](../README.md)와
   [개발 환경 안내](developer-setup.md)를 따른다. 개발용 ad-hoc 서명 빌드는 공개
   배포 빌드가 아니다.
+
+### 업데이트
+
+- 승인된 signed feed가 포함된 빌드는 백그라운드에서 새 버전을 정기 확인하고 자동으로
+  내려받아 설치할 수 있다. 앱 메뉴의 `Check for Updates…`로 즉시 확인할 수도 있다.
+- 메뉴가 비활성화되어 있으면 현재 빌드에 feed URL 또는 공개 서명 키가 없는 것이다.
+  앱을 다시 설치하거나 Gatekeeper를 우회하지 말고 빌드를 전달한 사람에게 확인한다.
+- 업데이트 확인 실패는 일정과 로컬 데이터 사용을 막지 않는다. 반복 실패 시 출처가
+  확인된 새 빌드를 받기 전까지 현재 버전을 계속 사용할 수 있다.
+- 업데이트 때문에 Event Brief, task, backup이나 Calendar 원본을 삭제하지 않는다. 설치
+  뒤 version/build와 기존 데이터가 그대로 열리는지 확인한다.
 
 ## 2. 첫 실행과 캘린더 권한
 
@@ -353,6 +365,7 @@ restore/reset과 rollback까지 실패하면 그 session의 로컬 변경과 캘
 - backup record merge, 예약 backup, 자동 retention/pruning
 - schema가 다른 backup migration/downgrade, 임의 SQLite 복구와 backup 없는 bootstrap reset
 - exact Release에서 실제 export 파일 작성·backup import·reset mutation의 live gate
+- signed appcast를 사용한 이전 build → 새 build 자동 설치·재실행의 end-to-end gate
 
 알림·일정 검색·전체 Month부터 시작하는 후속 기능 순서와 현재 상용 기능 격차는
 [상용 기능 로드맵](commercial-feature-roadmap.md)을 따른다.

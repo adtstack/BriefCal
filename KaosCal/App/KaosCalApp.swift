@@ -3,9 +3,11 @@ import SwiftUI
 @main
 struct KaosCalApp: App {
     @StateObject private var bootstrap: AppBootstrapCoordinator
+    @StateObject private var updateController: UpdateController
 
     init() {
         _bootstrap = StateObject(wrappedValue: AppBootstrapCoordinator())
+        _updateController = StateObject(wrappedValue: UpdateController())
     }
 
     var body: some Scene {
@@ -20,7 +22,10 @@ struct KaosCalApp: App {
         }
         .defaultSize(width: 1_360, height: 840)
         .commands {
-            KaosCalCommands(appState: bootstrap.appState)
+            KaosCalCommands(
+                appState: bootstrap.appState,
+                updateController: updateController
+            )
         }
 
         Settings {
@@ -43,8 +48,16 @@ struct KaosCalApp: App {
 
 private struct KaosCalCommands: Commands {
     @ObservedObject var appState: AppState
+    @ObservedObject var updateController: UpdateController
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…") {
+                updateController.checkForUpdates()
+            }
+            .disabled(!updateController.canCheckForUpdates)
+        }
+
         CommandGroup(replacing: .newItem) {
             Button("New Event") {
                 appState.beginCreatingEvent()

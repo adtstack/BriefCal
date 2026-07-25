@@ -143,10 +143,17 @@ KaosCal은 AI, telemetry, 광고, 분석, KaosCal 계정 또는 KaosCal Cloud en
 - 사용자가 클릭해 여는 conference/reference HTTPS URL
 - 사용자가 선택한 iCloud Drive, OneDrive, Dropbox 또는 다른 cloud 폴더의 backup
   파일 동기화
+- 서명된 direct-download build가 구성된 경우, 새 버전을 확인하고 받기 위한 Sparkle의
+  정적 HTTPS appcast·archive 요청. KaosCal은 이 요청에 Calendar/Event Brief/task/backup
+  본문, provider credential, OAuth token 또는 원격 식별자를 추가하지 않는다. hosting
+  사업자는 통상적인 IP 주소, 요청 시각, user agent 같은 연결 metadata를 처리할 수 있다.
+  Sparkle의 선택적 anonymous system profile 전송은 plist와 runtime에서 모두 끈다.
 - macOS 자체의 시스템 backup, 진단 또는 보안 기능
 
 KaosCal은 이 외부 서비스의 계정, 보존, 공유 또는 삭제 정책을 제어하지 않는다.
-현재 dependency인 GRDB는 앱 내부의 로컬 SQLite 접근에 사용된다.
+GRDB는 앱 내부의 로컬 SQLite 접근에 사용되고, Sparkle은 구성된 direct-download build의
+업데이트 확인·검증·설치에만 사용된다. feed 구성이 없는 개발 빌드는 updater를 시작하지
+않는다.
 
 ## 보존과 삭제
 
@@ -174,11 +181,13 @@ KaosCal은 서버 계정이나 서버 측 Event Brief 저장소를 운영하지 
 - 모니터링되는 개인정보 문의 이메일 또는 form
 - 판매 지역별 법적 근거, 사용자 권리 접수 절차와 응답 기한
 - 연령 제한, 아동 대상 여부, 국제 이전 및 지역별 추가 고지
-- 배포 후 local-only 진단, 업데이트, 결제 또는 라이선스 제공자를 도입할지 여부와
-  그 최소 데이터 경계
+- 실제 update HTTPS hosting 사업자와 log 보존 기간
+- 배포 후 local-only 진단, 결제 또는 라이선스 제공자를 도입할지 여부와 그 최소 데이터 경계
 
 AI, KaosCal 서버·계정·Cloud, telemetry와 remote analytics는
 [ADR-019](docs/adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 제품 범위에서 영구
-제외한다. 업데이트·결제·license 또는 local-only 진단 경계가 결정되면 배포 전에 이 문서를
-실제 데이터 흐름에 맞게 갱신해야 한다. 보안 취약점 보고의 현재 경계는
+제외한다. 자동업데이트의 최소 경계는
+[ADR-020](docs/adr/ADR-020-signed-automatic-updates.md)에 고정했다. 실제 hosting,
+결제·license 또는 local-only 진단 경계가 결정되면 배포 전에 이 문서를 실제 데이터
+흐름에 맞게 갱신해야 한다. 보안 취약점 보고의 현재 경계는
 [SECURITY.md](SECURITY.md)를 참고한다.

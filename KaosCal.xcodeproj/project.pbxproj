@@ -58,6 +58,9 @@
 		H10000000000000000000001 /* LocalDataBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000001 /* LocalDataBackupService.swift */; };
 		H10000000000000000000002 /* LocalDataSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000002 /* LocalDataSettingsView.swift */; };
 		H10000000000000000000003 /* LocalDataBackupServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = H20000000000000000000003 /* LocalDataBackupServiceTests.swift */; };
+		I10000000000000000000001 /* UpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = I20000000000000000000001 /* UpdateController.swift */; };
+		I10000000000000000000002 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = I40000000000000000000001 /* Sparkle */; };
+		I10000000000000000000003 /* UpdateConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = I20000000000000000000002 /* UpdateConfigurationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -125,6 +128,8 @@
 		H20000000000000000000001 /* LocalDataBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataBackupService.swift; sourceTree = "<group>"; };
 		H20000000000000000000002 /* LocalDataSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataSettingsView.swift; sourceTree = "<group>"; };
 		H20000000000000000000003 /* LocalDataBackupServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataBackupServiceTests.swift; sourceTree = "<group>"; };
+		I20000000000000000000001 /* UpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateController.swift; sourceTree = "<group>"; };
+		I20000000000000000000002 /* UpdateConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateConfigurationTests.swift; sourceTree = "<group>"; };
 		AD0000000000000000000001 /* GoogleOAuth.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/GoogleOAuth.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -134,6 +139,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				B10000000000000000000001 /* GRDB in Frameworks */,
+				I10000000000000000000002 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -175,6 +181,7 @@
 			children = (
 				A20000000000000000000001 /* KaosCalApp.swift */,
 				A20000000000000000000002 /* AppState.swift */,
+				I20000000000000000000001 /* UpdateController.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -222,6 +229,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000009 /* AppStateTests.swift */,
+				I20000000000000000000002 /* UpdateConfigurationTests.swift */,
 				A2000000000000000000000F /* CalendarAccessTests.swift */,
 				G20000000000000000000003 /* CalendarClarityTests.swift */,
 				A20000000000000000000012 /* CalendarEventLayoutTests.swift */,
@@ -338,6 +346,7 @@
 			name = KaosCal;
 			packageProductDependencies = (
 				B20000000000000000000001 /* GRDB */,
+				I40000000000000000000001 /* Sparkle */,
 			);
 			productName = KaosCal;
 			productReference = A20000000000000000000008 /* KaosCal.app */;
@@ -391,6 +400,7 @@
 			mainGroup = A70000000000000000000001;
 			packageReferences = (
 				B30000000000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				I30000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = A70000000000000000000009 /* Products */;
 			projectDirPath = "";
@@ -426,6 +436,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000002 /* AppState.swift in Sources */,
+				I10000000000000000000001 /* UpdateController.swift in Sources */,
 				C10000000000000000000001 /* AppDatabase.swift in Sources */,
 				H10000000000000000000001 /* LocalDataBackupService.swift in Sources */,
 				G10000000000000000000002 /* CalendarRoleRepository.swift in Sources */,
@@ -472,6 +483,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000006 /* AppStateTests.swift in Sources */,
+				I10000000000000000000003 /* UpdateConfigurationTests.swift in Sources */,
 				A1000000000000000000000B /* CalendarAccessTests.swift in Sources */,
 				G10000000000000000000003 /* CalendarClarityTests.swift in Sources */,
 				A1000000000000000000000E /* CalendarEventLayoutTests.swift in Sources */,
@@ -680,6 +692,14 @@
 				version = 7.10.0;
 			};
 		};
+		I30000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle.git";
+			requirement = {
+				kind = exactVersion;
+				version = 2.9.2;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -687,6 +707,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B30000000000000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
+		};
+		I40000000000000000000001 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = I30000000000000000000001 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

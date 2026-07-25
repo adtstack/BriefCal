@@ -69,6 +69,14 @@ jobs:
           INFO="$APP/Contents/Info.plist"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.kaoscal"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")" = "14.0"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$INFO")" = ""
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO")" = ""
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$INFO")" = "true"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :SUEnableSystemProfiling' "$INFO")" = "false"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+          test -d "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
           test -z "$(find "$APP" \( -name '*.xctest' -o -name '*XCTest*' \) -print -quit)"
 
       - name: Package CI artifact

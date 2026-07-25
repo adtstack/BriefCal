@@ -1422,6 +1422,28 @@
 - 결과: **opaque Microsoft Graph user ID supported / clean full test and universal Release passed /
   live account retry pending**.
 
+## 2026-07-25 — signed automatic updater
+
+- 관련 ADR: [ADR-020](adr/ADR-020-signed-automatic-updates.md)
+- Sparkle `2.9.2` exact revision `6276ba2b404829d139c45ff98427cf90e2efc59b`를 SwiftPM에
+  추가하고 `UpdateController`가 유효한 HTTPS feed와 32-byte base64 Ed25519 공개 키가
+  있을 때만 updater를 시작하도록 했다. automatic check/install, 수동
+  `Check for Updates…`, signed feed와 extraction 전 검증을 활성화했다.
+- App Sandbox용 installer launcher와 bundle-scoped `-spks`/`-spki` mach lookup 예외를
+  추가했다. private key는 생성하거나 source/`.env`/app에 저장하지 않았고 public feed/key는
+  release build setting으로만 주입하도록 경계를 고정했다.
+- focused configuration 3-test와 전체 suite를 실행했다. 전체 결과는 **297 executed / 296
+  passed / 1 intentional `ManualEventKitQATests` skip / 0 failures**이며 result bundle은
+  `/private/tmp/KaosCalAutomaticUpdatesFinalTests.xcresult`다.
+- synthetic feed/public key를 넣은 universal ad-hoc Release는
+  `/private/tmp/KaosCalAutomaticUpdatesRelease/Build/Products/Release/KaosCal.app`, CDHash
+  `28dabda20f68e7894b09db2e3957922c4fda867d`다. strict deep code-sign, hardened runtime,
+  `x86_64`/`arm64`, Sparkle framework와 Autoupdate/Updater.app/Downloader.xpc/Installer.xpc,
+  exact updater entitlement, automatic/signed-feed plist 값과 XCTest 부재를 확인했다.
+- Sparkle anonymous system profiling은 Info.plist와 updater runtime에서 모두 비활성화했다.
+- 결과: **client-side automatic updater implemented / full regression and synthetic configured
+  Release audit passed / real Developer ID, signed HTTPS feed and previous-build upgrade pending**.
+
 ## 다음 항목 템플릿
 
 ```markdown

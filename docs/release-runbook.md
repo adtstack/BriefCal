@@ -36,9 +36,33 @@
   공지 경로 확정
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)의 최종 dependency/license 재검증과
   배포물 포함
+- Sparkle private key backup, 확정된 HTTPS feed/download URL과 직전 build upgrade smoke
 
 하나라도 준비되지 않으면 private beta artifact를 공개하지 않는다. 실패한 Developer ID
 절차를 ad-hoc signature나 Gatekeeper 우회 안내로 대체하지 않는다.
+
+## 0. 최초 한 번: update 신뢰 키 준비
+
+Sparkle `2.9.2` release의 `bin` 디렉터리를 검증된 위치에 준비하고 경로만 지정한다.
+package checkout이나 임의 최신 도구를 release 중 자동 다운로드하지 않는다.
+
+```sh
+export SPARKLE_TOOLS=''
+export SPARKLE_KEY_ACCOUNT='com.adtstack.kaoscal'
+
+: "${SPARKLE_TOOLS:?Set the verified Sparkle 2.9.2 bin directory}"
+test -x "$SPARKLE_TOOLS/generate_keys"
+test -x "$SPARKLE_TOOLS/generate_appcast"
+test -x "$SPARKLE_TOOLS/sign_update"
+
+"$SPARKLE_TOOLS/generate_keys" --account "$SPARKLE_KEY_ACCOUNT"
+```
+
+이 명령은 private key를 login Keychain에 저장하고 앱에 넣을 base64 공개 키만 출력한다.
+private key는 `generate_keys --account "$SPARKLE_KEY_ACCOUNT" -x <temporary-path>`로 한 번
+export한 뒤 그 민감한 파일을 암호화된 별도 보안 위치에 보관하고 일반 작업 폴더에서는
+제거한다. 저장소, `.env`, GitHub variable, 앱 번들, artifact와 log에는 private key를 넣지
+않는다. 공개 키 교체는 기존 설치본이 새 키를 신뢰할 bridge release 없이 진행하지 않는다.
 
 ## 1. Release 입력과 source 고정
 
@@ -51,12 +75,21 @@ export BUILD=''
 export DEVELOPMENT_TEAM=''
 export DEVELOPER_ID_APPLICATION=''
 export NOTARY_PROFILE=''
+export UPDATE_FEED_URL=''
+export UPDATE_DOWNLOAD_BASE_URL=''
+export SPARKLE_PUBLIC_ED_KEY=''
+export SPARKLE_TOOLS=''
+export SPARKLE_KEY_ACCOUNT='com.adtstack.kaoscal'
 
 : "${VERSION:?Set VERSION to the approved marketing version}"
 : "${BUILD:?Set BUILD to a unique monotonically increasing build number}"
 : "${DEVELOPMENT_TEAM:?Set DEVELOPMENT_TEAM from the Apple developer account}"
 : "${DEVELOPER_ID_APPLICATION:?Set the exact Developer ID Application identity name}"
 : "${NOTARY_PROFILE:?Set the validated notarytool Keychain profile name}"
+: "${UPDATE_FEED_URL:?Set the final HTTPS appcast.xml URL}"
+: "${UPDATE_DOWNLOAD_BASE_URL:?Set the HTTPS archive directory URL ending in /}"
+: "${SPARKLE_PUBLIC_ED_KEY:?Set the public key printed by generate_keys}"
+: "${SPARKLE_TOOLS:?Set the verified Sparkle 2.9.2 bin directory}"
 
 export RELEASE_ROOT="/private/tmp/KaosCal-release-${VERSION}-${BUILD}-$(date +%Y%m%d-%H%M%S)"
 export DERIVED_DATA="$RELEASE_ROOT/DerivedData"
@@ -85,6 +118,8 @@ security find-identity -v -p codesigning
 - [Package.resolved](../KaosCal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved)가
   review된 상태이며 package update가 섞이지 않았다.
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)의 release gate를 다시 수행했다.
+- `UPDATE_FEED_URL`과 `UPDATE_DOWNLOAD_BASE_URL`은 HTTPS이고 공개 키는 현재
+  `SPARKLE_KEY_ACCOUNT`의 Keychain private key와 짝이 맞는다.
 
 `MARKETING_VERSION`과 `CURRENT_PROJECT_VERSION`은 아래 archive 명령에서 명시적으로
 고정한다. 정식 release commit에도 같은 값을 project build settings에 반영하고 diff를
@@ -163,6 +198,8 @@ xcodebuild \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   MARKETING_VERSION="$VERSION" \
   CURRENT_PROJECT_VERSION="$BUILD" \
+  KAOSCAL_UPDATE_FEED_URL="$UPDATE_FEED_URL" \
+  KAOSCAL_SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" \
   archive
 ```
 
@@ -205,9 +242,17 @@ spctl --assess --type execute --verbose=4 "$APP_PATH"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :SUEnableSystemProfiling' "$APP_PATH/Contents/Info.plist"
 
 find "$APP_PATH" -name '*.xctest' -o -name '*XCTest*'
 otool -L "$APP_PATH/Contents/MacOS/KaosCal"
+test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework"
+test -x "$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
 ```
 
 통과 기준은 다음과 같다.
@@ -216,9 +261,15 @@ otool -L "$APP_PATH/Contents/MacOS/KaosCal"
   runtime flag가 보인다.
 - bundle/version/build/minimum이 각각 승인된 값, `com.adtstack.kaoscal`, macOS 14.0과
   일치한다.
+- `SUFeedURL`과 `SUPublicEDKey`가 승인된 공개 입력과 정확히 일치하고 automatic check/install,
+  signed-feed와 pre-extraction verification 값이 모두 `true`이며 system profiling은
+  `false`다.
 - entitlement는 app sandbox, Calendar access, user-selected read/write만 의도대로
-  포함하며 `get-task-allow`는 없다.
+  포함하며 updater mach lookup 예외는 `com.adtstack.kaoscal-spks`와
+  `com.adtstack.kaoscal-spki`뿐이고 `get-task-allow`는 없다.
 - XCTest bundle/link가 배포 app에 없다.
+- Sparkle framework, Autoupdate, Updater.app, Downloader.xpc와 Installer.xpc가 모두 있고
+  전체 app의 strict deep signature 검증이 통과한다.
 - `THIRD_PARTY_NOTICES.md`를 배포물에서 제공하기로 정한 위치가 실제 package에 있다.
 
 Notarization 전 `spctl` 결과는 host cache나 아직 없는 ticket 때문에 최종 판정이 아닐 수
@@ -339,6 +390,39 @@ cd -
 checksum은 전송 중 byte 일치를 확인할 뿐 Developer ID signature나 notarization을
 대체하지 않는다.
 
+### Sparkle signed appcast
+
+처음에는 빈 전용 디렉터리를 사용하고, 이후 release에서는 현재 게시된 `appcast.xml`과
+지원 중인 archive를 검증해 같은 디렉터리에 복원한다. 기존 feed가 가리키는 archive를
+같은 URL에서 다른 byte로 덮어쓰지 않는다. delta update는 별도 검증 전까지 생성하지 않는다.
+
+```sh
+export UPDATE_DIR="$RELEASE_ROOT/update-feed"
+mkdir -p "$UPDATE_DIR"
+cp "$FINAL_ARTIFACT" "$UPDATE_DIR/"
+
+"$SPARKLE_TOOLS/generate_appcast" \
+  --account "$SPARKLE_KEY_ACCOUNT" \
+  --download-url-prefix "$UPDATE_DOWNLOAD_BASE_URL" \
+  --maximum-versions 3 \
+  --maximum-deltas 0 \
+  "$UPDATE_DIR"
+
+test -s "$UPDATE_DIR/appcast.xml"
+xmllint --noout "$UPDATE_DIR/appcast.xml"
+"$SPARKLE_TOOLS/sign_update" --account "$SPARKLE_KEY_ACCOUNT" --verify \
+  "$UPDATE_DIR/appcast.xml"
+```
+
+`generate_appcast`가 archive 안의 `SUPublicEDKey`와 Keychain key 불일치를 보고하면 배포를
+중단한다. archive와 선택한 release note를 먼저 HTTPS 위치에 올리고, 실제 URL에서 byte와
+checksum을 다시 확인한 다음 **appcast를 마지막에** 교체한다. `SURequireSignedFeed` 때문에
+appcast도 같은 key로 서명돼야 하며, 생성 뒤 XML을 수동 수정하면 반드시 다시 서명한다.
+feed나 archive publish는 현재 ad-hoc GitHub prerelease workflow에 연결하지 않는다.
+private GitHub repository의 raw/release asset은 인증 없는 updater endpoint로 사용하지 않고,
+GitHub token을 앱이나 feed URL에 넣지 않는다. 공개 정적 HTTPS endpoint 또는 별도로 승인한
+최소 권한 hosting을 사용하고 실제 사업자와 log 보존 경계를 Privacy에 기록한다.
+
 ## 7. Clean-user smoke
 
 최종 artifact를 아직 KaosCal을 실행하지 않은 별도 **표준(non-admin) macOS 사용자**에서
@@ -392,6 +476,12 @@ container를 가진 표준 사용자에서 upgrade를 검증한다. 첫 beta에�
 최소 직전 release와 현재 지원하는 가장 오래된 migration baseline을 검증한다. 이 gate를
 수행하지 못하면 upgrade 안전을 통과로 기록하지 않고 기존 사용자에게 배포하지 않는다.
 
+자동업데이트를 활성화한 release에서는 같은 공개 키와 staging HTTPS feed를 가진 직전
+notarized build를 `/Applications`에서 실행한다. `Check for Updates…`와 정기 확인 각각에서
+candidate의 version/build를 발견하고, download·Ed25519/Developer ID 검증·설치·재실행 뒤
+새 version/build와 기존 local DB/Event Brief/task를 확인한다. offline, 404, 변조 archive와
+잘못 서명된 feed는 설치하지 않으면서 현재 앱의 핵심 기능을 계속 사용할 수 있어야 한다.
+
 ## 9. 공개와 rollback
 
 공개 직전 다음을 한 번 더 확인한다.
@@ -435,9 +525,14 @@ release note에 남긴다.
 - 최종 artifact 이름, byte size, SHA-256와 보관 위치
 - clean-user smoke 환경과 pass/fail/manual-pending 항목
 - 기존 사용자 upgrade smoke의 source/target version, schema와 persistence 결과
+- appcast URL/hash/signature, update archive URL/size/hash와 Sparkle key account/public-key
+  fingerprint, 자동업데이트 발견·설치·재실행 결과
 - rollback 호환 artifact와 schema/migration 판정
 
 Apple의 기준은 [Developer ID certificates](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/),
 [Notarizing macOS software before distribution](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution),
 [Customizing the notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)을
-따른다.
+따른다. Sparkle 설정·발행·sandbox helper는
+[Sparkle documentation](https://sparkle-project.org/documentation/),
+[Publishing an update](https://sparkle-project.org/documentation/publishing/)와
+[Sandboxing](https://sparkle-project.org/documentation/sandboxing/)을 함께 따른다.

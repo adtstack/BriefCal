@@ -71,6 +71,29 @@ Developer ID 인증서를 사용하지 않는 로컬 테스트 전달용이며, 
 대체하지 않는다. 정식 배포는 [Release Runbook](docs/release-runbook.md)의 Developer ID
 서명·notarization·stapling gate를 별도로 통과해야 한다.
 
+## 자동업데이트
+
+앱에는 Sparkle 2 기반 자동업데이트 수신기가 포함된다. 유효한 HTTPS appcast URL과
+32-byte Ed25519 공개 키가 build에 함께 들어간 경우에만 updater가 시작되며, 구성된 빌드는
+정기 확인·자동 설치와 앱 메뉴의 `Check for Updates…`를 제공한다. 값이 없는 일반 개발
+빌드는 기존 기능을 그대로 실행하고 업데이트 메뉴만 비활성화한다.
+
+로컬 `.env`에는 공개 값만 다음 형식으로 넣을 수 있다. xcconfig에서 `//`가 주석으로
+해석되지 않도록 URL의 두 slash 사이에 `$()`를 사용한다.
+
+```xcconfig
+KAOSCAL_UPDATE_FEED_URL = https:/$()/updates.example.com/kaoscal/appcast.xml
+KAOSCAL_SPARKLE_PUBLIC_ED_KEY = <Sparkle generate_keys가 출력한 공개 키>
+```
+
+Sparkle private key는 `.env`나 저장소에 넣지 않는다. 현재 GitHub prerelease의 ad-hoc
+`*-local.dmg`는 자동업데이트 원본이 아니다. 실제 update 발행은 Developer ID 서명,
+notarization, signed appcast와 이전 build upgrade smoke를 모두 요구하며 자세한 절차는
+[Release Runbook](docs/release-runbook.md), 결정 경계는
+[ADR-020](docs/adr/ADR-020-signed-automatic-updates.md)을 따른다.
+현재 origin 저장소는 private이므로 인증 없는 Sparkle client가 raw/release URL을 feed로
+사용할 수 없다. GitHub token을 앱에 넣지 말고, 발행 시 별도 정적 HTTPS endpoint를 정한다.
+
 EventKit 수동 QA에는 Calendar entitlement가 포함된 서명 앱이 필요하므로 `CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES`로 로컬 서명 빌드를 만든다. 실제 검증 명령과 결과는 [implementation-log.md](docs/implementation-log.md)에 남긴다.
 
 첫 실행에서는 앱 안의 `Allow Full Calendar Access`를 누른 뒤 macOS 권한 창에서 허용한다. 사용자가 권한을 허용했다고 보고했더라도 실행 중인 최신 서명 앱에 `Full calendar access`가 표시되는지 별도로 확인한다. 계정 비밀번호나 MFA 코드는 KaosCal에 입력하지 않는다. toolbar의 `Reload events`는 macOS EventKit의 현재 로컬 데이터를 다시 읽을 뿐 Exchange 원격 동기화를 강제하지 않는다.

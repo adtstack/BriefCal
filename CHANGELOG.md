@@ -57,6 +57,9 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
   status, 사용자 가이드, known issues, privacy/security 경계, release runbook, contributor
   guide, changelog, beta-license placeholder와 third-party notice도 추가했다. 이는 실제
   Developer ID 배포·지원 채널·승인된 앱 license/EULA 완료를 의미하지 않는다.
+- **Signed automatic updates:** Sparkle 2.9.2 기반 자동 확인·설치와 수동
+  `Check for Updates…`를 추가했다. updater는 유효한 HTTPS appcast와 Ed25519 공개 키가
+  주입된 빌드에서만 시작하며, 구성 없는 개발 빌드는 기존 동작을 유지한다.
 
 ### Security and safety
 
@@ -66,6 +69,8 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
   integrity와 foreign key를 검사하며 EventKit write를 수행하지 않는다.
 - Release configuration은 hardened runtime, sandbox, Calendar와 user-selected file
   entitlement를 사용하고 `get-task-allow`와 XCTest payload를 제외한다.
+- update feed와 archive는 Ed25519 서명을 필수로 하고 extraction 전에 검증한다. Sparkle
+  private key는 source와 앱 번들에 넣지 않으며 anonymous system profiling은 끈다.
 
 ### Known limitations
 

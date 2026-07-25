@@ -1,6 +1,6 @@
 # Current Status
 
-> 기준 시각: 2026-07-24, Asia/Seoul
+> 기준 시각: 2026-07-25, Asia/Seoul
 >
 > 용도: 현재 진행 상태의 요약. 범위·판정·실행 증거의 원문은 아래 근거 문서를 따른다.
 
@@ -18,9 +18,9 @@
   회의 링크 Join이다. C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, KaosCal
   계정/backend/cloud sync, telemetry, scheduling server와 모바일·웹 companion은
   [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 C4 영구 제외다.
-- **최신 완료 자동 결과:** 293 tests executed, 292 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
+- **최신 완료 자동 결과:** 297 tests executed, 296 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
 - **중간 체크포인트:** Apple CRUD 268-test, move/bulk/Undo 271-test와 calendar/planning 집중
-  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 아래 293-test 결과를 따른다.
+  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 아래 297-test 결과를 따른다.
 - **새 구현 / live 대기:** 네 provider 직접 CRUD, Apple 목록/account 이동과 Todoist
   project/section 이동, priority capability, local
   planning/checklist/repeat/timer, exact 날짜 filter·저장 view·통합 검색, provider task drag→calendar
@@ -32,6 +32,11 @@
   연결 재실행은 대기 중이다. Microsoft To Do는 ID token `oid`와 Graph `/me.id`를 중복
   상호 검증하지 않고, 실제 To Do API access token으로 조회한 opaque Graph `/me.id`를 형식
   변환 없이 tenant와 함께 계정 키의 정본으로 사용한다.
+- **자동업데이트 / 발행 대기:** Sparkle 2.9.2 수신기, automatic check/install,
+  `Check for Updates…`, signed-feed/pre-extraction 검증과 sandbox helper entitlement를
+  구현했다. 유효한 HTTPS feed와 32-byte Ed25519 공개 키가 없으면 updater를 시작하지 않는다.
+  실제 Developer ID/notarized archive, HTTPS appcast와 이전-build end-to-end 설치는 아직
+  없으며 현재 ad-hoc GitHub prerelease는 update feed가 아니다.
 - **외부 베타 판정:** v1에서는 더 이상 추진하지 않는다. final live UI/accessibility/Exchange gate, 실제 bootstrap fault와 Developer ID/notary/license/support 입력은 알려진 제한으로 보존한다.
 - **증거 경계:** 최신 Phase 10 Release는 EventKit/Exchange write나 실제 손상 DB recovery를 실행하지 않았다. 실제 Exchange 결과는 아래의 별도 과거 live run에만 귀속한다.
 
@@ -51,10 +56,33 @@
 | 9 · Backup / Settings | 구현·213-test·signed Release·운영 DB 격리·live visual 완료 | healthy current-schema export/import/reset, recovery ZIP, strict archive/schema 검사, 실제 Settings scroll·file panel·typed `RESET` activation | 실제 export 파일 작성·backup 선택 뒤 import/reset mutation, real rollback failure |
 | 10 · Paid beta polish | 구현·220-test·ad-hoc Release checkpoint 완료, 외부 beta blocked | onboarding, `⌘R`, empty state, bootstrap-only strict restore/quarantine/rollback, 운영 문서와 license placeholder | final exact Release UI/VoiceOver, 실제 손상 DB recovery, Developer ID/notary/package/clean user, 승인 EULA·support/privacy 연락처와 남은 live Exchange gate |
 
-표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 293-test suite,
+표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 297-test suite,
 review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
+
+### 2026-07-25 signed automatic updater 구현·Release gate
+
+- 결과: **297 executed / 296 passed / 1 intentional manual-only skip / 0 failures**,
+  `TEST SUCCEEDED`
+- result bundle:
+  `/private/tmp/KaosCalAutomaticUpdatesFinalTests.xcresult`
+- Sparkle `2.9.2` exact revision `6276ba2b404829d139c45ff98427cf90e2efc59b`를 pin하고,
+  HTTPS feed와 32-byte base64 공개 키 구성의 valid/missing/insecure 계약 3건을 추가했다.
+  구성 없는 build는 앱을 정상 실행하되 updater와 update menu action을 비활성화한다.
+- synthetic public configuration을 주입한 universal ad-hoc Release:
+  `/private/tmp/KaosCalAutomaticUpdatesRelease/Build/Products/Release/KaosCal.app`, CDHash
+  `28dabda20f68e7894b09db2e3957922c4fda867d`.
+- `x86_64`/`arm64`, hardened runtime, strict deep code-sign과 Sparkle framework,
+  Autoupdate, Updater.app, Downloader.xpc, Installer.xpc 포함을 확인했다. app entitlement의
+  mach service는 `com.adtstack.kaoscal-spks`와 `com.adtstack.kaoscal-spki`이고 XCTest는 없다.
+  Info.plist의 automatic check/install, signed-feed와 pre-extraction verification도 `true`이고
+  Sparkle system profiling은 plist/runtime에서 비활성화했다.
+- 이 artifact의 feed와 공개 키는 치환 검증용 synthetic 값이며 실제 update를 발행하지
+  않았다. Developer ID/notarization, signed HTTPS appcast, 변조/오프라인 실패와 직전
+  notarized build의 자동 설치·재실행·local DB 보존은 live/manual pending이다.
+- 현재 GitHub origin은 private이라 인증 없는 Sparkle feed로 직접 사용할 수 없다. token을
+  앱에 포함하지 않고 별도 정적 HTTPS endpoint를 정하는 운영 입력이 남아 있다.
 
 ### 2026-07-24 Microsoft Graph identity 정본화·universal Release gate
 
@@ -338,6 +366,8 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 7. 실제 export 파일 작성, backup 선택 뒤 import/reset mutation과 core restore/rollback fault
 8. final Phase 10 exact Release onboarding/recovery UI, keyboard/VoiceOver와 복제 test-user의 실제 failed-bootstrap recovery
 9. clean user/account beta QA, Developer ID signing, notarization, stapling, DMG/ZIP, 승인 EULA·support/privacy 연락처와 설치·철회 절차
+10. Sparkle private key backup, signed HTTPS appcast/archive 발행과 직전 notarized build의
+    자동업데이트 발견·설치·재실행·offline/변조 거부·local DB 보존
 
 상세 절차와 판정 기준은 [QA checklist](qa-checklist.md), fixture별 실계정 상태는 [Exchange compatibility](exchange-compatibility.md)를 따른다.
 Phase 10의 외부 입력과 미검증 항목은 [Phase 10 Blockers](phase10-blockers.md)에 계속 기록한다.

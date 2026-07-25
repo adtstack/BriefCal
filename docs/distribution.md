@@ -7,6 +7,8 @@
 
 KaosCal v1은 direct download first로 간다.
 Mac App Store는 sandbox, 심사, 라이선스 정책, 업데이트 전략이 안정된 뒤 검토한다.
+Direct-download build의 업데이트는 [ADR-020](adr/ADR-020-signed-automatic-updates.md)에 따라
+Sparkle 2의 HTTPS signed appcast를 사용한다. App Store/TestFlight 빌드와 함께 사용하지 않는다.
 
 첫 베타의 최소 지원 버전은 macOS 14이며, Exchange 지원 문구는 macOS Calendar에 구성된 Exchange Online calendar로 한정한다.
 
@@ -30,7 +32,7 @@ Mac App Store는 sandbox, 심사, 라이선스 정책, 업데이트 전략이 �
 - notarization
 - stapling
 - dmg 또는 zip packaging
-- crash-safe update 안내
+- Sparkle Ed25519 key backup, HTTPS signed appcast와 crash-safe update 안내
 - privacy 문구
 - license key 또는 결제 provider 결정
 - 앱 배포 라이선스/EULA 결정
@@ -100,6 +102,7 @@ Calendar는 macOS EventKit, 연결한 task는 이 Mac과 해당 provider 사이�
 - 사용자 가이드와 known issues 공개
 - Privacy·Security·앱 라이선스/EULA·third-party notice 검토
 - release artifact checksum과 철회/rollback 절차 기록
+- 직전 notarized build에서 자동업데이트 발견·설치·재실행과 local DB 보존 확인
 
 ## Landing page 최소 구성
 

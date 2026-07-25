@@ -807,6 +807,26 @@ App icon asset/Release gate:
 - `AppIcon.icns` 역추출 16/32/128/256px alpha, corner 0/center 255, Info.plist icon keys, Assets.car와 XCTest 비포함 확인
 - exact Release의 1512×949 onscreen 창, NSWorkspace valid icon, 종료 후 process 0 확인. 테스트·bootstrap 전후 direct/sandbox production DB와 WAL/SHM 상태 불변
 
+Signed automatic update 자동/Release gate:
+
+- `SUFeedURL`이 host를 가진 HTTPS이고 `SUPublicEDKey`가 32-byte Ed25519 공개 키의 base64일
+  때만 구성을 수락한다. missing/empty, HTTP, malformed base64와 31-byte key는 모두 거부한다.
+- 구성 없는 build는 Sparkle controller를 시작하지 않고 `Check for Updates…`를 비활성화한다.
+  Calendar/Event Brief/task/local DB의 시작과 사용은 그대로 유지한다.
+- 전체 자동 결과: **297 executed / 296 passed / 1 intentional manual-only skip / 0 failures**;
+  `/private/tmp/KaosCalAutomaticUpdatesFinalTests.xcresult`.
+- synthetic HTTPS/public-key build-setting을 넣은 universal ad-hoc Release:
+  `/private/tmp/KaosCalAutomaticUpdatesRelease/Build/Products/Release/KaosCal.app`, CDHash
+  `28dabda20f68e7894b09db2e3957922c4fda867d`. strict deep code-sign, hardened runtime,
+  `x86_64`/`arm64`, Sparkle 2.9.2 link와 framework/Autoupdate/Updater.app/Downloader.xpc/
+  Installer.xpc payload, exact `-spks`/`-spki` entitlement, automatic/signed-feed plist와 XCTest
+  부재를 확인했다. optional Sparkle system profiling은 plist/runtime에서 껐다.
+- 위 synthetic artifact로 실제 network/install은 실행하지 않았다. Developer ID/notarized
+  직전 build와 candidate, signed staging appcast/archive를 준비해 update 발견, manual/periodic
+  check, download, 재실행, version/build 증가와 local DB 보존을 확인해야 한다. offline, 404,
+  변조 archive, 다른 key로 서명된 feed는 설치하지 않으면서 핵심 기능을 계속 사용할 수
+  있어야 한다. 현재 ad-hoc GitHub prerelease를 이 live gate에 사용하지 않는다.
+
 상세 명령·artifact·DB 수치와 실계정 미검증 상태는 구현 로그와 Exchange compatibility 문서에 기록한다.
 
 ## Beta gate

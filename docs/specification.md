@@ -1,9 +1,10 @@
 # KaosCal 제품·시스템 스펙
 
 > 상태: Living Specification
-> 기준일: 2026-07-20, Asia/Seoul
+> 기준일: 2026-07-25, Asia/Seoul
 > 기준선: v1 동결 범위, 구현된 v2 T0–T3, T4 결정, T5, saved Calendar Set,
-> `v11_local_task_planning`과 ADR-019 local-only 경계를 포함한 저장소 작업 트리
+> `v11_local_task_planning`, ADR-019 local-only 경계와 ADR-020 signed updater를 포함한
+> 저장소 작업 트리
 > 목적: 새 기능과 변경을 코드보다 먼저 합의하고, 구현·테스트·수동 검증을 같은 요구사항 ID로 추적한다.
 
 ## 1. 문서의 역할
@@ -19,6 +20,8 @@
   후속 `COM-*` 인수 기준
 - [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md): 이 Mac 단일 실행·저장,
   AI와 KaosCal Cloud 영구 제외, 허용되는 provider 직접 동기화 경계
+- [ADR-020](adr/ADR-020-signed-automatic-updates.md): direct-download build의 서명된
+  자동업데이트와 dormant 개발 빌드 경계
 - [QA Checklist](qa-checklist.md): 수동 시나리오와 상세 판정 절차
 - [Implementation Log](implementation-log.md): 실행한 명령, artifact와 시간순 결과
 
@@ -83,6 +86,8 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
   backend, cloud sync, telemetry와 remote automation을 도입하지 않는다.
 - Calendar sync는 EventKit, task sync는 사용자가 선택한 provider와 이 Mac의 직접 연결로
   수행하며 KaosCal 중계 서버를 경유하지 않는다.
+- 배포 update는 사용자 본문을 전송하지 않는 정적 HTTPS signed feed만 사용할 수 있고,
+  구성·검증 실패가 local-only 핵심 흐름을 막아서는 안 된다.
 
 ## 3. 시스템 경계와 데이터 소유권
 
@@ -108,6 +113,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `SYS-001` | 기준선 | macOS 14 이상 네이티브 앱으로 빌드·실행해야 한다. SwiftUI UI, EventKit calendar 경계, GRDB/SQLite local store를 사용한다. |
 | `SYS-002` | 기준선 | KaosCal 기능과 KaosCal 소유 데이터는 이 Mac에서만 실행·저장해야 한다. AI SDK/API, KaosCal account/backend/cloud database, telemetry, remote config와 cross-device local-data sync를 추가해서는 안 된다. |
 | `SYS-003` | 구현 / live 대기 | Calendar는 EventKit, 연결한 event task는 이 Mac과 사용자가 고른 provider 사이에서 직접 동기화해야 한다. KaosCal relay를 사용하면 안 되고 OAuth token은 Keychain에만 저장하며 provider가 없어도 local-only 흐름을 유지해야 한다. |
+| `SYS-004` | 구현 / live 대기 | direct-download build는 유효한 HTTPS `SUFeedURL`과 32-byte Ed25519 공개 키가 모두 있을 때만 Sparkle updater를 시작해야 한다. 구성된 빌드는 자동 확인·설치와 수동 확인을 제공하고 signed appcast/archive 및 Developer ID/notarized app만 받아야 한다. 구성 없음, offline, feed 또는 서명 오류는 Calendar/Event Brief/task/local DB 동작을 막거나 데이터를 변경해서는 안 된다. 현재 ad-hoc GitHub prerelease는 update feed에 포함하면 안 되며 실제 이전-build upgrade는 별도 live gate다. |
 | `CAL-001` | 기준선 | Calendar 권한을 `notDetermined`, `fullAccess`, `denied`, `restricted`, `writeOnly`, `unknown`으로 구분해야 한다. full access가 아니면 event fetch를 시작해서는 안 된다. |
 | `CAL-002` | 기준선 | 첫 요청, 거부, 철회, 알 수 없는 미래 상태를 안전한 UI로 보여 줘야 한다. 권한 철회 시 메모리의 calendar/event/selection을 비워 이전 원본 정보가 남지 않아야 한다. |
 | `CAL-003` | 기준선 | 시작 시 오늘 기준 -30일~+90일을 조회하고, 사용자가 범위를 벗어나면 visible interval 앞 30일·뒤 90일을 포함해 다시 조회해야 한다. |
@@ -346,6 +352,7 @@ linked
 | `PERF-002` | EventKit 변경 알림과 range fetch는 중복 요청을 병합·취소할 수 있어야 하며 UI navigation이 stale 원본 객체에 의존하면 안 된다. |
 | `ACC-001` | icon-only 상태는 접근성 label/help를 가져야 하고 source, role, restriction, sync 상태는 색만으로 구분하면 안 된다. |
 | `REL-001` | 자동 test, offscreen render, live provider/Exchange, exact Release audit를 서로 다른 증거 등급으로 기록해야 한다. 낮은 등급의 증거로 높은 등급 gate를 통과시켜서는 안 된다. |
+| `REL-002` | update build number는 단조 증가해야 하고 Sparkle private key를 source·`.env`·app bundle·log에 넣어서는 안 된다. appcast/archive 서명 뒤 byte를 바꾸지 않으며, 직전 notarized build에서 발견·설치·재실행·local DB 보존을 통과하기 전 자동업데이트 배포를 선언하면 안 된다. |
 
 ## 8. 명시적 제외 범위
 
@@ -396,7 +403,8 @@ linked
 
 | 요구사항 | 설계·결정 | 주요 구현 | 자동 검증 |
 | --- | --- | --- | --- |
-| `SYS-*`, `CAL-001`–`CAL-006` | [Architecture](architecture.md), [EventKit Decisions](eventkit-decisions.md), [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md) | `KaosCalApp`, `AppState`, `CalendarProvider`, `EventKitProvider`, task provider client/Keychain 경계 | `CalendarAccessTests`, `AppStateTests`, provider/local-only contract tests |
+| `SYS-001`–`SYS-003`, `CAL-001`–`CAL-006` | [Architecture](architecture.md), [EventKit Decisions](eventkit-decisions.md), [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md) | `KaosCalApp`, `AppState`, `CalendarProvider`, `EventKitProvider`, task provider client/Keychain 경계 | `CalendarAccessTests`, `AppStateTests`, provider/local-only contract tests |
+| `SYS-004`, `REL-002` | [ADR-020](adr/ADR-020-signed-automatic-updates.md), [Release Runbook](release-runbook.md) | `UpdateController`, Info.plist updater policy, sandbox entitlements, Sparkle 2 | `UpdateConfigurationTests`, app payload/signature audit, previous-build upgrade smoke |
 | `UI-001`–`UI-004`, `TIME-*` | [ADR-003](adr/ADR-003-all-day-time-zone-and-recurrence.md), [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md) | `CalendarTimelineView`, `CalendarEventLayout`, `CalendarEventDateFormatting` | `CalendarEventLayoutTests`, `CalendarEventEditingTests` |
 | `CAL-007`, `UI-005` | [ADR-002](adr/ADR-002-calendar-and-task-experience.md) | `MiniMonthGrid`, `MiniMonthView`, `AppState`, `CalendarEventDateFormatting` | `AppStateTests`, `CalendarEventLayoutTests`, mini month live QA |
 | `CFG-001`–`CFG-005` | [ADR-014](adr/ADR-014-multi-calendar-clarity.md) | `CalendarClarity`, `CalendarRoleRepository`, `AppState` | `CalendarClarityTests`, `AppStateTests` |
@@ -453,6 +461,7 @@ linked
 - 실제 export/import/reset mutation과 손상 sandbox DB recovery
 - final exact Release의 onboarding, keyboard/VoiceOver와 clean-user 실행
 - Developer ID signing, notarization, stapling, 승인 EULA와 support/privacy 연락처
+- signed HTTPS appcast 발행과 직전 notarized build의 end-to-end 자동업데이트
 - C1 `COM-001`~`COM-005`의 상세 설계와 구현. C2/C3는
   [상용 기능 로드맵](commercial-feature-roadmap.md)의 ADR 순서를 따른다.
 

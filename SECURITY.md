@@ -73,6 +73,12 @@ KaosCal은 credential을 전용 필드로 수집하지 않지만 사용자가 no
   background content upload를 사용하지 않는다.
 - 이 Mac 단일 실행·저장과 허용되는 외부 동기화 경계는
   [ADR-019](docs/adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)을 따른다.
+- direct-download updater는 유효한 HTTPS feed와 Ed25519 공개 키가 있는 빌드에서만
+  시작한다. signed appcast·archive를 extraction 전에 검증하고, Developer ID/notarized
+  앱만 release 대상으로 허용한다. update 요청에 사용자 본문이나 provider credential을
+  추가하지 않고 Sparkle anonymous system profiling을 명시적으로 끈다.
+- Sparkle private key는 source, `.env`, app bundle, CI log와 release note에 넣지 않는다.
+  App Sandbox helper용 mach lookup 예외는 KaosCal bundle ID의 `-spks`, `-spki`로 한정한다.
 - Sandbox 밖의 manual backup 파일은 사용자가 Open/Save panel에서 명시적으로 고른
   위치만 읽거나 쓴다.
 - Event Brief/task/planning/checklist/role·usage/saved Calendar Set/change history는 로컬 SQLite에 저장된다. 앱은 live SQLite에
@@ -139,6 +145,11 @@ Developer ID 서명, notarization, stapling과 최종 DMG/ZIP 배포 절차는 �
 요구사항으로 남아 있다. 저장소의 ad-hoc signed Release checkpoint는 개발 검증
 증거일 뿐 공용 배포 provenance가 아니다. 출처를 확인할 수 없는 build를 실행하거나
 Gatekeeper를 우회하지 않는다.
+
+Sparkle 2.9.2 수신기와 signed-feed 강제 정책은 구현됐지만 실제 HTTPS feed, Developer ID
+update artifact와 이전-build end-to-end 설치 증거는 아직 없다. 현재 GitHub Actions의
+ad-hoc `*-local.dmg`를 update feed로 사용하거나 서명 오류를 우회하지 않는다. 자세한
+발행·키 회전 경계는 [ADR-020](docs/adr/ADR-020-signed-automatic-updates.md)을 따른다.
 
 현재 알려진 제품/복구 제한은 [사용자 가이드](docs/user-guide.md#9-현재-제한과-지원-경계),
 데이터 처리와 plaintext 경계는 [PRIVACY.md](PRIVACY.md), backup format은

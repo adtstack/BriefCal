@@ -1,4 +1,6 @@
-// The real value is loaded from the repository-root .env file when present.
-// .env is ignored by Git and is never copied into the application bundle.
+// Local build values are loaded from the repository-root .env file when present.
+// .env is ignored by Git. Never place the Sparkle private key in this file.
 KAOSCAL_GOOGLE_TASKS_CLIENT_SECRET =
+KAOSCAL_UPDATE_FEED_URL =
+KAOSCAL_SPARKLE_PUBLIC_ED_KEY =
 #include? "../.env"
