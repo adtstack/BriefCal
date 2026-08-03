@@ -14,6 +14,8 @@
   명시적 기한 제거 계약을 자동 검증했다. 2026-08-02에는 `COM-003` Full Month MVP와
   상단 calendar view 전환기를 구현했다. 2026-08-03에는 Graph/OAuth 경계, 반복 완료 원자성,
   local data maintenance 격리, 검색·draft·refresh 복구 UX와 자동 품질 gate를 보강했다.
+  이어서 EventKit read를 async serial executor 경계로 옮기고 실제 앱을 구동하는 격리 UI
+  automation target과 세 가지 핵심 시나리오를 추가했다.
 - **다음 기준:** v1 유지보수 예외는 [v1 동결 결정](v1-freeze.md)을 따르고, 새 동작은 [제품·시스템 스펙](specification.md)의 요구사항 ID와 [v2 실행계획](v2-execution-plan.md)을 먼저 갱신한다.
 - **후속 구현 순서:** [상용 기능 로드맵](commercial-feature-roadmap.md)의 C0~C4를 따른다.
   C0는 현재 T0~T5/v10 live·Release 증거다. C1 가운데 Full Month는 구현·자동/offscreen
@@ -21,12 +23,14 @@
   C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, KaosCal
   계정/backend/cloud sync, telemetry, scheduling server와 모바일·웹 companion은
   [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 C4 영구 제외다.
-- **최신 완료 판정 자동 결과:** 319 tests executed, 318 passed, 1 intentional
+- **최신 완료 판정 자동 결과:** 322 tests executed, 321 passed, 1 intentional
   `ManualEventKitQATests` skip, 0 failures. Result bundle:
-  `/private/tmp/KaosCalQualityFinal2.xcresult`. `KaosCal.app` line coverage는
-  **53.63% (29,559/55,121)**로 50% floor를 통과했고 정적 분석도 통과했다.
+  `/private/tmp/KaosCalUIAsyncPostFixUnit.xcresult`. `KaosCal.app` line coverage는
+  **53.61% (29,698/55,395)**로 50% floor를 통과했다. 정적 분석, unsigned Release,
+  EventKit async 경계의 strict concurrency build와 UI target의 ad-hoc signed
+  `build-for-testing`도 통과했다.
 - **중간 체크포인트:** Apple CRUD 268-test, move/bulk/Undo 271-test와 calendar/planning 집중
-  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 위 312-test 결과를 따른다.
+  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 위 322-test 결과를 따른다.
 - **새 구현 / live 대기:** 네 provider 직접 CRUD, Apple 목록/account 이동과 Todoist
   project/section 이동, priority capability, local
   planning/checklist/repeat/timer, exact 날짜 filter·저장 view·통합 검색, provider task drag→calendar
@@ -69,10 +73,34 @@
 | 9 · Backup / Settings | 구현·213-test·signed Release·운영 DB 격리·live visual 완료 | healthy current-schema export/import/reset, recovery ZIP, strict archive/schema 검사, 실제 Settings scroll·file panel·typed `RESET` activation | 실제 export 파일 작성·backup 선택 뒤 import/reset mutation, real rollback failure |
 | 10 · Paid beta polish | 구현·220-test·ad-hoc Release checkpoint 완료, 외부 beta blocked | onboarding, `⌘R`, empty state, bootstrap-only strict restore/quarantine/rollback, 운영 문서와 license placeholder | final exact Release UI/VoiceOver, 실제 손상 DB recovery, Developer ID/notary/package/clean user, 승인 EULA·support/privacy 연락처와 남은 live Exchange gate |
 
-표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 완료 판정 319-test suite,
+표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 완료 판정 322-test suite,
 review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
+
+### 2026-08-03 UI 자동화·EventKit 비동기 경계 checkpoint
+
+- unit 결과: 전체 **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**. Result bundle은 `/private/tmp/KaosCalUIAsyncPostFixUnit.xcresult`다.
+  `KaosCal.app` line coverage는 **53.61% (29,698/55,395)**로 50% floor를 통과했다.
+- EventKit read 경계: `listCalendars`, `fetchEvents`, `lookupEvent`를 async 계약으로 바꾸고
+  long-lived `EKEventStore`의 모든 read를 전용 serial executor에서 실행한다. raw `EKEvent`와
+  `EKCalendar`는 executor 안에서 `Sendable` 값 snapshot으로 변환한 뒤에만 AppState로 돌아온다.
+  write도 같은 executor에 직렬화해 read/write store 접근 순서를 보존했다. strict concurrency
+  complete build는 통과했지만 다른 provider 파일의 기존 warning까지 해결한 것으로 보지 않는다.
+- UI automation: `KaosCalUITests` target과 Debug-only `--ui-testing` bootstrap을 추가했다.
+  in-memory DB와 고정 calendar fixture로 Day/Week/Month/Agenda/Tasks 이동, Agenda event→Inspector/
+  Event Brief→new editor, transient refresh 실패 뒤 stale data+warning/Retry 보존의 세 시나리오를
+  작성했다. 실제 Calendar, Keychain, provider 계정과 운영 DB는 사용하지 않는다.
+- 실행 경계: UI target의 ad-hoc signed `build-for-testing`은 통과했다. 현재 로컬 host는
+  Developer Mode가 disabled라 UI test runner가 테스트 본문 전에 초기화되지 않았으므로 세
+  시나리오를 pass로 계산하지 않는다. 시스템 전체 설정은 명시적 사용자 승인 없이 바꾸지 않았다.
+  CI/Release는 unit suite와 UI automation을 분리하고 두 `.xcresult`를 모두 보존한다.
+- build gate: `xcodebuild analyze`, unsigned Release build와 Release app의 bundle ID·macOS 14
+  minimum·XCTest 미포함 검증이 통과했다.
+- 남은 비배포 품질 경계: 승인된 host에서 UI 세 시나리오 실제 실행, 실창 VoiceOver/keyboard,
+  전면 localization, 대형 AppState/View 책임 분리, EventKit 외 provider의 남은 strict concurrency
+  warning과 실제 provider fixture 검증이다.
 
 ### 2026-08-03 안전·원자성·품질 보강 checkpoint
 
@@ -96,9 +124,9 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 품질 자동화: coverage 50% floor, 정적 분석과 최소 지원 macOS 호환성 job을 CI/Release gate에
   추가했다. Todoist 동일 task mutation은 순서대로 직렬화하고 제품 UI의 혼재된 한국어 문구를
   현재 기준 언어인 영어로 정리했다.
-- 남은 비배포 품질 경계: 실제 UI automation target과 실창 VoiceOver/keyboard 검증, 전면
-  localization, EventKit read 경로의 명시적 async/off-main 경계, 대형 AppState/View 파일의
-  책임 분리는 후속 구조 개선으로 남아 있다. 실제 provider 계정 검증도 자동 fixture와 별개다.
+- 이 checkpoint에서 남았던 UI automation target과 EventKit read async/off-main 경계는 위 후속
+  checkpoint에서 구현했다. 실창 VoiceOver/keyboard, 전면 localization, 대형 AppState/View
+  책임 분리와 실제 provider 계정 검증은 계속 별도다.
 
 ### 2026-08-02 Full Month MVP 구현 checkpoint
 

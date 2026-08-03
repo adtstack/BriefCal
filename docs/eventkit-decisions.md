@@ -147,6 +147,12 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 
 - 앱 생명주기 동안 하나의 `EKEventStore`를 유지한다.
 - EventKit 객체를 UI state에 보관하지 않고 `CalendarSource`와 `DisplayEvent` 값 snapshot으로 변환한다.
+- calendar list, event fetch와 strong lookup은 async provider 계약으로 노출하고 전용 serial
+  executor에서 실행한다. raw `EKCalendar`/`EKEvent`는 executor 안에서 `Sendable` snapshot으로
+  변환하며 actor나 task 경계를 넘어 전달하지 않는다.
+- create/update/delete와 default calendar 조회도 같은 executor에 직렬화해 read와 write가 하나의
+  `EKEventStore`에 동시에 진입하지 않게 한다. 현행 mutation API 자체는 동기 계약이므로 이 결정은
+  read off-main 경계를 보장하며 모든 write latency를 비동기로 바꿨다는 의미는 아니다.
 - 초기 조회 범위는 실행 시점의 오늘을 기준으로 -30일~+90일이다.
 - 사용자가 loaded interval 밖으로 이동하면 visible interval 앞 30일과 뒤 90일을 포함하는 범위를 다시 가져온다. 현재 화면으로 되돌아오면 대기 중인 먼 범위 조회를 취소한다.
 - toolbar의 `Reload events`는 마지막 loaded interval의 현재 EventKit snapshot을 다시 조회한다. Exchange 서버 동기화 자체는 macOS Calendar가 담당하며 KaosCal이 강제하지 않는다.

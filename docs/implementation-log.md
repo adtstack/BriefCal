@@ -1507,6 +1507,33 @@
 - 남은 비배포 품질 경계: 실제 UI automation target과 실창 accessibility, 전면 localization,
   EventKit read의 async/off-main 경계, 대형 AppState/View 책임 분리, 실제 provider fixture다.
 
+## 2026-08-03 — 격리 UI automation과 EventKit read 비동기 경계
+
+- `CalendarProviding`의 list/fetch/strong lookup을 async 계약으로 바꾸고 AppState의 모든 호출을
+  `await` 경계로 갱신했다. `EventKitProvider`는 long-lived `EKEventStore` 접근을 전용 serial
+  executor에 모으며, read closure 안에서 raw EventKit object를 `Sendable` snapshot으로 바꿔
+  main actor에 반환한다. 동기 mutation도 같은 executor로 직렬화해 store 접근 순서를 보존한다.
+- Debug-only `--ui-testing` bootstrap과 `KaosCalUITests` target을 추가했다. process-local calendar
+  fixture, 고정 시각, in-memory Context DB를 사용하고 onboarding을 건너뛰며 실제 Calendar,
+  Keychain, provider 계정과 운영 DB에는 접근하지 않는다. Release에서는 이 mode가 컴파일·활성화되지
+  않는다.
+- UI 시나리오는 calendar/task workspace 이동, Agenda fixture에서 Inspector·Event Brief와 새 일정
+  editor 진입, 주입한 transient refresh 실패 뒤 기존 event와 warning/Retry 보존 세 가지다.
+  CI/Release에서는 unit suite와 UI suite를 signing 조건별로 분리하고 두 result bundle을 보존한다.
+- 자동 검증: 전체 **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**, result bundle `/private/tmp/KaosCalUIAsyncPostFixUnit.xcresult`. `KaosCal.app` line
+  coverage **53.61% (29,698/55,395)**로 50% floor를 통과했다. 정적 분석, unsigned Release,
+  strict concurrency complete build와 UI target의 ad-hoc signed `build-for-testing`도 성공했다.
+  Release app은 bundle ID, macOS 14 minimum과 XCTest 미포함을 확인했다.
+- UI 실행 경계: 현재 host에서 `DevToolsSecurity -status`가 disabled였고 UI runner가 테스트
+  본문 전에 초기화되지 않았다. 시스템 전체 설정을 명시적 사용자 승인 없이 바꾸지 않았으므로
+  세 UI test는 pass로 기록하지 않는다.
+- 결과: **EventKit read async/off-main 경계와 격리 UI automation 구현·컴파일 완료 / local UI
+  실행은 host authorization 대기**.
+- 남은 비배포 품질 경계: 승인된 host의 UI suite 실제 실행, 실창 accessibility/keyboard,
+  전면 localization, 대형 AppState/View 책임 분리, 다른 provider의 strict concurrency warning과
+  실제 provider fixture다.
+
 ## 다음 항목 템플릿
 
 ```markdown

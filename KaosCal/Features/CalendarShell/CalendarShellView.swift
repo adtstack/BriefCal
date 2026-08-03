@@ -4903,11 +4903,11 @@ private final class PreviewCalendarProvider: CalendarProviding {
     var storeChangeHandler: (() -> Void)?
 
     func requestFullAccess() async throws -> Bool { false }
-    func listCalendars() throws -> [CalendarSource] { [] }
-    func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] { [] }
+    func listCalendars() async throws -> [CalendarSource] { [] }
+    func fetchEvents(in interval: DateInterval) async throws -> [DisplayEvent] { [] }
     func lookupEvent(
         _ query: CalendarEventLookupQuery
-    ) throws -> CalendarEventLookupResult {
+    ) async throws -> CalendarEventLookupResult {
         throw CalendarEventLookupError.fullAccessRequired
     }
     func defaultCalendarIdentifierForNewEvents() -> String? { nil }

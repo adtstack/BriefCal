@@ -17,6 +17,24 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 권한을 거부한 상태
 - 앱 재설치 또는 DB 초기화 상태
 
+## 2026-08-03 UI 자동화·EventKit 비동기 경계 gate
+
+- unit 결과: **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**. Result bundle: `/private/tmp/KaosCalUIAsyncPostFixUnit.xcresult`.
+- coverage/build: `KaosCal.app` line coverage **53.61% (29,698/55,395)**로 50% floor,
+  정적 분석, unsigned Release와 Release bundle ID·macOS 14 minimum·XCTest 미포함 검증 통과.
+- EventKit read: calendar list, bounded event fetch와 strong lookup은 async protocol을 통해 전용
+  serial queue에서 수행하고, raw EventKit object는 queue 안에서 `Sendable` snapshot으로
+  변환한다. executor가 main thread 밖에서 read closure를 실행하는 회귀가 포함된다.
+- UI automation target은 실제 앱을 Debug-only `--ui-testing` mode로 띄우되 in-memory DB와
+  고정 fixture만 사용한다. workspace 이동, event/Brief/editor 진입, transient refresh 실패 뒤
+  기존 event와 warning/Retry 유지의 세 시나리오를 포함한다.
+- UI target의 ad-hoc signed `build-for-testing`은 통과했다. 로컬 host의 Developer Mode가
+  disabled라 runner가 테스트 본문 전에 초기화되지 않았으며, 이 세 UI 시나리오는 아직 local
+  pass로 계산하지 않는다. Developer Mode 변경은 명시적 승인 뒤 별도로 수행한다.
+- 수동 후속: 승인된 host에서 UI suite 실행, 실제 창의 keyboard/VoiceOver와 provider/live
+  fixture는 자동 fixture 결과와 분리해 확인한다.
+
 ## 2026-08-03 자동 안전·품질 gate
 
 - 전체 결과: **319 executed / 318 passed / 1 intentional `ManualEventKitQATests` skip /

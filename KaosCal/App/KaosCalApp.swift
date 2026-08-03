@@ -142,6 +142,14 @@ private struct KaosCalRootView: View {
     @ObservedObject var bootstrap: AppBootstrapCoordinator
     @AppStorage("onboarding.phase10.completed") private var completedOnboarding = false
 
+    private var isUITesting: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("--ui-testing")
+#else
+        false
+#endif
+    }
+
     var body: some View {
         CalendarShellView(
             appState: bootstrap.appState,
@@ -172,6 +180,7 @@ private struct KaosCalRootView: View {
     private var onboardingPresentation: Binding<Bool> {
         Binding(
             get: {
+                guard !isUITesting else { return false }
                 guard !completedOnboarding else { return false }
                 if case .ready = bootstrap.appState.localContextStoreState {
                     return true
@@ -275,6 +284,7 @@ final class AppBootstrapCoordinator: ObservableObject {
     @Published var recoveryNotice: String?
 
     private let environment: [String: String]
+    private let arguments: [String]
     private let openDatabase: () throws -> AppDatabase
     let defaultDatabaseURL: URL?
 
@@ -289,14 +299,27 @@ final class AppBootstrapCoordinator: ObservableObject {
 
     init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        arguments: [String] = ProcessInfo.processInfo.arguments,
         openDatabase: @escaping () throws -> AppDatabase = { try AppDatabase.openDefault() },
-        defaultDatabaseURL: URL? = try? AppDatabase.defaultDatabaseURL()
+        defaultDatabaseURL: URL? = nil
     ) {
         self.environment = environment
+        self.arguments = arguments
         self.openDatabase = openDatabase
+#if DEBUG
+        if arguments.contains("--ui-testing") {
+            self.defaultDatabaseURL = nil
+        } else {
+            self.defaultDatabaseURL = defaultDatabaseURL
+                ?? (try? AppDatabase.defaultDatabaseURL())
+        }
+#else
         self.defaultDatabaseURL = defaultDatabaseURL
+            ?? (try? AppDatabase.defaultDatabaseURL())
+#endif
         appState = AppBootstrap.makeAppState(
             environment: environment,
+            arguments: arguments,
             openDatabase: openDatabase
         )
     }
@@ -323,6 +346,7 @@ final class AppBootstrapCoordinator: ObservableObject {
                 }.value
                 let recoveredState = AppBootstrap.makeAppState(
                     environment: environment,
+                    arguments: arguments,
                     openDatabase: openDatabase
                 )
                 guard case .ready = recoveredState.localContextStoreState else {
@@ -349,10 +373,17 @@ final class AppBootstrapCoordinator: ObservableObject {
 enum AppBootstrap {
     static func makeAppState(
         environment: [String: String] = ProcessInfo.processInfo.environment,
+        arguments: [String] = ProcessInfo.processInfo.arguments,
         openDatabase: () throws -> AppDatabase = {
             try AppDatabase.openDefault()
         }
     ) -> AppState {
+#if DEBUG
+        if arguments.contains("--ui-testing") {
+            return makeUITestAppState(environment: environment)
+        }
+#endif
+
         if environment["XCTestConfigurationFilePath"] != nil {
             return AppState(localContextStoreState: .unavailable)
         }
@@ -377,4 +408,30 @@ enum AppBootstrap {
             )
         }
     }
+
+#if DEBUG
+    private static func makeUITestAppState(
+        environment: [String: String]
+    ) -> AppState {
+        do {
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.locale = Locale(identifier: "en_US_POSIX")
+            calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+            let contextStore = ContextStore(database: try AppDatabase.inMemory())
+            return AppState(
+                calendar: calendar,
+                now: { Date(timeIntervalSince1970: 1_785_744_000) },
+                calendarProvider: UITestCalendarProvider(
+                    scenarioName: environment["KAOSCAL_UI_TEST_SCENARIO"]
+                ),
+                contextStore: contextStore,
+                localContextStoreState: .ready
+            )
+        } catch {
+            return AppState(
+                localContextStoreState: .failed(error.localizedDescription)
+            )
+        }
+    }
+#endif
 }

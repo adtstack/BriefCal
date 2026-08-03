@@ -24,6 +24,42 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.localContextStoreState, .unavailable)
     }
 
+    func testUITestBootstrapUsesIsolatedFixtureBeforeHostedTestGuard() async throws {
+        var didOpenDatabase = false
+        let state = AppBootstrap.makeAppState(
+            environment: ["XCTestConfigurationFilePath": "hosted-test"],
+            arguments: ["KaosCal", "--ui-testing"],
+            openDatabase: {
+                didOpenDatabase = true
+                return try AppDatabase.inMemory()
+            }
+        )
+
+        XCTAssertFalse(didOpenDatabase)
+        XCTAssertNotNil(state.contextStore)
+        XCTAssertEqual(state.localContextStoreState, .ready)
+        XCTAssertEqual(state.calendarAuthorizationState, .fullAccess)
+
+        await state.refreshCalendarData()
+
+        XCTAssertEqual(state.calendarSources.map(\.id), ["ui-calendar"])
+        XCTAssertEqual(state.events.map(\.id), ["ui-event-planning"])
+    }
+
+    func testUITestRefreshFailurePreservesLoadedFixture() async {
+        let state = AppBootstrap.makeAppState(
+            environment: ["KAOSCAL_UI_TEST_SCENARIO": "refresh-failure"],
+            arguments: ["KaosCal", "--ui-testing"]
+        )
+
+        await state.refreshCalendarData()
+        let loadedEvents = state.events
+        await state.reloadCalendarData()
+
+        XCTAssertEqual(state.events, loadedEvents)
+        XCTAssertNotNil(state.calendarRefreshError)
+    }
+
     func testBootstrapRecoveryIsOfferedOnlyWhenNoLiveDatabaseWriterExists() throws {
         enum OpenFailure: Error { case injected }
 

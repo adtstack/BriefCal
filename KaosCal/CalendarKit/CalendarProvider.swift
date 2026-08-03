@@ -1,34 +1,34 @@
 import Foundation
 
-@MainActor
 protocol CalendarProviding: AnyObject {
-    var authorizationState: CalendarAuthorizationState { get }
-    var storeChangeHandler: (() -> Void)? { get set }
+    @MainActor var authorizationState: CalendarAuthorizationState { get }
+    @MainActor var storeChangeHandler: (() -> Void)? { get set }
 
-    func requestFullAccess() async throws -> Bool
-    func listCalendars() throws -> [CalendarSource]
-    func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent]
-    func lookupEvent(
+    @MainActor func requestFullAccess() async throws -> Bool
+    @MainActor func listCalendars() async throws -> [CalendarSource]
+    @MainActor func fetchEvents(in interval: DateInterval) async throws -> [DisplayEvent]
+    @MainActor func lookupEvent(
         _ query: CalendarEventLookupQuery
-    ) throws -> CalendarEventLookupResult
-    func defaultCalendarIdentifierForNewEvents() -> String?
-    func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent
-    func updateEvent(
+    ) async throws -> CalendarEventLookupResult
+    @MainActor func defaultCalendarIdentifierForNewEvents() -> String?
+    @MainActor func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent
+    @MainActor func updateEvent(
         _ original: DisplayEvent,
         with draft: CalendarEventDraft
     ) throws -> DisplayEvent
-    func updateEvent(
+    @MainActor func updateEvent(
         _ original: DisplayEvent,
         with draft: CalendarEventDraft,
         scope: CalendarEventMutationScope
     ) throws -> CalendarEventMutationReceipt
-    func deleteEvent(_ original: DisplayEvent) throws
-    func deleteEvent(
+    @MainActor func deleteEvent(_ original: DisplayEvent) throws
+    @MainActor func deleteEvent(
         _ original: DisplayEvent,
         scope: CalendarEventMutationScope
     ) throws -> CalendarEventMutationReceipt
 }
 
+@MainActor
 extension CalendarProviding {
     func updateEvent(
         _ original: DisplayEvent,

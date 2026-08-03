@@ -48,20 +48,28 @@ provider와 통합 캘린더 작업은 [v2 실행계획](docs/v2-execution-plan.
 
 ```sh
 xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates CODE_SIGNING_ALLOWED=NO build
-xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates -skip-testing:KaosCalUITests CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalUIDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates -parallel-testing-enabled NO -only-testing:KaosCalUITests CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES test
 ```
+
+UI automation은 Debug에서만 열리는 `--ui-testing` launch mode와 process-local in-memory
+fixture를 사용한다. 실제 Calendar, Keychain, provider 계정과 운영 SQLite를 읽거나 쓰지 않는다.
+macOS UI test runner가 시작되려면 해당 host의 Developer Tools authorization이 필요하다.
+`DevToolsSecurity -status`가 disabled를 반환하면 관리자가 시스템 전체 설정 변경을 명시적으로
+승인한 뒤에만 활성화한다.
 
 ## GitHub Actions 자동 빌드·DMG 배포
 
 `main`/`master` push와 pull request에서는 [`ci.yml`](.github/workflows/ci.yml)이 최신
-검증 러너의 전체 test·50% app line coverage 하한·static analyzer·unsigned Release build와
-최소 지원 macOS 14의 전체 test를 실행한다. 성공한 `.app` zip과 `.xcresult`는 Actions
-artifact로 7일/14일 동안 보관한다. GitHub 저장소의 **Actions** 탭에서 해당 실행과
+검증 러너의 unit suite·50% app line coverage 하한, 격리된 UI automation, static analyzer,
+unsigned Release build와 최소 지원 macOS 14의 unit suite를 실행한다. 성공한 `.app` zip과
+unit/UI `.xcresult`는 Actions artifact로 7일/14일 동안 보관한다. GitHub 저장소의 **Actions** 탭에서 해당 실행과
 artifact를 확인할 수 있다.
 
 `v0.1.0`처럼 세 자리 버전 태그를 push하면
-[`release.yml`](.github/workflows/release.yml)이 전체 test, Apple Silicon/Intel 공용 Release
-build, ad-hoc signing, DMG·checksum 검증을 수행하고 GitHub prerelease에 두 파일을 올린다.
+[`release.yml`](.github/workflows/release.yml)이 unit suite와 격리된 UI automation,
+Apple Silicon/Intel 공용 Release build, ad-hoc signing, DMG·checksum 검증을 수행하고
+GitHub prerelease에 두 파일을 올린다.
 
 ```sh
 git tag v0.1.0

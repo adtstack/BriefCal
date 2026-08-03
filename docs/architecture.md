@@ -236,27 +236,29 @@ projection 적용은 한 SQLite transaction이고 local-only는 binding/pending�
 ## CalendarProvider 경계
 
 ```swift
-@MainActor
 protocol CalendarProviding: AnyObject {
-    var authorizationState: CalendarAuthorizationState { get }
-    var storeChangeHandler: (() -> Void)? { get set }
+    @MainActor var authorizationState: CalendarAuthorizationState { get }
+    @MainActor var storeChangeHandler: (() -> Void)? { get set }
 
-    func requestFullAccess() async throws -> Bool
-    func listCalendars() throws -> [CalendarSource]
-    func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent]
-    func lookupEvent(
+    @MainActor func requestFullAccess() async throws -> Bool
+    @MainActor func listCalendars() async throws -> [CalendarSource]
+    @MainActor func fetchEvents(in interval: DateInterval) async throws -> [DisplayEvent]
+    @MainActor func lookupEvent(
         _ query: CalendarEventLookupQuery
-    ) throws -> CalendarEventLookupResult
-    func defaultCalendarIdentifierForNewEvents() -> String?
-    func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent
-    func updateEvent(_ original: DisplayEvent, with draft: CalendarEventDraft) throws -> DisplayEvent
-    func updateEvent(
+    ) async throws -> CalendarEventLookupResult
+    @MainActor func defaultCalendarIdentifierForNewEvents() -> String?
+    @MainActor func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent
+    @MainActor func updateEvent(
+        _ original: DisplayEvent,
+        with draft: CalendarEventDraft
+    ) throws -> DisplayEvent
+    @MainActor func updateEvent(
         _ original: DisplayEvent,
         with draft: CalendarEventDraft,
         scope: CalendarEventMutationScope
     ) throws -> CalendarEventMutationReceipt
-    func deleteEvent(_ original: DisplayEvent) throws
-    func deleteEvent(
+    @MainActor func deleteEvent(_ original: DisplayEvent) throws
+    @MainActor func deleteEvent(
         _ original: DisplayEvent,
         scope: CalendarEventMutationScope
     ) throws -> CalendarEventMutationReceipt
@@ -265,7 +267,12 @@ protocol CalendarProviding: AnyObject {
 
 Phase 1은 read-only 경계와 `EventKitProvider` 하나로 시작했고 Phase 5에서 create/update/delete 명령을 확장했다. Phase 6은 scope-aware overload와 write 여부·scope·changed fields를 담는 receipt를 구현했다. Phase 7B는 저장 link와 최종 relink candidate를 확인하는 typed `lookupEvent` read를 추가했다. Phase 7C는 기존 scoped delete receipt를 사용하되 linked Brief의 preparation/CAS/finalize를 AppState와 ContextStore에서 조정한다. Phase 8의 role·set·restriction·duplicate는 provider protocol을 늘리지 않는 local/read-only projection이다. UI는 raw `EKSpan`이나 `EKEvent`를 보관하지 않고 기존 fake/provider 경계를 유지한다. 직접 Google/Microsoft/CalDAV adapter는 만들지 않는다.
 
-Provider는 long-lived `EKEventStore`를 소유하지만 UI에 `EKEvent`를 전달하지 않는다. source, identifier, 시간, 종일, 반복, 초대, 수정 가능 상태를 값 타입 snapshot으로 만든다. 연속 store change 알림은 AppState에서 250ms 병합하고 다시 fetch한다.
+Provider는 long-lived `EKEventStore`를 소유하지만 UI에 `EKEvent`를 전달하지 않는다. source,
+identifier, 시간, 종일, 반복, 초대, 수정 가능 상태를 `Sendable` 값 타입 snapshot으로 만든다.
+calendar list, bounded event fetch와 strong lookup은 async API이며 EventKit 전용 serial executor에서
+main thread 밖으로 실행한다. raw `EKEvent`/`EKCalendar`는 executor를 벗어나지 않고, 동기 write도
+같은 executor에 직렬화해 read/write 접근 순서를 보존한다. 연속 store change 알림은 AppState에서
+250ms 병합하고 다시 fetch한다.
 
 반복 소속은 provider 경계에서 아래처럼 한 번 정규화한다. EventKit은 비반복 `EKEvent`도 `startDate` 지정 뒤 `occurrenceDate == startDate`를 반환할 수 있으므로 raw occurrence anchor의 존재 여부를 분류에 사용하지 않는다.
 

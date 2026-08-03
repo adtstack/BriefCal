@@ -628,7 +628,7 @@ final class AppState: ObservableObject {
         miniMonthSummaryEvents = []
         miniMonthEventSummaryState = .loading(interval)
         do {
-            let fetchedEvents = try calendarProvider.fetchEvents(in: interval)
+            let fetchedEvents = try await calendarProvider.fetchEvents(in: interval)
             guard requestGeneration == miniMonthSummaryRequestGeneration else {
                 return
             }
@@ -776,7 +776,7 @@ final class AppState: ObservableObject {
             return
         }
         do {
-            switch try calendarProvider.lookupEvent(
+            switch try await calendarProvider.lookupEvent(
                 brief.link.calendarEventLookupQuery()
             ) {
             case let .found(match), let .cancelled(match):
@@ -2652,7 +2652,7 @@ final class AppState: ObservableObject {
         isCheckingLinkedEvent = true
         defer { isCheckingLinkedEvent = false }
         do {
-            let result = try calendarProvider.lookupEvent(
+            let result = try await calendarProvider.lookupEvent(
                 CalendarEventLookupQuery(event: event)
             )
             let match: CalendarEventLookupMatch
@@ -2766,7 +2766,7 @@ final class AppState: ObservableObject {
         defer { isCheckingLinkedEvent = false }
 
         do {
-            switch try calendarProvider.lookupEvent(target.query) {
+            switch try await calendarProvider.lookupEvent(target.query) {
             case let .found(match):
                 _ = try contextStore.refreshStrongLookup(
                     contextID: target.brief.context.id,
@@ -3953,8 +3953,8 @@ final class AppState: ObservableObject {
             let interval = requestedInterval
                 ?? loadedEventInterval
                 ?? initialFetchInterval()
-            let sources = try calendarProvider.listCalendars()
-            let fetchedEvents = try calendarProvider.fetchEvents(in: interval)
+            let sources = try await calendarProvider.listCalendars()
+            let fetchedEvents = try await calendarProvider.fetchEvents(in: interval)
             observeLocalContexts(fetchedEvents)
             calendarSources = sources
             events = fetchedEvents

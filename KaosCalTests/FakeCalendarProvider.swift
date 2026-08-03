@@ -61,13 +61,13 @@ final class FakeCalendarProvider: CalendarProviding {
         return requestResult
     }
 
-    func listCalendars() throws -> [CalendarSource] {
+    func listCalendars() async throws -> [CalendarSource] {
         listCallCount += 1
         if let error { throw error }
         return calendars
     }
 
-    func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] {
+    func fetchEvents(in interval: DateInterval) async throws -> [DisplayEvent] {
         fetchCallCount += 1
         fetchIntervals.append(interval)
         lastFetchInterval = interval
@@ -77,7 +77,7 @@ final class FakeCalendarProvider: CalendarProviding {
 
     func lookupEvent(
         _ query: CalendarEventLookupQuery
-    ) throws -> CalendarEventLookupResult {
+    ) async throws -> CalendarEventLookupResult {
         lookupCallCount += 1
         lastLookupQuery = query
         if let error { throw error }

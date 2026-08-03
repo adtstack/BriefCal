@@ -1,7 +1,7 @@
 # Developer And Test Setup
 
 > 현재 개발·검증 상태: [Current Status](current-status.md)를 단일 기준으로 사용
-> 마지막 갱신: 2026-07-21
+> 마지막 갱신: 2026-08-03
 
 KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에서 결정하고 기록한다. 사용자가 우선 준비할 것은 개발·실계정 검증에 필요한 아래 항목뿐이다.
 
@@ -48,6 +48,20 @@ KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에
 8. **남은 Phase 7C gate:** 비반복 linked original delete는 run `20260712-025027-KST`에서 통과했다. 별도 반복 fixture의 `이번 일정` 삭제와 retained single local Brief의 UI-only cleanup은 series 잔존·원본 비재생성·exact cleanup을 전제로 확인한다. `이번 이후`는 누르지 않는다.
 
 실제 회사 일정은 수정하지 않고 모든 write는 `KAOS-TEST`와 `일정`에서 고유 run marker로 만든 전용 fixture에만 수행한다.
+
+## UI 자동화 호스트 준비
+
+`KaosCalUITests`는 Debug 전용 `--ui-testing` launch mode로 실행한다. 이 mode는 고정 시각의
+process-local calendar fixture와 in-memory Context DB를 사용하고 onboarding을 건너뛰므로,
+실제 Calendar/EventKit, Keychain, provider 계정과 운영 SQLite에 접근하지 않는다. 일반 Debug와
+모든 Release build는 launch argument를 무시하고 기존 bootstrap 경로를 사용한다.
+
+UI test runner 실행 전 `DevToolsSecurity -status`로 Developer Tools authorization을 확인한다.
+disabled host에서 이를 활성화하는 작업은 시스템 전체 보안 설정 변경이므로 관리자와 사용자의
+명시적 승인을 받은 별도 단계로 취급한다. 2026-08-03 현재 검증 host에서는 disabled 상태로 인해
+UI runner가 테스트 본문 전에 초기화되지 않았고, UI target의 ad-hoc signed
+`build-for-testing`까지만 통과했다. CI의 최신 macOS runner는 unit suite와 분리된 UI step에서
+같은 세 가지 시나리오를 실행하고 unit/UI result bundle을 각각 보존한다.
 
 ## Google Tasks 개발 계정 설정
 

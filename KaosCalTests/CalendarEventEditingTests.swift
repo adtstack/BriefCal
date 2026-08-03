@@ -5,6 +5,16 @@ import XCTest
 
 @MainActor
 final class CalendarEventEditingTests: XCTestCase {
+    func testEventKitStoreExecutorRunsReadsOffMainThread() async throws {
+        let executor = EventKitStoreExecutor(label: "KaosCalTests.EventKitStore")
+
+        let executedOnMainThread = try await executor.read {
+            Thread.isMainThread
+        }
+
+        XCTAssertFalse(executedOnMainThread)
+    }
+
     func testValidationTrimsFieldsAndRejectsInvalidValues() throws {
         let draft = CalendarEventDraft(
             title: "  Planning  ",
@@ -2244,11 +2254,11 @@ private final class DefaultScopedCalendarProviderSpy: CalendarProviding {
     private(set) var deleteCallCount = 0
 
     func requestFullAccess() async throws -> Bool { true }
-    func listCalendars() throws -> [CalendarSource] { [] }
-    func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] { [] }
+    func listCalendars() async throws -> [CalendarSource] { [] }
+    func fetchEvents(in interval: DateInterval) async throws -> [DisplayEvent] { [] }
     func lookupEvent(
         _ query: CalendarEventLookupQuery
-    ) throws -> CalendarEventLookupResult { .notFound }
+    ) async throws -> CalendarEventLookupResult { .notFound }
     func defaultCalendarIdentifierForNewEvents() -> String? { nil }
 
     func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent {

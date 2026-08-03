@@ -1,6 +1,6 @@
 import Foundation
 
-enum CalendarAuthorizationState: Equatable {
+enum CalendarAuthorizationState: Equatable, Sendable {
     case notDetermined
     case fullAccess
     case denied
@@ -22,7 +22,7 @@ enum CalendarAuthorizationState: Equatable {
     }
 }
 
-enum CalendarAccountType: String, Equatable {
+enum CalendarAccountType: String, Equatable, Sendable {
     case exchange
     case calDAV
     case iCloud
@@ -44,14 +44,14 @@ enum CalendarAccountType: String, Equatable {
     }
 }
 
-struct CalendarColor: Equatable {
+struct CalendarColor: Equatable, Sendable {
     let red: Double
     let green: Double
     let blue: Double
     let alpha: Double
 }
 
-struct CalendarSource: Equatable, Identifiable {
+struct CalendarSource: Equatable, Identifiable, Sendable {
     let id: String
     let title: String
     let sourceTitle: String
@@ -61,14 +61,14 @@ struct CalendarSource: Equatable, Identifiable {
     let color: CalendarColor?
 }
 
-enum CalendarRecurrenceFrequency: String, CaseIterable, Equatable, Hashable {
+enum CalendarRecurrenceFrequency: String, CaseIterable, Equatable, Hashable, Sendable {
     case daily
     case weekly
     case monthly
     case yearly
 }
 
-enum CalendarRecurrenceWeekday: Int, CaseIterable, Equatable, Hashable {
+enum CalendarRecurrenceWeekday: Int, CaseIterable, Equatable, Hashable, Sendable {
     case sunday = 1
     case monday
     case tuesday
@@ -78,13 +78,13 @@ enum CalendarRecurrenceWeekday: Int, CaseIterable, Equatable, Hashable {
     case saturday
 }
 
-enum CalendarRecurrenceEnd: Equatable {
+enum CalendarRecurrenceEnd: Equatable, Sendable {
     case never
     case onDate(Date)
     case afterOccurrences(Int)
 }
 
-struct BasicRecurrenceRule: Equatable {
+struct BasicRecurrenceRule: Equatable, Sendable {
     var frequency: CalendarRecurrenceFrequency
     var interval: Int
     var weekdays: Set<CalendarRecurrenceWeekday>
@@ -103,12 +103,12 @@ struct BasicRecurrenceRule: Equatable {
     }
 }
 
-struct UnsupportedRecurrenceSnapshot: Equatable {
+struct UnsupportedRecurrenceSnapshot: Equatable, Sendable {
     let summary: String
     let signature: String
 }
 
-enum CalendarEventRecurrence: Equatable {
+enum CalendarEventRecurrence: Equatable, Sendable {
     case none
     case basic(BasicRecurrenceRule)
     case unsupported(UnsupportedRecurrenceSnapshot)
@@ -124,12 +124,12 @@ enum CalendarEventRecurrence: Equatable {
     }
 }
 
-enum CalendarEventMutationScope: String, CaseIterable, Equatable, Hashable {
+enum CalendarEventMutationScope: String, CaseIterable, Equatable, Hashable, Sendable {
     case thisEvent
     case futureEvents
 }
 
-enum CalendarEventChangedField: String, CaseIterable, Hashable {
+enum CalendarEventChangedField: String, CaseIterable, Hashable, Sendable {
     case title
     case calendar
     case time
@@ -139,7 +139,7 @@ enum CalendarEventChangedField: String, CaseIterable, Hashable {
     case deletion
 }
 
-struct LocalDateTimeComponents: Equatable {
+struct LocalDateTimeComponents: Equatable, Sendable {
     let calendarIdentifier: Calendar.Identifier
     let year: Int
     let month: Int
@@ -199,7 +199,7 @@ struct LocalDateTimeComponents: Equatable {
     }
 }
 
-enum EventTimeSemantics: Equatable {
+enum EventTimeSemantics: Equatable, Sendable {
     case allDay(
         start: LocalDateTimeComponents,
         endExclusive: LocalDateTimeComponents
@@ -211,14 +211,14 @@ enum EventTimeSemantics: Equatable {
     case zoned(timeZoneIdentifier: String)
 }
 
-enum CalendarEventLookupOccurrence: Equatable {
+enum CalendarEventLookupOccurrence: Equatable, Sendable {
     case single
     case instant(Date)
     case allDay(LocalDateTimeComponents)
     case floating(LocalDateTimeComponents)
 }
 
-struct CalendarEventLookupSnapshot: Equatable {
+struct CalendarEventLookupSnapshot: Equatable, Sendable {
     let calendarTitle: String
     let sourceTitle: String
     let title: String
@@ -229,7 +229,7 @@ struct CalendarEventLookupSnapshot: Equatable {
     let timeSemantics: EventTimeSemantics
 }
 
-struct CalendarEventLookupQuery: Equatable {
+struct CalendarEventLookupQuery: Equatable, Sendable {
     let eventIdentifier: String?
     let calendarItemIdentifier: String?
     let calendarItemExternalIdentifier: String?
@@ -325,14 +325,14 @@ struct CalendarEventLookupQuery: Equatable {
     }
 }
 
-enum CalendarEventLookupBasis: String, Equatable {
+enum CalendarEventLookupBasis: String, Equatable, Sendable {
     case eventIdentifierAndOccurrence
     case calendarItemIdentifierAndOccurrence
     case externalIdentifierAndOccurrence
     case exactSnapshot
 }
 
-struct CalendarEventLookupMatch: Equatable, Identifiable {
+struct CalendarEventLookupMatch: Equatable, Identifiable, Sendable {
     let event: DisplayEvent
     let basis: CalendarEventLookupBasis
     let isCancelled: Bool
@@ -350,14 +350,14 @@ struct CalendarEventLookupMatch: Equatable, Identifiable {
     var id: String { event.id }
 }
 
-enum CalendarEventLookupIssue: Equatable {
+enum CalendarEventLookupIssue: Equatable, Sendable {
     case calendarUnavailable
     case invalidStoredLink
     case recurringOccurrenceUnavailable
     case strongIdentifierOccurrenceMismatch
 }
 
-enum CalendarEventLookupResult: Equatable {
+enum CalendarEventLookupResult: Equatable, Sendable {
     case found(CalendarEventLookupMatch)
     case cancelled(CalendarEventLookupMatch)
     case candidates([CalendarEventLookupMatch])
@@ -366,7 +366,7 @@ enum CalendarEventLookupResult: Equatable {
     case inconclusive(CalendarEventLookupIssue)
 }
 
-enum CalendarEventLookupError: Error, Equatable {
+enum CalendarEventLookupError: Error, Equatable, Sendable {
     case fullAccessRequired
     case missingStrongIdentifier
     case invalidStoredTimeSemantics
@@ -436,7 +436,7 @@ enum DisplayEventIdentity {
     }
 }
 
-enum CalendarEventAvailability: String, Equatable {
+enum CalendarEventAvailability: String, Equatable, Sendable {
     case notSupported
     case busy
     case free
@@ -444,7 +444,7 @@ enum CalendarEventAvailability: String, Equatable {
     case unavailable
 }
 
-struct DisplayEvent: Equatable, Identifiable {
+struct DisplayEvent: Equatable, Identifiable, Sendable {
     let id: String
     let eventIdentifier: String?
     let calendarItemIdentifier: String?

@@ -26,6 +26,20 @@
             buildForRunning = "NO"
             buildForProfiling = "NO"
             buildForArchiving = "NO"
+            buildForAnalyzing = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "J50000000000000000000001"
+               BuildableName = "KaosCalUITests.xctest"
+               BlueprintName = "KaosCalUITests"
+               ReferencedContainer = "container:KaosCal.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "NO"
+            buildForProfiling = "NO"
+            buildForArchiving = "NO"
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
@@ -51,6 +65,16 @@
                BlueprintIdentifier = "A50000000000000000000002"
                BuildableName = "KaosCalTests.xctest"
                BlueprintName = "KaosCalTests"
+               ReferencedContainer = "container:KaosCal.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "J50000000000000000000001"
+               BuildableName = "KaosCalUITests.xctest"
+               BlueprintName = "KaosCalUITests"
                ReferencedContainer = "container:KaosCal.xcodeproj">
             </BuildableReference>
          </TestableReference>

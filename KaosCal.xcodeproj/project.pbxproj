@@ -63,10 +63,19 @@
 		I10000000000000000000001 /* UpdateController.swift in Sources */ = {isa = PBXBuildFile; fileRef = I20000000000000000000001 /* UpdateController.swift */; };
 		I10000000000000000000002 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = I40000000000000000000001 /* Sparkle */; };
 		I10000000000000000000003 /* UpdateConfigurationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = I20000000000000000000002 /* UpdateConfigurationTests.swift */; };
+		J10000000000000000000001 /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000001 /* UITestSupport.swift */; };
+		J10000000000000000000002 /* KaosCalUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = J20000000000000000000002 /* KaosCalUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		A30000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A40000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A50000000000000000000001;
+			remoteInfo = KaosCal;
+		};
+		J30000000000000000000001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A40000000000000000000001 /* Project object */;
 			proxyType = 1;
@@ -134,6 +143,9 @@
 		H20000000000000000000003 /* LocalDataBackupServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalDataBackupServiceTests.swift; sourceTree = "<group>"; };
 		I20000000000000000000001 /* UpdateController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateController.swift; sourceTree = "<group>"; };
 		I20000000000000000000002 /* UpdateConfigurationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateConfigurationTests.swift; sourceTree = "<group>"; };
+		J20000000000000000000001 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
+		J20000000000000000000002 /* KaosCalUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KaosCalUITests.swift; sourceTree = "<group>"; };
+		J20000000000000000000003 /* KaosCalUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KaosCalUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AD0000000000000000000001 /* GoogleOAuth.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config/GoogleOAuth.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
@@ -154,6 +166,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		J60000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -163,6 +182,7 @@
 				AD0000000000000000000001 /* GoogleOAuth.xcconfig */,
 				A70000000000000000000002 /* KaosCal */,
 				A70000000000000000000008 /* KaosCalTests */,
+				J70000000000000000000001 /* KaosCalUITests */,
 				A70000000000000000000009 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -185,6 +205,7 @@
 			children = (
 				A20000000000000000000001 /* KaosCalApp.swift */,
 				A20000000000000000000002 /* AppState.swift */,
+				J20000000000000000000001 /* UITestSupport.swift */,
 				I20000000000000000000001 /* UpdateController.swift */,
 			);
 			path = App;
@@ -253,6 +274,7 @@
 			children = (
 				A20000000000000000000008 /* KaosCal.app */,
 				A2000000000000000000000A /* KaosCalTests.xctest */,
+				J20000000000000000000003 /* KaosCalUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -334,6 +356,14 @@
 			path = Settings;
 			sourceTree = "<group>";
 		};
+		J70000000000000000000001 /* KaosCalUITests */ = {
+			isa = PBXGroup;
+			children = (
+				J20000000000000000000002 /* KaosCalUITests.swift */,
+			);
+			path = KaosCalUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -376,6 +406,24 @@
 			productReference = A2000000000000000000000A /* KaosCalTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		J50000000000000000000001 /* KaosCalUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = JA0000000000000000000001 /* Build configuration list for PBXNativeTarget "KaosCalUITests" */;
+			buildPhases = (
+				J80000000000000000000001 /* Sources */,
+				J60000000000000000000001 /* Frameworks */,
+				J90000000000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				JB0000000000000000000001 /* PBXTargetDependency */,
+			);
+			name = KaosCalUITests;
+			productName = KaosCalUITests;
+			productReference = J20000000000000000000003 /* KaosCalUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -390,6 +438,10 @@
 						CreatedOnToolsVersion = 26.6;
 					};
 					A50000000000000000000002 = {
+						CreatedOnToolsVersion = 26.6;
+						TestTargetID = A50000000000000000000001;
+					};
+					J50000000000000000000001 = {
 						CreatedOnToolsVersion = 26.6;
 						TestTargetID = A50000000000000000000001;
 					};
@@ -414,6 +466,7 @@
 			targets = (
 				A50000000000000000000001 /* KaosCal */,
 				A50000000000000000000002 /* KaosCalTests */,
+				J50000000000000000000001 /* KaosCalUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -434,6 +487,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		J90000000000000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -442,6 +502,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000002 /* AppState.swift in Sources */,
+				J10000000000000000000001 /* UITestSupport.swift in Sources */,
 				I10000000000000000000001 /* UpdateController.swift in Sources */,
 				C10000000000000000000001 /* AppDatabase.swift in Sources */,
 				H10000000000000000000001 /* LocalDataBackupService.swift in Sources */,
@@ -504,6 +565,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		J80000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				J10000000000000000000002 /* KaosCalUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -511,6 +580,11 @@
 			isa = PBXTargetDependency;
 			target = A50000000000000000000001 /* KaosCal */;
 			targetProxy = A30000000000000000000001 /* PBXContainerItemProxy */;
+		};
+		JB0000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A50000000000000000000001 /* KaosCal */;
+			targetProxy = J30000000000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -659,6 +733,42 @@
 			};
 			name = Release;
 		};
+		JC0000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.adtstack.kaoscal.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = KaosCal;
+			};
+			name = Debug;
+		};
+		JC0000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.adtstack.kaoscal.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = KaosCal;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -685,6 +795,15 @@
 			buildConfigurations = (
 				AC0000000000000000000005 /* Debug */,
 				AC0000000000000000000006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		JA0000000000000000000001 /* Build configuration list for PBXNativeTarget "KaosCalUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				JC0000000000000000000001 /* Debug */,
+				JC0000000000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -83,7 +83,7 @@ final class ManualEventKitQATests: XCTestCase {
         ))
 
         do {
-            let calendars = try provider.listCalendars()
+            let calendars = try await provider.listCalendars()
             let sourceMatches = calendars.filter { $0.title == sourceName }
             let destinationMatches = calendars.filter {
                 $0.title == destinationName

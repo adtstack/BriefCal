@@ -1,5 +1,5 @@
 import AppKit
-import EventKit
+@preconcurrency import EventKit
 import Foundation
 
 struct EventKitRecurrenceClassification: Equatable {
@@ -13,13 +13,37 @@ private struct EventKitLookupCandidate {
     let basis: CalendarEventLookupBasis
 }
 
-@MainActor
-final class EventKitProvider: CalendarProviding {
+final class EventKitStoreExecutor: @unchecked Sendable {
+    private let queue: DispatchQueue
+
+    init(label: String = "com.adtstack.kaoscal.eventkit-store") {
+        queue = DispatchQueue(label: label, qos: .userInitiated)
+    }
+
+    func read<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                continuation.resume(with: Result(catching: operation))
+            }
+        }
+    }
+
+    func sync<Value>(
+        _ operation: () throws -> Value
+    ) rethrows -> Value {
+        try queue.sync(execute: operation)
+    }
+}
+
+final class EventKitProvider: CalendarProviding, @unchecked Sendable {
     private let eventStore: EKEventStore
+    private let eventStoreExecutor = EventKitStoreExecutor()
     private let notificationCenter: NotificationCenter
     private var storeChangeObserver: NSObjectProtocol?
 
-    var storeChangeHandler: (() -> Void)?
+    @MainActor var storeChangeHandler: (() -> Void)?
 
     init(
         eventStore: EKEventStore = EKEventStore(),
@@ -44,7 +68,7 @@ final class EventKitProvider: CalendarProviding {
         }
     }
 
-    var authorizationState: CalendarAuthorizationState {
+    nonisolated var authorizationState: CalendarAuthorizationState {
         switch EKEventStore.authorizationStatus(for: .event) {
         case .notDetermined:
             return .notDetermined
@@ -65,7 +89,13 @@ final class EventKitProvider: CalendarProviding {
         try await eventStore.requestFullAccessToEvents()
     }
 
-    func listCalendars() throws -> [CalendarSource] {
+    nonisolated func listCalendars() async throws -> [CalendarSource] {
+        try await performEventStoreRead { [self] in
+            listCalendarsSynchronously()
+        }
+    }
+
+    private func listCalendarsSynchronously() -> [CalendarSource] {
         eventStore.calendars(for: .event)
             .map { calendar in
                 CalendarSource(
@@ -86,7 +116,17 @@ final class EventKitProvider: CalendarProviding {
             }
     }
 
-    func fetchEvents(in interval: DateInterval) throws -> [DisplayEvent] {
+    nonisolated func fetchEvents(
+        in interval: DateInterval
+    ) async throws -> [DisplayEvent] {
+        try await performEventStoreRead { [self] in
+            fetchEventsSynchronously(in: interval)
+        }
+    }
+
+    private func fetchEventsSynchronously(
+        in interval: DateInterval
+    ) -> [DisplayEvent] {
         let predicate = eventStore.predicateForEvents(
             withStart: interval.start,
             end: interval.end,
@@ -103,7 +143,15 @@ final class EventKitProvider: CalendarProviding {
             }
     }
 
-    func lookupEvent(
+    nonisolated func lookupEvent(
+        _ query: CalendarEventLookupQuery
+    ) async throws -> CalendarEventLookupResult {
+        try await performEventStoreRead { [self] in
+            try lookupEventSynchronously(query)
+        }
+    }
+
+    private func lookupEventSynchronously(
         _ query: CalendarEventLookupQuery
     ) throws -> CalendarEventLookupResult {
         guard authorizationState.canReadEvents else {
@@ -227,6 +275,12 @@ final class EventKitProvider: CalendarProviding {
     }
 
     func defaultCalendarIdentifierForNewEvents() -> String? {
+        eventStoreExecutor.sync { [self] in
+            defaultCalendarIdentifierForNewEventsSynchronously()
+        }
+    }
+
+    private func defaultCalendarIdentifierForNewEventsSynchronously() -> String? {
         guard let calendar = eventStore.defaultCalendarForNewEvents,
               calendar.allowsContentModifications else {
             return nil
@@ -235,6 +289,14 @@ final class EventKitProvider: CalendarProviding {
     }
 
     func createEvent(_ draft: CalendarEventDraft) throws -> DisplayEvent {
+        try eventStoreExecutor.sync { [self] in
+            try createEventSynchronously(draft)
+        }
+    }
+
+    private func createEventSynchronously(
+        _ draft: CalendarEventDraft
+    ) throws -> DisplayEvent {
         try requireFullAccess()
         let normalized = try draft.validated(calendar: validationCalendar())
         let calendar = try writableCalendar(
@@ -250,17 +312,33 @@ final class EventKitProvider: CalendarProviding {
         _ original: DisplayEvent,
         with draft: CalendarEventDraft
     ) throws -> DisplayEvent {
-        if original.isRecurring {
-            throw CalendarEventWriteError.recurringScopeRequired
+        try eventStoreExecutor.sync { [self] in
+            if original.isRecurring {
+                throw CalendarEventWriteError.recurringScopeRequired
+            }
+            return try updateEventSynchronously(
+                original,
+                with: draft,
+                scope: .thisEvent
+            ).event
         }
-        return try updateEvent(
-            original,
-            with: draft,
-            scope: .thisEvent
-        ).event
     }
 
     func updateEvent(
+        _ original: DisplayEvent,
+        with draft: CalendarEventDraft,
+        scope: CalendarEventMutationScope
+    ) throws -> CalendarEventMutationReceipt {
+        try eventStoreExecutor.sync { [self] in
+            try updateEventSynchronously(
+                original,
+                with: draft,
+                scope: scope
+            )
+        }
+    }
+
+    private func updateEventSynchronously(
         _ original: DisplayEvent,
         with draft: CalendarEventDraft,
         scope: CalendarEventMutationScope
@@ -343,13 +421,24 @@ final class EventKitProvider: CalendarProviding {
     }
 
     func deleteEvent(_ original: DisplayEvent) throws {
-        if original.isRecurring {
-            throw CalendarEventWriteError.recurringScopeRequired
+        try eventStoreExecutor.sync { [self] in
+            if original.isRecurring {
+                throw CalendarEventWriteError.recurringScopeRequired
+            }
+            _ = try deleteEventSynchronously(original, scope: .thisEvent)
         }
-        _ = try deleteEvent(original, scope: .thisEvent)
     }
 
     func deleteEvent(
+        _ original: DisplayEvent,
+        scope: CalendarEventMutationScope
+    ) throws -> CalendarEventMutationReceipt {
+        try eventStoreExecutor.sync { [self] in
+            try deleteEventSynchronously(original, scope: scope)
+        }
+    }
+
+    private func deleteEventSynchronously(
         _ original: DisplayEvent,
         scope: CalendarEventMutationScope
     ) throws -> CalendarEventMutationReceipt {
@@ -375,6 +464,12 @@ final class EventKitProvider: CalendarProviding {
             scope: scope,
             changedFields: [.deletion]
         )
+    }
+
+    private func performEventStoreRead<Value: Sendable>(
+        _ operation: @escaping @Sendable () throws -> Value
+    ) async throws -> Value {
+        try await eventStoreExecutor.read(operation)
     }
 
     private func makeDisplayEvent(_ event: EKEvent) -> DisplayEvent {
