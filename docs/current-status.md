@@ -15,7 +15,9 @@
   상단 calendar view 전환기를 구현했다. 2026-08-03에는 Graph/OAuth 경계, 반복 완료 원자성,
   local data maintenance 격리, 검색·draft·refresh 복구 UX와 자동 품질 gate를 보강했다.
   이어서 EventKit read를 async serial executor 경계로 옮기고 실제 앱을 구동하는 격리 UI
-  automation target과 세 가지 핵심 시나리오를 추가했다.
+  automation target과 세 가지 핵심 시나리오를 추가했다. 같은 날 ad-hoc+hardened Release가
+  Sparkle library validation에서 launch 전에 종료되는 문제를 확인하고, runnable Local Test와
+  production-shaped Release 계약을 분리해 실제 launch smoke를 gate로 추가했다.
 - **다음 기준:** v1 유지보수 예외는 [v1 동결 결정](v1-freeze.md)을 따르고, 새 동작은 [제품·시스템 스펙](specification.md)의 요구사항 ID와 [v2 실행계획](v2-execution-plan.md)을 먼저 갱신한다.
 - **후속 구현 순서:** [상용 기능 로드맵](commercial-feature-roadmap.md)의 C0~C4를 따른다.
   C0는 현재 T0~T5/v10 live·Release 증거다. C1 가운데 Full Month는 구현·자동/offscreen
@@ -25,10 +27,11 @@
   [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 C4 영구 제외다.
 - **최신 완료 판정 자동 결과:** 322 tests executed, 321 passed, 1 intentional
   `ManualEventKitQATests` skip, 0 failures. Result bundle:
-  `/private/tmp/KaosCalUIAsyncPostFixUnit.xcresult`. `KaosCal.app` line coverage는
-  **53.61% (29,698/55,395)**로 50% floor를 통과했다. 정적 분석, unsigned Release,
-  EventKit async 경계의 strict concurrency build와 UI target의 ad-hoc signed
-  `build-for-testing`도 통과했다.
+  `/private/tmp/KaosCalSigningFixUnit.xcresult`. `KaosCal.app` line coverage는
+  **53.61% (29,698/55,395)**로 50% floor를 통과했다. 정적 분석, production-shaped Release
+  compile, EventKit async 경계의 strict concurrency build와 UI target의 ad-hoc signed
+  `build-for-testing`도 통과했다. 별도 universal Local Test Release의 strict signature와 실제
+  launch smoke도 통과했다.
 - **중간 체크포인트:** Apple CRUD 268-test, move/bulk/Undo 271-test와 calendar/planning 집중
   test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 위 322-test 결과를 따른다.
 - **새 구현 / live 대기:** 네 provider 직접 CRUD, Apple 목록/account 이동과 Todoist
@@ -78,10 +81,42 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 ## 최신 자동·Release 증거
 
+### 2026-08-03 runnable Local Test 서명·launch checkpoint
+
+- 발견: `/private/tmp/KaosCalQualityHardening-1be4aa5/Build/Products/Release/KaosCal.app`을
+  Finder에서 열자 dyld가 `@rpath/Sparkle.framework`를 찾은 뒤 code-signature Team identity
+  불일치로 거부했다. crash report의 namespace는 `DYLD`, indicator는 `Library missing`이지만
+  실제 파일 부재가 아니라 ad-hoc+hardened runtime library validation 실패였다. strict deep
+  `codesign`만으로 실제 동적 로딩 성공을 입증할 수 없다는 품질 공백이다.
+- 수정: production-shaped Release는 `KaosCalLocalTestBuild=NO`와 hardened runtime build setting을
+  유지하되 Developer ID 없이는 패키징하지 않는다. Finder에서 여는 ad-hoc 산출물은 명시적인
+  marker `YES`, `KAOSCAL_LOCAL_TEST_BUILD` compiler condition과 hardened runtime 비활성화를 함께
+  사용한다. 실제 배포는 같은 Developer ID Team으로 app/nested code를 서명하고 marker `NO`와
+  hardened runtime을 유지해야 한다.
+- 자동 gate: `scripts/build_local_test_app.sh`와 `verify_local_test_app.sh`가 universal build,
+  strict deep signature, app sandbox·Calendar·Reminders entitlement, host architecture,
+  `get-task-allow`·XCTest 부재를 확인한다. 이어 Debug/Local Test에만 포함된 in-memory fixture로
+  앱을 3초 실행해 Sparkle dyld load와 bootstrap 생존을 확인한다. CI zip과 tag DMG도 같은
+  launch smoke를 통과해야 한다.
+- 실행 결과: universal app
+  `/private/tmp/KaosCalRunnableLocalTest/Build/Products/Release/KaosCal.app`은 marker `YES`,
+  ad-hoc signature, hardened runtime 부재를 확인했다. 직접 app 2회, ZIP 압축 해제본과 읽기 전용
+  DMG mount 내부 app이 각각 launch smoke를 통과했고 새 KaosCal crash report는 없었다. 검증 DMG는
+  `/private/tmp/KaosCalSigningFix-local.dmg`, SHA-256은
+  `704d13f15a995cb8fc3a19d7702e74e109c1feb64377ef20f1b57564ca7e8d47`이다. 일반 실행에는
+  `--ui-testing`이 없어 실제 Calendar/local DB 경로로 시작한다.
+- 회귀: 전체 **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**, result bundle `/private/tmp/KaosCalSigningFixUnit.xcresult`. app line coverage
+  **53.61% (29,698/55,395)**, 정적 분석, production-shaped universal Release compile과 UI
+  `build-for-testing`이 통과했다.
+- 경계: Local Test는 Developer ID/notarized 배포물이나 updater source가 아니다. 실제 XCUITest
+  세 시나리오 실행은 현재 host Developer Tools authorization 대기 상태와 분리한다.
+
 ### 2026-08-03 UI 자동화·EventKit 비동기 경계 checkpoint
 
 - unit 결과: 전체 **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
-  0 failures**. Result bundle은 `/private/tmp/KaosCalUIAsyncPostFixUnit.xcresult`다.
+  0 failures**. 후속 signing fix까지 포함한 최신 result bundle은
+  `/private/tmp/KaosCalSigningFixUnit.xcresult`다.
   `KaosCal.app` line coverage는 **53.61% (29,698/55,395)**로 50% floor를 통과했다.
 - EventKit read 경계: `listCalendars`, `fetchEvents`, `lookupEvent`를 async 계약으로 바꾸고
   long-lived `EKEventStore`의 모든 read를 전용 serial executor에서 실행한다. raw `EKEvent`와
@@ -96,8 +131,9 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
   Developer Mode가 disabled라 UI test runner가 테스트 본문 전에 초기화되지 않았으므로 세
   시나리오를 pass로 계산하지 않는다. 시스템 전체 설정은 명시적 사용자 승인 없이 바꾸지 않았다.
   CI/Release는 unit suite와 UI automation을 분리하고 두 `.xcresult`를 모두 보존한다.
-- build gate: `xcodebuild analyze`, unsigned Release build와 Release app의 bundle ID·macOS 14
-  minimum·XCTest 미포함 검증이 통과했다.
+- build gate: `xcodebuild analyze`, production-shaped Release compile과 Local Test Release의
+  bundle ID·macOS 14 minimum·XCTest 미포함 검증이 통과했다. 실제 launch 증거는 위 signing
+  checkpoint가 대체한다.
 - 남은 비배포 품질 경계: 승인된 host에서 UI 세 시나리오 실제 실행, 실창 VoiceOver/keyboard,
   전면 localization, 대형 AppState/View 책임 분리, EventKit 외 provider의 남은 strict concurrency
   warning과 실제 provider fixture 검증이다.
@@ -163,6 +199,9 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 이 artifact의 feed와 공개 키는 치환 검증용 synthetic 값이며 실제 update를 발행하지
   않았다. Developer ID/notarization, signed HTTPS appcast, 변조/오프라인 실패와 직전
   notarized build의 자동 설치·재실행·local DB 보존은 live/manual pending이다.
+- 이 checkpoint의 strict signature audit에는 실제 Sparkle launch가 없었다. 2026-08-03 확인한
+  ad-hoc+hardened runtime library-validation 실패 때문에 이 artifact를 runnable local-test
+  근거로 사용하지 않으며, 위 Local Test launch checkpoint가 현재 경로를 대체한다.
 - 현재 GitHub origin은 private이라 인증 없는 Sparkle feed로 직접 사용할 수 없다. token을
   앱에 포함하지 않고 별도 정적 HTTPS endpoint를 정하는 운영 입력이 남아 있다.
 

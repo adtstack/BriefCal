@@ -93,7 +93,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             analyze
 
-      - name: Build unsigned Release app
+      - name: Compile production-shaped Release code
         run: |
           set -euo pipefail
           xcodebuild \
@@ -101,20 +101,39 @@ jobs:
             -scheme KaosCal \
             -configuration Release \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalReleaseDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/KaosCalProductionReleaseDerivedData" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             CODE_SIGNING_ALLOWED=NO \
             build
+          INFO="$RUNNER_TEMP/KaosCalProductionReleaseDerivedData/Build/Products/Release/KaosCal.app/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "NO"
+          xcodebuild \
+            -project KaosCal.xcodeproj \
+            -scheme KaosCal \
+            -configuration Release \
+            -showBuildSettings \
+            > "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
+          grep -Eq '^ *ENABLE_HARDENED_RUNTIME = YES$' "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
+          grep -Eq '^ *KAOSCAL_LOCAL_TEST_BUILD = NO$' "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
 
-      - name: Verify Release app
+      - name: Build and launch-smoke local-test Release app
+        env:
+          KAOSCAL_LOCAL_DERIVED_DATA: ${{ runner.temp }}/KaosCalReleaseDerivedData
+        run: |
+          set -euo pipefail
+          bash scripts/build_local_test_app.sh
+
+      - name: Verify local-test Release app
         run: |
           set -euo pipefail
           APP="$RUNNER_TEMP/KaosCalReleaseDerivedData/Build/Products/Release/KaosCal.app"
           test -d "$APP"
           INFO="$APP/Contents/Info.plist"
+          codesign --verify --deep --strict --verbose=2 "$APP"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.kaoscal"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")" = "14.0"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "YES"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$INFO")" = ""
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO")" = ""
           test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$INFO")" = "true"
@@ -131,10 +150,18 @@ jobs:
           APP="$RUNNER_TEMP/KaosCalReleaseDerivedData/Build/Products/Release/KaosCal.app"
           ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/KaosCal-${GITHUB_SHA}.zip"
 
+      - name: Verify packaged CI artifact
+        run: |
+          set -euo pipefail
+          UNPACKED="$RUNNER_TEMP/KaosCalZipSmoke"
+          mkdir -p "$UNPACKED"
+          ditto -x -k "$RUNNER_TEMP/KaosCal-${GITHUB_SHA}.zip" "$UNPACKED"
+          bash scripts/verify_local_test_app.sh "$UNPACKED/KaosCal.app"
+
       - name: Upload app artifact
         uses: actions/upload-artifact@v6
         with:
-          name: KaosCal-${{ github.sha }}-macOS
+          name: KaosCal-${{ github.sha }}-local-test-macOS
           path: ${{ runner.temp }}/KaosCal-${{ github.sha }}.zip
           if-no-files-found: error
           retention-days: 7

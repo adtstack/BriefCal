@@ -45,6 +45,8 @@
 	<string>$(KAOSCAL_GOOGLE_TASKS_CLIENT_SECRET)</string>
 	<key>KaosCalGoogleTasksRedirectURI</key>
 	<string>http://127.0.0.1</string>
+	<key>KaosCalLocalTestBuild</key>
+	<string>$(KAOSCAL_LOCAL_TEST_BUILD)</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>KaosCal needs calendar access to display events in Day, Week, Month, and Agenda and to save changes you approve.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>

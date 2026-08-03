@@ -51,10 +51,23 @@ KaosCal의 디자인·문구·임시 아이콘·제품 정책은 프로젝트에
 
 ## UI 자동화 호스트 준비
 
-`KaosCalUITests`는 Debug 전용 `--ui-testing` launch mode로 실행한다. 이 mode는 고정 시각의
+`KaosCalUITests`와 명시적인 Local Test Release smoke는 `--ui-testing` launch mode로 실행한다.
+이 mode는 Debug 또는 `KAOSCAL_LOCAL_TEST_BUILD` compiler condition에서만 포함되며 고정 시각의
 process-local calendar fixture와 in-memory Context DB를 사용하고 onboarding을 건너뛰므로,
 실제 Calendar/EventKit, Keychain, provider 계정과 운영 SQLite에 접근하지 않는다. 일반 Debug와
-모든 Release build는 launch argument를 무시하고 기존 bootstrap 경로를 사용한다.
+Developer ID Release build는 launch argument를 무시하고 기존 bootstrap 경로를 사용한다.
+
+Finder에서 직접 테스트할 앱은 저장소 root에서 다음 명령 하나로 만든다.
+
+```sh
+bash scripts/build_local_test_app.sh
+```
+
+스크립트가 signature/entitlement/payload를 검사하고 3초 launch smoke를 통과한 뒤 출력한
+`KaosCal.app`을 연다. 기본 경로는
+`/private/tmp/KaosCalLocalTestDerivedData/Build/Products/Release/KaosCal.app`이다. 일반 실행은
+실제 Calendar와 사용자 local DB를 사용하므로 macOS가 묻는 Calendar/Reminders 권한만 사용자가
+승인하면 된다. `--ui-testing`은 자동 smoke 전용이며 직접 붙일 필요가 없다.
 
 UI test runner 실행 전 `DevToolsSecurity -status`로 Developer Tools authorization을 확인한다.
 disabled host에서 이를 활성화하는 작업은 시스템 전체 보안 설정 변경이므로 관리자와 사용자의

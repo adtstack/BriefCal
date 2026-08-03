@@ -106,7 +106,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             analyze
 
-      - name: Build universal Release app
+      - name: Compile production-shaped Release code
         run: |
           set -euo pipefail
           xcodebuild \
@@ -114,15 +114,32 @@ jobs:
             -scheme KaosCal \
             -configuration Release \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalReleaseDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/KaosCalProductionReleaseDerivedData" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
-            CODE_SIGN_IDENTITY=- \
-            CODE_SIGNING_REQUIRED=YES \
-            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+            CODE_SIGNING_ALLOWED=NO \
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD" \
             build
+          INFO="$RUNNER_TEMP/KaosCalProductionReleaseDerivedData/Build/Products/Release/KaosCal.app/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "NO"
+          xcodebuild \
+            -project KaosCal.xcodeproj \
+            -scheme KaosCal \
+            -configuration Release \
+            -showBuildSettings \
+            > "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
+          grep -Eq '^ *ENABLE_HARDENED_RUNTIME = YES$' "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
+          grep -Eq '^ *KAOSCAL_LOCAL_TEST_BUILD = NO$' "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
+
+      - name: Build and launch-smoke universal local-test Release app
+        env:
+          KAOSCAL_LOCAL_DERIVED_DATA: ${{ runner.temp }}/KaosCalReleaseDerivedData
+        run: |
+          set -euo pipefail
+          export KAOSCAL_MARKETING_VERSION="$VERSION"
+          export KAOSCAL_CURRENT_PROJECT_VERSION="$BUILD"
+          bash scripts/build_local_test_app.sh
 
       - name: Verify Release app
         run: |
@@ -134,13 +151,14 @@ jobs:
           test -d "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -d --entitlements :- "$APP" 2>/dev/null > "$ENTITLEMENTS"
-          codesign -d --verbose=4 "$APP" 2>&1 | grep -E 'flags=.*runtime'
+          ! codesign -d --verbose=4 "$APP" 2>&1 | grep -E 'flags=.*runtime'
           lipo "$APP/Contents/MacOS/KaosCal" -verify_arch arm64 x86_64
 
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.kaoscal"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")" = "$VERSION"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO")" = "$BUILD"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")" = "14.0"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "YES"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$INFO")" = ""
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO")" = ""
           test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$INFO")" = "true"
@@ -199,7 +217,7 @@ jobs:
           trap cleanup EXIT
 
           hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$DMG"
-          codesign --verify --deep --strict --verbose=2 "$MOUNT_POINT/KaosCal.app"
+          bash scripts/verify_local_test_app.sh "$MOUNT_POINT/KaosCal.app"
           lipo "$MOUNT_POINT/KaosCal.app/Contents/MacOS/KaosCal" -verify_arch arm64 x86_64
           test -L "$MOUNT_POINT/Applications"
           test -z "$(find "$MOUNT_POINT/KaosCal.app" -name '*.xctest' -o -name '*XCTest*' -print -quit)"
@@ -236,5 +254,5 @@ jobs:
               --prerelease \
               --generate-notes \
               --title "KaosCal ${VERSION} local test build" \
-              --notes "This automated build is ad-hoc signed and is not Developer ID notarized. It is for local testing, not a public beta distribution candidate."
+              --notes "This automated local-test build is ad-hoc signed, has hardened runtime disabled because ad-hoc signatures have no Developer ID Team identity, and is not notarized. It is for local testing only, not a public beta distribution candidate."
           fi

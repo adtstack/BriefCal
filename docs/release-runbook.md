@@ -17,9 +17,10 @@
 - macOS 14.0 minimum, bundle identifier `com.adtstack.kaoscal`, 현재 project version
   `0.1.0` / build `1`
 - pinned SwiftPM dependency를 사용한 Debug test와 Release build
-- ad-hoc signed Release의 hardened runtime, strict code-signature, sandbox·Calendar·
-  user-selected read/write entitlement, `get-task-allow` 부재
-- exact ad-hoc Release 실행과 운영 DB 무변경 checkpoint
+- Sparkle 도입 전 ad-hoc signed Release의 hardened runtime, strict code-signature,
+  sandbox·Calendar·user-selected read/write entitlement, `get-task-allow` 부재
+- Sparkle 포함 이후에는 명시적인 local-test Release의 hardened runtime 비활성,
+  strict code-signature와 in-memory fixture launch smoke
 
 위 결과는 로컬 검증용이며 사용자에게 배포 가능한 서명이나 notarization 증거가 아니다.
 아래 항목은 **외부 beta 전 필수이며 아직 통과로 기록할 수 없다.**
@@ -141,40 +142,29 @@ xcodebuild \
   -resultBundlePath "$RELEASE_ROOT/KaosCalTests.xcresult" \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackageUpdates \
+  -skip-testing:KaosCalUITests \
   CODE_SIGNING_ALLOWED=NO \
   test
 ```
 
-그 다음 현재까지의 checkpoint와 같은 ad-hoc Release를 별도 Derived Data에 만든다.
-이 app은 release 후보의 entitlement와 runtime을 조기에 검사하기 위한 것이며 배포물이
-아니다.
+그 다음 Finder에서 실제로 열 수 있는 ad-hoc Local Test Release를 별도 Derived Data에 만든다.
+Sparkle을 포함한 ad-hoc app과 framework에는 Developer ID Team identity가 없으므로 hardened
+runtime library validation과 결합하면 dyld가 Sparkle을 거부한다. 따라서 이 명시적인 local-test
+산출물만 hardened runtime을 끄고, marker와 compiler condition을 함께 넣는다. Developer ID
+release 후보의 hardened-runtime 증거로 사용하지 않는다.
 
 ```sh
-export ADHOC_DERIVED_DATA="$RELEASE_ROOT/AdHocDerivedData"
-export ADHOC_APP="$ADHOC_DERIVED_DATA/Build/Products/Release/KaosCal.app"
+export KAOSCAL_LOCAL_DERIVED_DATA="$RELEASE_ROOT/LocalTestDerivedData"
+export KAOSCAL_MARKETING_VERSION="$VERSION"
+export KAOSCAL_CURRENT_PROJECT_VERSION="$BUILD"
 
-xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
-  -configuration Release \
-  -destination 'platform=macOS' \
-  -derivedDataPath "$ADHOC_DERIVED_DATA" \
-  -onlyUsePackageVersionsFromResolvedFile \
-  -skipPackageUpdates \
-  CODE_SIGN_IDENTITY=- \
-  CODE_SIGNING_REQUIRED=YES \
-  CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
-  MARKETING_VERSION="$VERSION" \
-  CURRENT_PROJECT_VERSION="$BUILD" \
-  build
-
-codesign --verify --deep --strict --verbose=2 "$ADHOC_APP"
-codesign -d --verbose=4 "$ADHOC_APP"
-codesign -d --entitlements - "$ADHOC_APP"
+bash scripts/build_local_test_app.sh
 ```
 
-출력에서 hardened runtime과 현재 세 entitlement를 확인하고
-`com.apple.security.get-task-allow`가 없는지 확인한다. ad-hoc 검증의 성공을 아래
+스크립트는 `KaosCalLocalTestBuild=YES`, hardened runtime 부재, 현재 entitlement,
+`get-task-allow`·XCTest 부재, host architecture와 strict deep signature를 확인한다. 이어 실제
+Calendar·Keychain·운영 DB 대신 in-memory fixture로 app을 실행해 3초 이상 생존하는지 확인한다.
+이 smoke가 실패하면 app을 packaging하거나 전달하지 않는다. ad-hoc 검증의 성공을 아래
 Developer ID 단계의 성공으로 기록하지 않는다.
 
 ## 3. Developer ID archive와 export
@@ -196,6 +186,8 @@ xcodebuild \
   CODE_SIGN_STYLE=Manual \
   CODE_SIGN_IDENTITY="$DEVELOPER_ID_APPLICATION" \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+  ENABLE_HARDENED_RUNTIME=YES \
+  KAOSCAL_LOCAL_TEST_BUILD=NO \
   MARKETING_VERSION="$VERSION" \
   CURRENT_PROJECT_VERSION="$BUILD" \
   KAOSCAL_UPDATE_FEED_URL="$UPDATE_FEED_URL" \
@@ -242,6 +234,7 @@ spctl --assess --type execute --verbose=4 "$APP_PATH"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :SUEnableSystemProfiling' "$APP_PATH/Contents/Info.plist"
@@ -259,6 +252,8 @@ test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/
 
 - signature chain의 leaf가 지정한 `Developer ID Application`이고 secure timestamp와
   runtime flag가 보인다.
+- `KaosCalLocalTestBuild`는 `NO`이며 local-test compiler condition이나 fixture bootstrap이
+  배포 app에 포함되지 않는다.
 - bundle/version/build/minimum이 각각 승인된 값, `com.adtstack.kaoscal`, macOS 14.0과
   일치한다.
 - `SUFeedURL`과 `SUPublicEDKey`가 승인된 공개 입력과 정확히 일치하고 automatic check/install,

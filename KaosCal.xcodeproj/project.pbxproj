@@ -655,6 +655,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KaosCal/Resources/Info.plist;
 				KAOSCAL_GOOGLE_TASKS_CLIENT_ID = "867825317355-5ucmuuu02qhnul55rgeuq7iacvcruk7d.apps.googleusercontent.com";
+				KAOSCAL_LOCAL_TEST_BUILD = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -682,6 +683,7 @@
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = KaosCal/Resources/Info.plist;
 				KAOSCAL_GOOGLE_TASKS_CLIENT_ID = "867825317355-5ucmuuu02qhnul55rgeuq7iacvcruk7d.apps.googleusercontent.com";
+				KAOSCAL_LOCAL_TEST_BUILD = NO;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

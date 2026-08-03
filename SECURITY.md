@@ -142,8 +142,10 @@ plaintext ZIP이다. 암호화나 제작자 서명이 없고, 다음 민감정�
 합성 fixture로 재현 여부를 확인한다.
 
 Developer ID 서명, notarization, stapling과 최종 DMG/ZIP 배포 절차는 아직 출시
-요구사항으로 남아 있다. 저장소의 ad-hoc signed Release checkpoint는 개발 검증
-증거일 뿐 공용 배포 provenance가 아니다. 출처를 확인할 수 없는 build를 실행하거나
+요구사항으로 남아 있다. 저장소의 `KaosCalLocalTestBuild=YES` ad-hoc Release는 Developer ID
+Team identity가 없어 hardened runtime을 비활성화하고 launch smoke를 통과하는 개발 검증
+산출물일 뿐 공용 배포 provenance가 아니다. 실제 배포 build는 marker `NO`, 같은 Team의 nested
+code, hardened runtime과 notarization이 필수다. 출처를 확인할 수 없는 build를 실행하거나
 Gatekeeper를 우회하지 않는다.
 
 Sparkle 2.9.2 수신기와 signed-feed 강제 정책은 구현됐지만 실제 HTTPS feed, Developer ID

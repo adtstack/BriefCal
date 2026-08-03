@@ -143,7 +143,7 @@ private struct KaosCalRootView: View {
     @AppStorage("onboarding.phase10.completed") private var completedOnboarding = false
 
     private var isUITesting: Bool {
-#if DEBUG
+#if DEBUG || KAOSCAL_LOCAL_TEST_BUILD
         ProcessInfo.processInfo.arguments.contains("--ui-testing")
 #else
         false
@@ -306,7 +306,7 @@ final class AppBootstrapCoordinator: ObservableObject {
         self.environment = environment
         self.arguments = arguments
         self.openDatabase = openDatabase
-#if DEBUG
+#if DEBUG || KAOSCAL_LOCAL_TEST_BUILD
         if arguments.contains("--ui-testing") {
             self.defaultDatabaseURL = nil
         } else {
@@ -378,7 +378,7 @@ enum AppBootstrap {
             try AppDatabase.openDefault()
         }
     ) -> AppState {
-#if DEBUG
+#if DEBUG || KAOSCAL_LOCAL_TEST_BUILD
         if arguments.contains("--ui-testing") {
             return makeUITestAppState(environment: environment)
         }
@@ -409,7 +409,7 @@ enum AppBootstrap {
         }
     }
 
-#if DEBUG
+#if DEBUG || KAOSCAL_LOCAL_TEST_BUILD
     private static func makeUITestAppState(
         environment: [String: String]
     ) -> AppState {

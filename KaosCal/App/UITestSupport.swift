@@ -1,6 +1,6 @@
 import Foundation
 
-#if DEBUG
+#if DEBUG || KAOSCAL_LOCAL_TEST_BUILD
 private enum UITestCalendarProviderError: LocalizedError {
     case transientRefresh
 

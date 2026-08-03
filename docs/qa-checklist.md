@@ -17,12 +17,34 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 권한을 거부한 상태
 - 앱 재설치 또는 DB 초기화 상태
 
+## 2026-08-03 runnable Local Test 서명·launch gate
+
+- 과거 ad-hoc+hardened Release는 strict `codesign`이 통과해도 Sparkle을 load할 때 dyld가 Team
+  identity 불일치로 종료됐다. `Library missing` 문구만으로 framework 파일 부재로 판정하지 않고
+  crash report의 dyld reason까지 확인한다.
+- production-shaped compile은 `KaosCalLocalTestBuild=NO`와 hardened runtime setting을 확인하고
+  패키징하지 않는다. 실제 배포 artifact는 같은 Developer ID Team의 nested code와 notarization이
+  추가로 필요하다.
+- local-test app은 marker `YES`, hardened runtime 부재, universal/host architecture, strict deep
+  signature, app sandbox·Calendar·Reminders entitlement, `get-task-allow`·XCTest 부재를 확인한다.
+- `--ui-testing` launch smoke는 Local Test compiler condition에서만 in-memory DB와 process-local
+  fixture를 사용한다. 앱이 최소 3초 생존해야 하며 crash report를 만들거나 Calendar, Keychain,
+  provider 계정과 운영 DB를 건드리면 통과가 아니다.
+- exact app `/private/tmp/KaosCalRunnableLocalTest/Build/Products/Release/KaosCal.app`은 직접
+  launch smoke 2회, ZIP 압축 해제본과 읽기 전용 DMG 내부 app smoke, 새 crash report 부재를
+  통과했다. 검증 DMG SHA-256은
+  `704d13f15a995cb8fc3a19d7702e74e109c1feb64377ef20f1b57564ca7e8d47`이다.
+- 최신 회귀는 **322 executed / 321 passed / 1 intentional skip / 0 failures**, result bundle
+  `/private/tmp/KaosCalSigningFixUnit.xcresult`, app coverage **53.61% (29,698/55,395)**다.
+
 ## 2026-08-03 UI 자동화·EventKit 비동기 경계 gate
 
 - unit 결과: **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
-  0 failures**. Result bundle: `/private/tmp/KaosCalUIAsyncPostFixUnit.xcresult`.
+  0 failures**. 후속 signing fix까지 포함한 최신 result bundle:
+  `/private/tmp/KaosCalSigningFixUnit.xcresult`.
 - coverage/build: `KaosCal.app` line coverage **53.61% (29,698/55,395)**로 50% floor,
-  정적 분석, unsigned Release와 Release bundle ID·macOS 14 minimum·XCTest 미포함 검증 통과.
+  정적 분석, production-shaped Release compile과 Local Test bundle ID·macOS 14 minimum·XCTest
+  미포함 검증 통과. 실제 launch 판정은 바로 위 signing gate를 따른다.
 - EventKit read: calendar list, bounded event fetch와 strong lookup은 async protocol을 통해 전용
   serial queue에서 수행하고, raw EventKit object는 queue 안에서 `Sendable` snapshot으로
   변환한다. executor가 main thread 밖에서 read closure를 실행하는 회귀가 포함된다.

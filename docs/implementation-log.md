@@ -1534,6 +1534,34 @@
   전면 localization, 대형 AppState/View 책임 분리, 다른 provider의 strict concurrency warning과
   실제 provider fixture다.
 
+## 2026-08-03 — Sparkle ad-hoc launch 실패와 runnable Local Test 분리
+
+- Finder에서 과거 Release app을 열 때 macOS가 문제 때문에 열 수 없다고 표시했고 crash report는
+  app code 진입 전 `DYLD / Library missing`을 기록했다. `Sparkle.framework`는 실제 존재했지만
+  ad-hoc+hardened runtime process가 nested Sparkle signature를 Team identity 불일치로 거부했다.
+  strict deep `codesign` 통과만으로 runtime library validation을 검증할 수 없었다.
+- app build setting과 Info marker 기본값은 production용 `KaosCalLocalTestBuild=NO`, hardened
+  runtime `YES`로 유지했다. Developer ID가 없는 로컬/CI artifact만 command-line에서 marker
+  `YES`, compiler condition과 `ENABLE_HARDENED_RUNTIME=NO`를 함께 지정한다. 실제 Developer ID
+  archive에는 이 condition을 넣지 않는다.
+- `build_local_test_app.sh`는 universal ad-hoc Release를 만들고 `verify_local_test_app.sh`로 strict
+  signature, entitlement, payload, architecture를 확인한다. 그 뒤 Release local-test에만 포함된
+  in-memory fixture를 사용해 앱을 직접 3초 기동한다. CI zip과 tag DMG mount 후에도 같은 smoke를
+  실행하며 production-shaped Release compile은 별도 gate로 유지한다.
+- exact artifact `/private/tmp/KaosCalRunnableLocalTest/Build/Products/Release/KaosCal.app`은
+  x86_64/arm64, marker `YES`, ad-hoc/no-runtime과 XCTest 미포함을 확인했다. 직접 app 2회,
+  ZIP 압축 해제본, 읽기 전용 DMG 내부 app이 각각 launch smoke를 통과했고 새 crash report를
+  만들지 않았다. 검증 DMG `/private/tmp/KaosCalSigningFix-local.dmg`의 SHA-256은
+  `704d13f15a995cb8fc3a19d7702e74e109c1feb64377ef20f1b57564ca7e8d47`이다.
+- 전체 **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip / 0 failures**,
+  result bundle `/private/tmp/KaosCalSigningFixUnit.xcresult`. app line coverage는
+  **53.61% (29,698/55,395)**이며 정적 분석, production-shaped universal Release compile과 UI
+  `build-for-testing`도 통과했다.
+- 결과: **Finder에서 여는 runnable Local Test 복구 / production Developer ID 경계 유지 / 실제
+  launch를 CI·DMG gate로 승격**.
+- 남은 경계: Local Test는 외부 배포나 Sparkle update source가 아니다. Developer ID/notarization,
+  clean-user quarantine과 실제 XCUITest execution은 별도다.
+
 ## 다음 항목 템플릿
 
 ```markdown

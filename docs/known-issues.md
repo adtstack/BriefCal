@@ -63,10 +63,14 @@ pending create는 원격 성공과 local binding 저장 사이에 프로세스�
 
 ### 외부 배포용 build가 아직 없다
 
-현재 Release checkpoint는 로컬 ad-hoc 서명 검증용이다. Developer ID 서명,
+현재 Release checkpoint는 `KaosCalLocalTestBuild=YES`가 표시된 로컬 ad-hoc 테스트용이다.
+Sparkle을 포함한 ad-hoc 앱에는 Developer ID Team identity가 없으므로 이 전용 build는 hardened
+runtime을 비활성화하고 실제 launch smoke를 통과해야 한다. Developer ID 서명, hardened runtime,
 notarization, stapling과 clean-user 설치를 마친 공개 beta package가 아니다.
 
-**현재 권장:** 개발 환경 밖 사용자에게 이 artifact를 배포하지 않는다.
+**현재 권장:** `scripts/build_local_test_app.sh`가 출력한 앱만 로컬 테스트에 사용하고, 과거의
+unsigned 또는 ad-hoc+hardened Release 산출물은 열지 않는다. 개발 환경 밖 사용자에게 이
+artifact를 배포하지 않는다.
 
 ### Calendar full access가 필요하다
 

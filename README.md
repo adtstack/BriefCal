@@ -52,6 +52,23 @@ xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -dest
 xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalUIDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates -parallel-testing-enabled NO -only-testing:KaosCalUITests CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES test
 ```
 
+Finder에서 직접 열 수 있는 로컬 테스트용 Release 앱은 전용 스크립트로 만든다.
+
+```sh
+bash scripts/build_local_test_app.sh
+```
+
+기본 출력은
+`/private/tmp/KaosCalLocalTestDerivedData/Build/Products/Release/KaosCal.app`이다. 스크립트는
+universal ad-hoc signing, entitlement와 XCTest 미포함을 검사하고, 실제 Calendar·Keychain·운영
+DB를 사용하지 않는 in-memory fixture로 앱을 직접 실행해 Sparkle 동적 로딩까지 확인한다.
+일반적으로 앱을 열 때는 fixture argument가 없으므로 정상 Calendar/로컬 DB 경로로 시작한다.
+
+Sparkle을 포함한 ad-hoc 앱에는 Developer ID Team identity가 없으므로 hardened runtime의
+library validation과 함께 사용하지 않는다. 로컬 테스트 빌드만 `KaosCalLocalTestBuild=YES`와
+hardened runtime 비활성화를 명시한다. 실제 배포 빌드는 이 marker가 `NO`이고, 같은 Developer ID
+Team으로 앱과 Sparkle을 서명한 hardened-runtime/notarized artifact여야 한다.
+
 UI automation은 Debug에서만 열리는 `--ui-testing` launch mode와 process-local in-memory
 fixture를 사용한다. 실제 Calendar, Keychain, provider 계정과 운영 SQLite를 읽거나 쓰지 않는다.
 macOS UI test runner가 시작되려면 해당 host의 Developer Tools authorization이 필요하다.
@@ -62,13 +79,15 @@ macOS UI test runner가 시작되려면 해당 host의 Developer Tools authoriza
 
 `main`/`master` push와 pull request에서는 [`ci.yml`](.github/workflows/ci.yml)이 최신
 검증 러너의 unit suite·50% app line coverage 하한, 격리된 UI automation, static analyzer,
-unsigned Release build와 최소 지원 macOS 14의 unit suite를 실행한다. 성공한 `.app` zip과
+실제 launch smoke를 통과한 local-test Release build와 최소 지원 macOS 14의 unit suite를
+실행한다. 성공한 `.app` zip과
 unit/UI `.xcresult`는 Actions artifact로 7일/14일 동안 보관한다. GitHub 저장소의 **Actions** 탭에서 해당 실행과
 artifact를 확인할 수 있다.
 
 `v0.1.0`처럼 세 자리 버전 태그를 push하면
 [`release.yml`](.github/workflows/release.yml)이 unit suite와 격리된 UI automation,
-Apple Silicon/Intel 공용 Release build, ad-hoc signing, DMG·checksum 검증을 수행하고
+Apple Silicon/Intel 공용 local-test Release build, ad-hoc signing, app/DMG launch smoke와
+checksum 검증을 수행하고
 GitHub prerelease에 두 파일을 올린다.
 
 ```sh
@@ -77,7 +96,8 @@ git push origin v0.1.0
 ```
 
 자동 artifact는 `KaosCal-0.1.0-local.dmg`와 `SHA256SUMS.txt`다. 이 경로는 현재
-Developer ID 인증서를 사용하지 않는 로컬 테스트 전달용이며, 외부 beta 배포 판정을
+Developer ID 인증서를 사용하지 않고 hardened runtime을 비활성화한 로컬 테스트 전달용이며,
+외부 beta 배포 판정을
 대체하지 않는다. 정식 배포는 [Release Runbook](docs/release-runbook.md)의 Developer ID
 서명·notarization·stapling gate를 별도로 통과해야 한다.
 
