@@ -357,14 +357,67 @@ protocol OAuthHTTPTransport {
 }
 
 struct URLSessionOAuthHTTPTransport: OAuthHTTPTransport {
+    private static let session = URLSession(
+        configuration: .ephemeral,
+        delegate: OAuthSameOriginRedirectDelegate(),
+        delegateQueue: nil
+    )
+
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await Self.session.data(for: request)
         guard let response = response as? HTTPURLResponse else {
             throw TaskProviderError.providerFailure(
                 "The OAuth provider returned an invalid HTTP response."
             )
         }
         return (data, response)
+    }
+}
+
+enum OAuthHTTPRedirectPolicy {
+    static func permitsRedirect(from source: URL, to destination: URL) -> Bool {
+        guard let sourceScheme = source.scheme?.lowercased(),
+              let destinationScheme = destination.scheme?.lowercased(),
+              let sourceHost = source.host?.lowercased(),
+              let destinationHost = destination.host?.lowercased() else {
+            return false
+        }
+        return sourceScheme == destinationScheme
+            && sourceHost == destinationHost
+            && effectivePort(source) == effectivePort(destination)
+            && destination.user == nil
+            && destination.password == nil
+    }
+
+    private static func effectivePort(_ url: URL) -> Int? {
+        if let port = url.port { return port }
+        switch url.scheme?.lowercased() {
+        case "https": return 443
+        case "http": return 80
+        default: return nil
+        }
+    }
+}
+
+private final class OAuthSameOriginRedirectDelegate: NSObject,
+    URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        guard let source = response.url,
+              let destination = request.url,
+              OAuthHTTPRedirectPolicy.permitsRedirect(
+                from: source,
+                to: destination
+              ) else {
+            completionHandler(nil)
+            return
+        }
+        completionHandler(request)
     }
 }
 
@@ -420,6 +473,7 @@ enum OAuthAuthorizationCallbackError: LocalizedError, Equatable {
     case denied(String)
     case stateMismatch
     case missingCode
+    case duplicateParameter(String)
 
     var errorDescription: String? {
         switch self {
@@ -427,6 +481,8 @@ enum OAuthAuthorizationCallbackError: LocalizedError, Equatable {
         case let .denied(message): "Provider authorization was denied: \(message)"
         case .stateMismatch: "The OAuth callback did not match the authorization request."
         case .missingCode: "The OAuth callback did not include an authorization code."
+        case let .duplicateParameter(name):
+            "The OAuth callback included the parameter more than once: \(name)."
         }
     }
 }
@@ -436,14 +492,21 @@ enum OAuthAuthorizationCallback {
         from callbackURL: URL,
         expectedState: String
     ) throws -> String {
-        let values = Dictionary(
-            uniqueKeysWithValues: (URLComponents(
-                url: callbackURL,
-                resolvingAgainstBaseURL: false
-            )?.queryItems ?? []).compactMap { item in
-                item.value.map { (item.name, $0) }
+        var values = [String: String]()
+        var names = Set<String>()
+        for item in URLComponents(
+            url: callbackURL,
+            resolvingAgainstBaseURL: false
+        )?.queryItems ?? [] {
+            guard names.insert(item.name).inserted else {
+                throw OAuthAuthorizationCallbackError.duplicateParameter(
+                    item.name
+                )
             }
-        )
+            if let value = item.value {
+                values[item.name] = value
+            }
+        }
         guard values["state"] == expectedState else {
             throw OAuthAuthorizationCallbackError.stateMismatch
         }
@@ -782,7 +845,9 @@ enum OAuthLoopbackBrowserAuthorization {
     ) async throws -> OAuthLoopbackCallbackResult {
         let listener: NWListener
         do {
-            listener = try NWListener(using: .tcp, on: port)
+            let parameters = NWParameters.tcp
+            parameters.requiredInterfaceType = .loopback
+            listener = try NWListener(using: parameters, on: port)
         } catch {
             throw OAuthLoopbackAuthorizationError.listenerUnavailable
         }
@@ -837,8 +902,7 @@ enum OAuthLoopbackBrowserAuthorization {
             }
             listener.newConnectionHandler = { connection in
                 connection.start(queue: .main)
-                connection.receive(minimumIncompleteLength: 1, maximumLength: 16 * 1_024) {
-                    data, _, _, _ in
+                receiveHTTPRequest(on: connection) { data in
                     guard let context = relay.context else {
                         connection.cancel()
                         return
@@ -881,7 +945,17 @@ enum OAuthLoopbackBrowserAuthorization {
                         content: response.data(using: .utf8),
                         completion: .contentProcessed { _ in connection.cancel() }
                     )
-                    relay.finish(result)
+                    switch result {
+                    case .success:
+                        relay.finish(result)
+                    case let .failure(error):
+                        // A random local request, malformed request, or stale
+                        // state must not consume the one real browser callback.
+                        // A provider denial with the correct state is terminal.
+                        if case .denied = error as? OAuthAuthorizationCallbackError {
+                            relay.finish(result)
+                        }
+                    }
                 }
             }
             listener.start(queue: .main)
@@ -909,6 +983,7 @@ enum OAuthLoopbackBrowserAuthorization {
 
     static func callbackURL(from data: Data, redirectURI: URL) -> URL? {
         guard let request = String(data: data, encoding: .utf8),
+              request.contains("\r\n\r\n") || request.contains("\n\n"),
               let firstLine = request.split(separator: "\n", maxSplits: 1).first else {
             return nil
         }
@@ -918,7 +993,11 @@ enum OAuthLoopbackBrowserAuthorization {
                 url: redirectURI,
                 resolvingAgainstBaseURL: false
               ),
-              let target = URLComponents(string: String(parts[1])) else {
+              let target = URLComponents(string: String(parts[1])),
+              target.scheme == nil,
+              target.host == nil,
+              target.user == nil,
+              target.password == nil else {
             return nil
         }
         let expectedPath = components.path.isEmpty ? "/" : components.path
@@ -926,6 +1005,38 @@ enum OAuthLoopbackBrowserAuthorization {
         guard receivedPath == expectedPath else { return nil }
         components.percentEncodedQuery = target.percentEncodedQuery
         return components.url
+    }
+
+    private static func receiveHTTPRequest(
+        on connection: NWConnection,
+        accumulated: Data = Data(),
+        completion: @escaping (Data?) -> Void
+    ) {
+        connection.receive(
+            minimumIncompleteLength: 1,
+            maximumLength: 4 * 1_024
+        ) { data, _, isComplete, error in
+            var request = accumulated
+            if let data {
+                request.append(data)
+            }
+            guard request.count <= 16 * 1_024 else {
+                completion(nil)
+                return
+            }
+            let hasCompleteHeaders = request.range(
+                of: Data("\r\n\r\n".utf8)
+            ) != nil || request.range(of: Data("\n\n".utf8)) != nil
+            if hasCompleteHeaders || isComplete || error != nil {
+                completion(hasCompleteHeaders ? request : nil)
+                return
+            }
+            receiveHTTPRequest(
+                on: connection,
+                accumulated: request,
+                completion: completion
+            )
+        }
     }
 }
 

@@ -75,6 +75,31 @@ final class CalendarAccessTests: XCTestCase {
         XCTAssertEqual(state.calendarContentState, .failed("Calendar provider failed"))
     }
 
+    func testTransientRefreshFailurePreservesLoadedCalendarData() async {
+        let provider = FakeCalendarProvider(authorizationState: .fullAccess)
+        provider.calendars = [exchangeCalendar]
+        provider.events = [sampleEvent]
+        let state = makeState(provider: provider)
+        await state.loadCalendarStatus()
+        state.selectEvent(sampleEvent.id)
+
+        provider.error = FakeCalendarProviderError.failed
+        await state.refreshCalendarData()
+
+        XCTAssertEqual(state.calendarContentState, .loaded)
+        XCTAssertEqual(state.calendarSources, [exchangeCalendar])
+        XCTAssertEqual(state.events, [sampleEvent])
+        XCTAssertEqual(state.selectedEventID, sampleEvent.id)
+        XCTAssertEqual(state.calendarRefreshError, "Calendar provider failed")
+        XCTAssertFalse(state.isCalendarRefreshing)
+
+        provider.error = nil
+        await state.refreshCalendarData()
+
+        XCTAssertEqual(state.calendarContentState, .loaded)
+        XCTAssertNil(state.calendarRefreshError)
+    }
+
     func testRequestErrorWithDeniedStatusShowsPermissionRecovery() async {
         let provider = FakeCalendarProvider(authorizationState: .denied)
         provider.error = FakeCalendarProviderError.failed

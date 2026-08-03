@@ -1,8 +1,8 @@
 # 상용 기능 격차와 후속 구현 로드맵
 
 > 상태: Active Product Specification
-> 기준일: 2026-07-20, Asia/Seoul
-> 적용 범위: v2 T0~T5와 `v10_task_provider_recovery` 이후의 후속 제품 작업
+> 기준일: 2026-08-02, Asia/Seoul
+> 적용 범위: v2 T0~T5, `v11_local_task_planning`과 Full Month MVP 이후의 후속 제품 작업
 > 목적: 상용 캘린더와 비교해 부족한 기능을 숨기지 않고, KaosCal의 local-only 원칙을
 > 지키는 구현 순서와 인수 기준을 고정한다.
 
@@ -16,7 +16,8 @@
 
 - `C0~C4`는 상용화 후속 순서다. 과거 코드 리뷰 심각도 `P0/P1/P2`, 기존 Phase 0~10,
   v2 provider 단계 `T0~T5`와 다른 번호 체계다.
-- C1 항목은 제품 요구가 승인된 다음 구현 묶음이다.
+- C1 항목은 제품 요구가 승인된 다음 구현 묶음이며 `COM-003` Full Month MVP는 구현과
+  자동/offscreen 검증을 완료하고 live 대기 상태다.
 - C2/C3 항목은 가치와 순서는 승인됐지만, 데이터·권한·EventKit 경계가 바뀌면 구현 전에
   ADR을 추가해야 한다.
 - C4는 경쟁 제품에 있더라도 ADR-019에 따라 영구 제외한다.
@@ -28,6 +29,7 @@
 KaosCal의 현재 강점은 다음과 같다.
 
 - exact membership을 갖는 이름 있는 Calendar Set과 role/source/permission 설명
+- 일정 제목과 시간을 읽는 4~6주 Full Month, multi-day 주별 segment와 overflow
 - 원본 일정이 이동·삭제돼도 notes와 Before/During/After를 조용히 버리지 않는 Event Brief
 - Apple Reminders, Google Tasks, Todoist, Microsoft To Do를 구분하는 task provider 경계
 - remote/local conflict, missing, bounded pending retry, exact relink와 local-only 복구
@@ -36,15 +38,15 @@ KaosCal의 현재 강점은 다음과 같다.
 
 반면 현재 제품은 Fantastical, Apple Calendar, Google Calendar, Outlook 같은 범용
 캘린더를 완전히 대체하기보다 **Calendar.app 위에서 일정 맥락과 작업을 보존하는
-macOS-first 실행 허브**에 가깝다. 상용 대체재로 표현하려면 알림, 일정 검색, 전체 Month,
-빠른 생성과 회의 진입 같은 일상 기본기를 먼저 채워야 한다.
+macOS-first 실행 허브**에 가깝다. Full Month MVP는 구현했지만, 상용 대체재로 표현하려면
+알림, 일정 검색, 빠른 생성과 회의 진입 같은 일상 기본기를 더 채워야 한다.
 
 시장 비교는 2026-07-18에 공식 제품 문서를 기준으로 확인했다.
 
 | 시장 기능 | 공식 비교 예 | KaosCal 현재 상태 | 방향 |
 | --- | --- | --- | --- |
 | 빠른 생성, 템플릿 | [Fantastical 기능](https://flexibits.com/fantastical?force_isolation=true) | 구조화 editor만 있음 | C1에서 구조화 Quick Add·local template 구현 |
-| 전체 Month/Quarter/Year | [Fantastical 기능](https://flexibits.com/fantastical?force_isolation=true) | Day/Week/Agenda와 mini month만 있음 | Month는 C1, Quarter/Year는 C3 재평가 |
+| 전체 Month/Quarter/Year | [Fantastical 기능](https://flexibits.com/fantastical?force_isolation=true) | Month MVP 구현·자동/offscreen 검증 완료·live 대기, Quarter/Year 없음 | Month live gate를 닫고 Quarter/Year는 C3 재평가 |
 | 일정·task 알림 | [Apple Calendar 알림](https://support.apple.com/guide/calendar/icl1012/mac) | task due는 분류이며 notification이 아님 | C1 |
 | 초대 응답·새 시간 제안 | [Apple Calendar 초대](https://support.apple.com/guide/calendar/icl1019/mac) | invitation/attendee 원본 변경을 Calendar.app으로 위임 | C2에서 상태·왕복 UX, 직접 RSVP는 C4 |
 | 첨부파일·URL | [Apple Calendar 첨부](https://support.apple.com/guide/calendar/icl58679aba2/mac) | T5 reference는 별도 URL metadata | C2에서 안전한 표시·열기부터 구현 |
@@ -95,7 +97,8 @@ C0 통과 전에도 C1 코드를 개발할 수 있지만, C0 미완료 상태에
 ### C1 — 일상 캘린더 기본기
 
 C1은 다음 구현 묶음이다. 각 항목은 [제품·시스템 스펙](specification.md)의 `COM-*`
-요구사항과 같은 ID를 사용한다.
+요구사항과 같은 ID를 사용한다. `COM-003`은 구현과 자동 gate를 통과했지만 live gate가 남아 있으며,
+나머지 항목의 상태를 함께 완료로 승격하지 않는다.
 
 #### COM-001 — 일정·Task 알림
 
@@ -121,14 +124,20 @@ C1은 다음 구현 묶음이다. 각 항목은 [제품·시스템 스펙](speci
 
 #### COM-003 — 전체 Month 보기
 
-- 상태: 설계 승인 / 구현 대기
-- mini month와 별도로 일정 제목을 보여 주는 본문 Month view를 제공해야 한다.
-- locale, first weekday, 4~6주, all-day/timed multi-day, 배타 종료, overflow와 오늘·선택
-  상태를 올바르게 표시해야 한다.
+- 상태: 구현·자동/offscreen 검증 완료 / live 대기
+- mini month와 별도로 일정 제목과 시간 정보를 보여 주는 4~6주의 본문 Month를 구현했다.
+  locale과 first weekday를 따르고 인접 월을 포함한 완전한 주만 표시한다.
+- all-day와 timed multi-day는 배타 종료를 지켜 주 경계마다 이어지는 segment로 나눈다.
+  셀에 들어가지 않는 일정은 `+N more`와 날짜별 popover로 열며, event 선택은 기존
+  Inspector, 날짜 동작은 해당 Day로 이어진다.
 - `global Enabled ∩ selected Calendar Set`을 적용하되 raw fetch, recovery와 availability
-  blocking을 줄이면 안 된다.
-- 첫 버전은 drag resize/move를 포함하지 않아도 되며, 선택·keyboard navigation과
-  VoiceOver를 먼저 통과해야 한다.
+  blocking을 줄이지 않는다. 이전·다음은 달 단위로 이동하고 오래된 비동기 조회가 현재
+  월을 덮지 않는 기존 fetch 경계를 재사용한다.
+- 상단 `Day / Week / Month / Agenda` 전환기, `⌘1`~`⌘5`, 날짜 방향키 focus와
+  VoiceOver 의미를 구현했다. 312-test 전체 회귀와 560×520 offscreen render는 통과했으며
+  실제 창의 고밀도·keyboard·VoiceOver는 통과 근거가 생길 때까지 pending이다.
+- 첫 버전에는 일정 drag resize/move, Quarter/Year, 전체 일정 검색, 날짜별 Day Summary와
+  Quick Add/template을 포함하지 않는다.
 
 #### COM-004 — Quick Add와 Template
 

@@ -792,6 +792,11 @@ enum TaskCenterCompletionResult: Equatable {
     case personalTask(PersonalTask)
 }
 
+struct TaskCenterCompletionOutcome: Equatable {
+    let completed: TaskCenterCompletionResult
+    let repeated: TaskCenterCompletionResult?
+}
+
 enum TaskCenterList: Equatable {
     case today
     case upcoming

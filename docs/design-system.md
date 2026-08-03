@@ -54,12 +54,15 @@ Sidebar:
 - 고정 6×7 mini month 날짜 탐색기
 - role·source·permission을 함께 보여 주는 calendar list와 role 변경 menu
 - synthetic `All Calendars`, 사용자 저장 Calendar Set, role별 Smart Role Filter
-- Set은 global Enabled와 교집합으로 현재 Day/Week/Agenda visibility를 좁힌다. 승인된 `UI-005`에서는 mini month 일정 존재 표시에도 같은 filter를 적용하며 EventKit fetch·Event Brief·editor destination은 제거하지 않는다.
+- Set은 global Enabled와 교집합으로 현재 Day/Week/Month/Agenda visibility를 좁힌다. 승인된 `UI-005`에서는 mini month 일정 존재 표시에도 같은 filter를 적용하며 EventKit fetch·Event Brief·editor destination은 제거하지 않는다.
 
 Calendar Area:
 - Day/Week/Agenda는 모두 v1 필수
 - Day/Week에는 종일 일정용 all-day lane
-- Month는 v1에서 가볍게 시작하거나 후순위
+- Month는 v1 당시 후순위였다. 현행 C1 Full Month MVP는 일정 내용을 보여 주는 별도 본문
+  화면으로 구현한다.
+- 본문 상단에는 Sidebar가 닫혀도 사용할 수 있는 `Day / Week / Month / Agenda` segmented
+  전환기를 둔다.
 - today indicator 명확히 표시
 
 Event Brief Panel:
@@ -108,7 +111,7 @@ Task Center:
 - Sidebar `List` 위에 고정하고 calendar 목록만 독립적으로 scroll한다.
 - Sidebar 최소 폭 210pt에서 바깥 padding 12pt, 7열 간격 2pt, 날짜 최소 높이 24pt, 요일 header 최소 높이 16pt를 사용한다.
 - 월은 항상 42개 civil day/6행이다. 현재 calendar의 첫 요일 순서, locale과 time zone을 사용하며 DST에서도 calendar day 연산으로 날짜를 만든다.
-- 월 화살표는 본문 날짜를 바꾸지 않고 mini month만 탐색한다. 날짜 선택은 Day/Week/Agenda를 유지하고 Task Center에서는 Day로 이동한다.
+- 월 화살표는 본문 날짜를 바꾸지 않고 mini month만 탐색한다. 날짜 선택은 Day/Week/Month/Agenda를 유지하고 Task Center에서는 Day로 이동한다.
 - 다른 월을 둘러보는 중 toolbar Today 또는 이미 focused인 같은 날짜를 다시 선택해도 focused month로 복귀한다.
 - focused date는 accent 원형 fill과 흰 숫자, today는 accent ring, focused+today는 흰 inset ring, 인접 월은 secondary와 낮은 opacity로 표시한다.
 - 모든 날짜와 월 화살표는 `Button`이고 grid는 keyboard focus section이다. 날짜 접근성 label은 요일+전체 날짜, value는 focused/today/adjacent 상태, identifier는 calendar civil key를 쓴다.
@@ -117,6 +120,29 @@ Task Center:
 - dot 요약은 `global Enabled ∩ 선택 Calendar Set`을 적용하고 availability blocking과는 독립이다. 따라서 disable+block 일정에는 dot이 없고 enable+ignore 일정에는 dot이 있다. timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 모든 civil day에 표시한다.
 - 표시 중인 42일 전체 fetch coverage가 성공한 뒤 grid 단위로 dot을 공개한다. 부분 결과를 섞지 않으며 loading/failure를 `일정 없음`으로 표현하지 않는다.
 - dot은 별도 hit target이나 접근성 element가 아니다. 날짜 Button의 접근성 value에는 `일정 N개`를 포함하고, grid는 loading/unavailable 상태를 별도로 전달한다.
+
+### Full Month MVP 적용값
+
+- 현재 calendar의 locale, first weekday와 time zone을 따르는 7열 grid를 사용한다. 해당 월을
+  덮는 최소 4주에서 최대 6주의 완전한 주만 만들고 인접 월 날짜는 낮은 강조로 구분한다.
+- 날짜 header와 일정 lane을 분리한다. 오늘, keyboard focus 날짜, 인접 월을 색상 하나에만
+  의존하지 않고 형태·텍스트·VoiceOver 값으로 구분한다.
+- 한 날짜의 timed 일정은 시작 시간과 제목, all-day 일정은 제목을 우선 표시한다. 작은
+  폭에서 source·role 같은 보조 정보는 생략하되 event의 접근성 label과 Inspector에는 남긴다.
+- all-day와 timed multi-day는 calendar civil day와 배타 종료를 사용해 주 경계마다 가로
+  segment로 나눈다. 이전·다음 주나 보이는 grid 밖으로 이어지는 상태를 막대 끝에서
+  일관되게 표현한다.
+- 주의 lane 배치는 입력 순서와 무관하게 결정적이어야 한다. 셀 높이 안에 보이지 않는
+  일정은 날짜별 `+N more`로 집계하고 popover에는 숨겨진 일정을 선택 가능한 목록으로
+  제공한다.
+- 일정 선택은 기존 오른쪽 Inspector와 Event Brief를 열고, 날짜 동작은 focused date를
+  해당 날짜로 바꾼 뒤 Day로 이동한다. 방향키는 civil day 단위로 날짜 focus를 이동한다.
+- `global Enabled ∩ 선택 Calendar Set`만 렌더링하되 raw EventKit snapshot, recovery,
+  duplicate 판단과 availability blocking은 줄이지 않는다.
+- 월 이동 중 이미 표시한 event가 있으면 grid를 유지하고 작은 loading indicator를
+  overlay한다. 새 fetch가 실패하거나 취소됐다고 기존 일정이 없는 것으로 표시하지 않는다.
+- 첫 버전은 event drag 이동·resize, Quarter/Year, 전체 일정 검색, 날짜별 Day Summary와
+  Quick Add/template을 제공하지 않는다.
 
 ## Event Brief 규칙
 
@@ -358,13 +384,16 @@ impact confirmation에 표시할 것:
 
 ## 키보드 우선 작업
 
-초기 단축키 후보:
-- 새 일정: `⌘N` 구현
-- 검색
-- 오늘로 이동
-- 이전/다음 기간
-- Day/Week/Agenda 전환
-- 선택 일정의 Event Brief로 focus 이동
+현행 단축키와 Month interaction:
+
+- 새 일정: `⌘N`
+- 오늘로 이동: `⌘T`
+- 다시 읽기: `⌘R`
+- `⌘1` Day, `⌘2` Week, `⌘3` Month, `⌘4` Agenda, `⌘5` Tasks
+- Month 날짜 focus: 방향키, 날짜 동작 실행 시 Day 이동
+- Month event 동작 실행 시 선택 일정의 Inspector/Event Brief 열기
+
+전체 일정 검색과 Quick Add/template 단축 흐름은 후속 C1 범위다.
 
 ## 접근성
 

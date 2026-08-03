@@ -1014,6 +1014,227 @@ final class ContextStore {
         }
     }
 
+    /// Completes a Task Center item, stops its running timer, and creates the
+    /// next recurrence as one SQLite transaction. A failure at any point rolls
+    /// the source task back to its original state.
+    func applyTaskCenterCompletion(
+        id: TaskCenterItemID,
+        isCompleted: Bool,
+        calendar: Calendar
+    ) throws -> TaskCenterCompletionOutcome {
+        try database.write { db in
+            let timestamp = now()
+            let identity = Self.taskPlanningIdentity(for: id)
+            var planning = try TaskPlanningMetadata.fetchOne(
+                db,
+                key: [
+                    "task_kind": identity.kind.rawValue,
+                    "task_id": identity.id,
+                ]
+            ) ?? TaskPlanningRepository.defaultMetadata(
+                for: id,
+                now: timestamp
+            )
+            let checklist = try TaskChecklistItem
+                .filter(Column("task_kind") == identity.kind.rawValue)
+                .filter(Column("parent_task_id") == identity.id)
+                .order(Column("sort_order"), Column("created_at"), Column("id"))
+                .fetchAll(db)
+
+            let result: TaskCenterCompletionResult
+            let wasCompleted: Bool
+            switch id {
+            case let .eventTask(taskID, contextID):
+                let task = try checkedEventTask(
+                    contextID: contextID,
+                    taskID: taskID,
+                    in: db
+                )
+                wasCompleted = task.isCompleted
+                result = .eventTask(
+                    try eventTasks.setCompleted(
+                        task: task,
+                        isCompleted: isCompleted,
+                        in: db
+                    )
+                )
+            case let .personalTask(taskID):
+                guard let task = try personalTasks.fetch(id: taskID, in: db) else {
+                    throw ContextStoreError.missingPersonalTask(taskID)
+                }
+                wasCompleted = task.isCompleted
+                result = .personalTask(
+                    try personalTasks.setCompleted(
+                        task: task,
+                        isCompleted: isCompleted,
+                        in: db
+                    )
+                )
+            }
+
+            if isCompleted, !wasCompleted, let startedAt = planning.startedAt {
+                planning.actualSeconds += max(
+                    0,
+                    Int(timestamp.timeIntervalSince(startedAt).rounded(.down))
+                )
+                planning.startedAt = nil
+                planning.updatedAt = timestamp
+                try planning.save(db)
+            }
+
+            guard isCompleted,
+                  !wasCompleted,
+                  planning.repeatFrequency != .none else {
+                return TaskCenterCompletionOutcome(
+                    completed: result,
+                    repeated: nil
+                )
+            }
+
+            let repeated: TaskCenterCompletionResult
+            let destination: TaskCenterItemID
+            switch result {
+            case let .personalTask(task):
+                let next = PersonalTask(
+                    id: makeID(),
+                    title: task.title,
+                    notes: task.notes,
+                    dueAt: Self.nextRepeatingDate(
+                        task.dueAt,
+                        frequency: planning.repeatFrequency,
+                        interval: planning.repeatInterval,
+                        calendar: calendar
+                    ),
+                    isCompleted: false,
+                    sortOrder: task.sortOrder,
+                    createdAt: timestamp,
+                    updatedAt: timestamp,
+                    completedAt: nil
+                )
+                try next.insert(db)
+                repeated = .personalTask(next)
+                destination = .personalTask(taskID: next.id)
+            case let .eventTask(task):
+                let nextDue: EventTaskDue = switch task.due {
+                case .none:
+                    .none
+                case let .relative(anchor, offsetMinutes):
+                    .relative(anchor: anchor, offsetMinutes: offsetMinutes)
+                case let .fixed(date):
+                    .fixed(Self.nextRepeatingDate(
+                        date,
+                        frequency: planning.repeatFrequency,
+                        interval: planning.repeatInterval,
+                        calendar: calendar
+                    ) ?? date)
+                }
+                let nextOrder = try eventTasks.nextSortOrder(
+                    contextID: task.contextID,
+                    section: task.section,
+                    in: db
+                )
+                let next = try eventTasks.makeTask(
+                    contextID: task.contextID,
+                    section: task.section,
+                    title: task.title,
+                    sortOrder: nextOrder,
+                    due: nextDue
+                )
+                try eventTasks.insert(task: next, in: db)
+                repeated = .eventTask(next)
+                destination = .eventTask(
+                    taskID: next.id,
+                    contextID: next.contextID
+                )
+            }
+
+            try copyTaskPlanning(
+                planning,
+                checklist: checklist,
+                to: destination,
+                timestamp: timestamp,
+                in: db
+            )
+            return TaskCenterCompletionOutcome(
+                completed: result,
+                repeated: repeated
+            )
+        }
+    }
+
+    private func copyTaskPlanning(
+        _ source: TaskPlanningMetadata,
+        checklist: [TaskChecklistItem],
+        to destination: TaskCenterItemID,
+        timestamp: Date,
+        in db: Database
+    ) throws {
+        let target = Self.taskPlanningIdentity(for: destination)
+        let metadata = TaskPlanningMetadata(
+            taskKind: target.kind,
+            taskID: target.id,
+            priority: source.priority,
+            isImportant: source.isImportant,
+            repeatFrequency: source.repeatFrequency,
+            repeatInterval: source.repeatInterval,
+            estimatedMinutes: source.estimatedMinutes,
+            actualSeconds: 0,
+            startedAt: nil,
+            createdAt: timestamp,
+            updatedAt: timestamp
+        )
+        try metadata.save(db)
+        for sourceItem in checklist {
+            let item = TaskChecklistItem(
+                id: makeID(),
+                taskKind: target.kind,
+                parentTaskID: target.id,
+                title: sourceItem.title,
+                isCompleted: false,
+                sortOrder: sourceItem.sortOrder,
+                createdAt: timestamp,
+                updatedAt: timestamp
+            )
+            try item.insert(db)
+        }
+    }
+
+    private static func taskPlanningIdentity(
+        for id: TaskCenterItemID
+    ) -> (kind: LocalTaskKind, id: String) {
+        switch id {
+        case let .eventTask(taskID, _): (.event, taskID)
+        case let .personalTask(taskID): (.personal, taskID)
+        }
+    }
+
+    private static func nextRepeatingDate(
+        _ date: Date?,
+        frequency: TaskRepeatFrequency,
+        interval: Int,
+        calendar: Calendar
+    ) -> Date? {
+        guard let date else { return nil }
+        let component: Calendar.Component
+        switch frequency {
+        case .none:
+            return date
+        case .daily:
+            component = .day
+        case .weekly:
+            component = .weekOfYear
+        case .monthly:
+            component = .month
+        case .yearly:
+            component = .year
+        }
+        return calendar.date(
+            byAdding: component,
+            value: max(1, interval),
+            to: date
+        )
+    }
+
     private static func deleteTaskPlanning(
         kind: LocalTaskKind,
         taskID: String,

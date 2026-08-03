@@ -43,6 +43,65 @@ final class LocalDataBackupServiceTests: XCTestCase {
         }
     }
 
+    func testExportRejectsOrphanPlanningAndUnsafeReferenceRows() throws {
+        try withTemporaryDirectory { directory in
+            let database = try AppDatabase.open(
+                at: directory.appendingPathComponent("invalid-domain.sqlite")
+            )
+            try insertFixture(into: database, suffix: "domain")
+            let service = LocalDataBackupService(database: database)
+            let archiveURL = directory.appendingPathComponent("invalid.zip")
+            let timestamp = "2026-07-12 10:00:00.000"
+            try database.write { db in
+                try db.execute(
+                    sql: """
+                        INSERT INTO task_planning_metadata (
+                            task_kind, task_id, priority, important,
+                            repeat_frequency, repeat_interval, actual_seconds,
+                            created_at, updated_at
+                        ) VALUES ('personal', 'missing-task', 0, 0, 'none', 1,
+                            0, ?, ?)
+                        """,
+                    arguments: [timestamp, timestamp]
+                )
+            }
+
+            XCTAssertThrowsError(
+                try service.exportBackup(
+                    to: archiveURL,
+                    now: Date(timeIntervalSince1970: 10),
+                    appVersion: "test"
+                )
+            ) { error in
+                guard case let LocalDataBackupError.invalidDatabase(reason) = error else {
+                    return XCTFail("Unexpected error: \(error)")
+                }
+                XCTAssertTrue(reason.contains("missing task"))
+            }
+
+            try database.write { db in
+                try db.execute(
+                    sql: "DELETE FROM task_planning_metadata WHERE task_id = 'missing-task'"
+                )
+                try db.execute(
+                    sql: "UPDATE context_references SET url = 'file:///tmp/private'"
+                )
+            }
+            XCTAssertThrowsError(
+                try service.exportBackup(
+                    to: archiveURL,
+                    now: Date(timeIntervalSince1970: 11),
+                    appVersion: "test"
+                )
+            ) { error in
+                guard case let LocalDataBackupError.invalidDatabase(reason) = error else {
+                    return XCTFail("Unexpected error: \(error)")
+                }
+                XCTAssertTrue(reason.contains("unsafe URL"))
+            }
+        }
+    }
+
     func testImportRestoresThroughSameDatabaseWriterAndKeepsAutomaticBackup() throws {
         try withTemporaryDirectory { directory in
             let source = try AppDatabase.open(

@@ -1444,6 +1444,69 @@
 - 결과: **client-side automatic updater implemented / full regression and synthetic configured
   Release audit passed / real Developer ID, signed HTTPS feed and previous-build upgrade pending**.
 
+## 2026-08-02 — `COM-003` Full Month MVP
+
+- 관련 현행 스펙: `COM-003`, `UI-001`, `TIME-001`~`TIME-003`, `CFG-008`
+- 변경 파일:
+  - `KaosCal/CalendarKit/MonthEventLayout.swift`: locale·first weekday·time zone을 따르는
+    4~6주 `MonthGrid`, all-day/timed multi-day의 배타 종료·주별 segment,
+    deterministic lane과 날짜별 hidden event 계산
+  - `KaosCal/App/AppState.swift`: Month workspace, 완전한 grid visible interval, 달 단위 이동과
+    짧은 달 day clamp, 월 제목·기존 범위 조회/selection 경계 연결
+  - `KaosCal/Features/CalendarShell/CalendarShellView.swift`: 본문 Month, 시간+제목,
+    multi-day 막대, `+N more`와 날짜별 popover, event→Inspector, 날짜 focus→Day,
+    loading overlay, keyboard·VoiceOver 의미와 상단 calendar view picker
+  - `KaosCal/App/KaosCalApp.swift`: Navigate의 Month 추가와
+    `⌘1` Day, `⌘2` Week, `⌘3` Month, `⌘4` Agenda, `⌘5` Tasks 순서
+  - `KaosCalTests/AppStateTests.swift`, `KaosCalTests/CalendarEventLayoutTests.swift`:
+    4·5·6주, DST civil day, 월 이동/clamp, 주·월 경계 segment, 자정 배타 종료,
+    deterministic lane/overflow와 Month workspace 계약
+  - README와 현행 user/spec/roadmap/design/architecture/QA/status 문서
+- 제품 경계:
+  - Month도 `global Enabled ∩ 선택 Calendar Set`의 `visibleEvents`만 렌더링하고 raw fetch,
+    Event Brief recovery, duplicate projection과 availability blocking의 정본을 바꾸지 않는다.
+  - 일정 선택은 기존 Inspector/Event Brief를 재사용하고 날짜 동작은 해당 civil day의 Day로
+    이동한다. 새로운 DB table, Calendar/EventKit write나 원격 서비스는 추가하지 않는다.
+  - drag 이동·resize, Quarter/Year, 전체 일정 검색, Day Summary와 Quick Add/template은
+    이번 MVP에 포함하지 않는다.
+- 검증:
+  - 관련 Foundation/AppState 자동 계약과 560×520의 6주·고밀도 offscreen render 계약을
+    추가했다. bitmap에서 multi-day continuation과 `+3 more`의 잘림이 없음을 확인했다.
+  - 최종 전체는 **312 executed / 311 passed / 1 intentional `ManualEventKitQATests` skip /
+    0 failures**다. result bundle은
+    `/private/tmp/KaosCalMonthDerived/Logs/Test/Test-KaosCal-2026.08.02_19-55-49-+0900.xcresult`다.
+  - 실제 Exchange fixture, 좁은 창·고밀도 `+N` popover, 빠른 월 이동의 loading/error,
+    keyboard focus, VoiceOver와 Increase Contrast는 live/manual 대기다.
+- 결과: **구현·자동/offscreen 검증 완료 / live 대기**.
+
+## 2026-08-03 — provider·데이터 안전성과 자동 품질 gate 보강
+
+- Microsoft Graph의 next/delta cursor를 exact HTTPS origin과 `/v1.0` 경로로 제한하고
+  pagination 상한·반복 cursor 차단을 추가했다. Microsoft To Do deep link도 공식 web origin만
+  열도록 좁혔다.
+- OAuth callback parser는 duplicate parameter, cross-origin redirect, absolute-form request,
+  oversized/incomplete header를 거부한다. listener는 loopback interface만 사용하고 잘못된 state의
+  callback이 뒤따르는 정상 callback을 선점하지 못하도록 relay 수명주기를 고쳤다.
+- 반복 task 완료, timer actual 반영, 다음 occurrence 및 planning/checklist 복사를 단일 SQLite
+  transaction으로 옮겼다. 중간 insert 실패 시 완료와 timer 변경까지 함께 rollback하는 회귀를
+  추가했다.
+- export/import/reset 앞에 provider maintenance fence를 두어 새 작업을 차단하고 진행 중인
+  background refresh를 cancel/await한다. backup 검증은 orphan planning/checklist와 비 HTTP(S)
+  context reference도 거부한다.
+- calendar 검색 결과의 exact occurrence focus와 temporary reveal, source 소멸 시 dirty task
+  editor 보존, transient refresh 실패 시 stale 화면+warning+Retry, provider 연결 해제 확인 UX를
+  추가했다. Todoist 동일 task mutation은 FIFO로 직렬화했다.
+- CI/Release workflow에 code coverage 50% floor와 `xcodebuild analyze`를 추가하고 최소 지원
+  macOS 호환성 job을 분리했다. 제품 UI의 남아 있던 한국어 문구는 현재 기준 언어인 영어로
+  정리했다.
+- 검증: 전체 **319 executed / 318 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**, result bundle `/private/tmp/KaosCalQualityFinal2.xcresult`. `KaosCal.app` line
+  coverage **53.63% (29,559/55,121)**, 정적 분석, workflow YAML, plist와 diff whitespace 검사를
+  통과했다.
+- 결과: **요청한 1~5번 보완과 즉시 자동화할 수 있는 품질 공백 해결 / 구조적 품질 후속 분리**.
+- 남은 비배포 품질 경계: 실제 UI automation target과 실창 accessibility, 전면 localization,
+  EventKit read의 async/off-main 경계, 대형 AppState/View 책임 분리, 실제 provider fixture다.
+
 ## 다음 항목 템플릿
 
 ```markdown

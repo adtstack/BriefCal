@@ -53,7 +53,7 @@ EventKit, 외부 event task는 사용자가 선택한 provider와 이 Mac에서 
 ## 현재 모듈 구조
 
 아래 tree는 Phase 9 Local Data 이후의 calendar usage와 saved Calendar Set, v10 task provider
-recovery와 v11 local task planning 확장을 포함한 실제 구조다. recurrence editor와
+recovery, v11 local task planning과 Full Month MVP 확장을 포함한 실제 구조다. recurrence editor와
 mutation/linked-delete impact review는 `EventEditorView`, scope·partial-success·session Undo와
 missing/orphan/deleted-original recovery 조정은 `AppState`, change-log/relink/delete-finalize
 transaction은 기존 `ContextStore`에 유지했다. v8은 calendar usage, v9는 저장 Set·membership·
@@ -72,6 +72,7 @@ KaosCal.app
 │  ├─ CalendarModels.swift
 │  ├─ CalendarEventDateFormatting.swift
 │  ├─ CalendarEventLayout.swift
+│  ├─ MonthEventLayout.swift
 │  ├─ CalendarClarity.swift
 │  └─ CalendarEventEditing.swift
 ├─ ContextStore/
@@ -132,13 +133,13 @@ KaosCal.app
 3. `AppBootstrap`이 DB 상태와 `ContextStore`를 주입해 `AppState`를 만든다. DB open/migration 실패 시 전역 복구 안내 상태로 시작한다.
 4. `CalendarShell`의 시작 task가 `AppState.loadCalendarStatus`를 호출하고 `CalendarProvider`가 EventKit 권한 상태를 확인한다.
 5. 권한이 있으면 지정 기간의 이벤트와 캘린더 목록을 가져온다.
-6. fetch한 EventKit 값 snapshot을 `ContextStore.observe`가 강한 식별자로 기존 context에 연결하고 최신 snapshot으로 갱신한 뒤 Day/Week/Agenda에 표시한다.
+6. fetch한 EventKit 값 snapshot을 `ContextStore.observe`가 강한 식별자로 기존 context에 연결하고 최신 snapshot으로 갱신한 뒤 Day/Week/Month/Agenda에 표시한다.
 7. 사용자가 체크리스트, notes, 개인 작업, 완료 상태를 바꾸면 SQLite만 변경하고 Event Brief와 Task Center가 함께 갱신된다. local mutation은 AppState 명령을 거쳐 성공 뒤 두 projection을 다시 읽는다.
 8. 사용자가 지원되는 일정을 바꾸면 최신 EventKit 원본을 다시 확인하고 변경 필드만 저장한다. 연결된 mutation은 receipt로 기존 context snapshot을 다시 묶고 change log를 같은 local transaction에 append한다.
 9. Phase 6의 위험한 변경은 impact preview와 명시적 scope 확인 뒤 EventKit을 쓰고, linked context rebind와 change log를 한 local transaction으로 조정한다. 마지막 linked 비반복 single calendar/time 변경만 process session 안에서 Undo 후보가 된다.
 10. 사용자가 linked 원본 열기/Recheck를 요청하면 occurrence-aware provider lookup을 실행한다. 첫 명시적 notFound는 missing, 두 번째 명시적 notFound는 orphan review만 열며 Keep/검증된 Relink/local-only Delete를 서로 다른 명령으로 처리한다.
 11. linked 원본 삭제는 saved-link·notes/tasks impact를 고정한 별도 review와 final Confirm을 거친다. 성공한 EventKit receipt 뒤 `cancelled + orphaned`, saved-link unavailable cancellation log와 Undo supersede를 한 SQLite transaction으로 finalize한다. deleted-original projection은 이 current-link-generation provenance까지 확인한다.
-12. calendar fetch 후 sparse role·usage preference와 saved Calendar Set snapshot을 읽어 `CalendarDescriptor`를 만든다. 전역 Enabled를 master mask로 적용한 뒤 선택한 All, Smart Role Filter 또는 saved Set으로 Day/Week/Agenda의 `visibleEvents`만 좁힌다. typed restriction과 duplicate candidate는 원본 write 없이 화면·VoiceOver에 projection한다.
+12. calendar fetch 후 sparse role·usage preference와 saved Calendar Set snapshot을 읽어 `CalendarDescriptor`를 만든다. 전역 Enabled를 master mask로 적용한 뒤 선택한 All, Smart Role Filter 또는 saved Set으로 Day/Week/Month/Agenda의 `visibleEvents`만 좁힌다. typed restriction과 duplicate candidate는 원본 write 없이 화면·VoiceOver에 projection한다.
 13. Settings의 Local Data 명령은 pending local draft와 진행 중 mutation을 먼저 막고 같은 file-backed writer에서 export snapshot을 만든다. import/reset은 현재 DB를 `Backups`에 자동 export한 뒤 검증된 snapshot hot restore 또는 현재 user-data table reset transaction을 수행하고 local projection을 다시 읽는다. 이 흐름은 EventKit provider write와 분리된다.
 
 ## Phase 4 local interaction pipeline
@@ -417,17 +418,30 @@ EventEditor draft + selected occurrence
 EventKitProvider
   → DisplayEvent value snapshot
   → AppState visible period + global Enabled + selected Calendar Set filter/cache
-  → CalendarEventLayout
-  → CalendarTimelineView / AgendaView / EventInspectorView
+  ├→ CalendarEventLayout → CalendarTimelineView / AgendaView
+  └→ MonthGrid + MonthEventLayout → MonthCalendarView
+  → EventInspectorView
 ```
 
 - `DisplayEvent`는 EventKit 객체가 아니라 calendar color, source, read-only, recurrence, 시간 의미를 가진 값 snapshot이다.
 - all-day와 floating은 `LocalDateTimeComponents`에 원래 calendar identifier를 함께 보존하고 표시 calendar의 time zone에서 재구성한다. zoned는 raw `Date`의 절대 시점을 사용한다.
 - EventKit all-day raw end가 다음 날 자정 또는 마지막 날 `23:59:59`로 들어오는 두 경우를 provider 경계에서 배타 종료 자정으로 정규화한다.
-- `AppState`는 Day 1일, Week/Agenda 7일의 같은 visible interval을 사용한다. 실행 시 오늘 -30/+90일을 읽고 화면이 범위를 벗어나면 visible interval 앞 30일·뒤 90일을 포함해 다시 읽는다.
+- `AppState`는 Day 1일, Week/Agenda 7일, Month 4~6주의 완전한 grid interval을 사용한다. 실행 시 오늘 -30/+90일을 읽고 화면이 범위를 벗어나면 visible interval 앞 30일·뒤 90일을 포함해 다시 읽는다. Month 이전·다음은 focused civil day를 가능한 한 유지하며 calendar month 단위로 이동하고 짧은 달에서는 마지막 날짜로 clamp한다.
 - pending 범위 조회는 다음 navigation 전에 취소해 오래된 결과가 현재 화면을 덮지 않게 한다. `EKEventStoreChanged`는 마지막 loaded interval을 250ms 병합 재조회한다.
 - `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
 - `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
+- `MonthGrid`는 표시 calendar의 locale·first weekday·time zone을 사용해 해당 월을 덮는
+  최소 4주~최대 6주의 civil day를 Foundation-only 값으로 만든다. `MonthEventLayout`은
+  all-day와 timed multi-day를 배타 종료로 자르고 주 경계마다 deterministic lane segment를
+  배치하며 날짜별 visible/hidden event를 계산한다. SwiftUI 좌표나 view 상태는 보관하지 않는다.
+- `MonthCalendarView`는 timed 단일 일정의 시작 시간+제목, all-day 제목, multi-day 가로
+  segment와 `+N more` popover를 렌더링한다. event 선택은 공통 `AppState.selectedEvent`와
+  Inspector로 보내고 날짜 동작은 focused date를 갱신한 뒤 Day로 전환한다. 방향키 날짜 focus와
+  VoiceOver label/value를 제공하며, 이미 읽은 event가 있는 재조회에서는 기존 grid 위에 작은
+  loading 상태를 표시한다.
+- `WorkspaceView`의 calendar segmented picker와 Navigate command는
+  Day/Week/Month/Agenda 및 `⌘1`~`⌘5` workspace 순서를 같은 `WorkspaceSection` 정본에서
+  사용한다.
 - Calendar Set은 EventKit fetch·`ContextStore.observe`·editor destination을 줄이지 않고 렌더링에 쓰는 `visibleEvents`만 필터링한다. 전역 Enabled가 모든 Set의 master mask이고 Set 변경으로 선택 일정이 숨겨지면 pending notes를 먼저 flush하고 selection을 정리한다. duplicate/relink 후보 또는 성공한 original write의 focus 대상이 normal filter 밖일 때만 저장된 Set 선택을 바꾸지 않고 해당 일정을 임시로 reveal한다.
 - Sidebar의 `MiniMonthGrid`는 Foundation calendar로 month start, first-weekday offset, 42개 civil day와 전체 coverage interval을 계산한다. SwiftUI `MiniMonthView`는 월 탐색을 local state로 유지하고 날짜 선택만 `AppState.selectMiniMonthDate`로 보내 기존 selection 정리·range fetch 경계를 재사용한다.
 - 구현된 `CAL-007`/`UI-005`는 grid의 42일 범위를 별도 summary snapshot으로 조회해 본문 event snapshot을 보존한다. 본문 `visibleInterval`에 제한된 `visibleEvents`를 재사용하지 않고 raw event에 `global Enabled ∩ 선택 Set`을 적용한다. `CalendarEventDateFormatting.effectiveDateRange`의 배타 종료와 표시 calendar의 civil-day overlap으로 count를 계산하고, 완전한 coverage에서만 단일 dot과 날짜 Button의 접근성 count를 공개한다. loading·failure·오래된 browse 응답은 `일정 없음`으로 투영하지 않는다.
@@ -463,9 +477,9 @@ CalendarSource + DisplayEvent raw snapshot
   → CalendarDescriptor(role + explicit/inferred)
   → global Enabled master mask
   → CalendarSetFilter(All / Smart Role Filter / saved exact-membership Set)
-  → role/source: Sidebar / Day / Week / Agenda / Inspector / Task Center / Editor
-  → typed restriction: Sidebar / Day / Week / Agenda / Inspector + write preflight
-  → duplicate read projection: Day / Week / Agenda / Inspector
+  → role/source: Sidebar / Day / Week / Month / Agenda / Inspector / Task Center / Editor
+  → typed restriction: Sidebar / Day / Week / Month / Agenda / Inspector + write preflight
+  → duplicate read projection: Day / Week / Month / Agenda / Inspector
 ```
 
 - `CalendarRole`은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`다. subscribed/birthdays만 `Subscription`으로 추론하고 Exchange·CalDAV·iCloud·local은 이름이나 account type으로 용도를 추측하지 않아 `Other`다.

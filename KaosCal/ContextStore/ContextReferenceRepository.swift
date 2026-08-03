@@ -19,7 +19,10 @@ final class ContextReferenceRepository {
     }
 
     func add(contextID: String, provider: ContextReferenceProvider, url: URL, title: String) throws -> ContextReference {
-        guard ["https", "http"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+        guard ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+              url.host != nil,
+              url.user == nil,
+              url.password == nil else {
             throw TaskProviderError.providerFailure("References must use an HTTP or HTTPS URL.")
         }
         let timestamp = now()

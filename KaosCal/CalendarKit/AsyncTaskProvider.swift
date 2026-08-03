@@ -170,6 +170,9 @@ final class TodoistTasksProvider: AsyncTaskProviding {
     private let accountKey: String
     private let displayName: String
     private let now: () -> Date
+    private var activeMutationTaskIDs = Set<String>()
+    private var mutationWaiters:
+        [String: [CheckedContinuation<Void, Never>]] = [:]
 
     init(
         session: OAuthTaskProviderSession,
@@ -222,6 +225,15 @@ final class TodoistTasksProvider: AsyncTaskProviding {
     }
 
     func updateTask(_ task: RemoteTaskSnapshot, with patch: RemoteTaskPatch) async throws -> RemoteTaskSnapshot {
+        try await withSerializedMutation(taskID: task.id) {
+            try await updateTaskWithoutSerialization(task, with: patch)
+        }
+    }
+
+    private func updateTaskWithoutSerialization(
+        _ task: RemoteTaskSnapshot,
+        with patch: RemoteTaskPatch
+    ) async throws -> RemoteTaskSnapshot {
         let editsFields = patch.title != nil || patch.notes != nil
             || patch.dueAt != nil || patch.priority != nil
         var updated = task
@@ -264,6 +276,15 @@ final class TodoistTasksProvider: AsyncTaskProviding {
         _ task: RemoteTaskSnapshot,
         to list: RemoteTaskList
     ) async throws -> RemoteTaskSnapshot {
+        try await withSerializedMutation(taskID: task.id) {
+            try await moveTaskWithoutSerialization(task, to: list)
+        }
+    }
+
+    private func moveTaskWithoutSerialization(
+        _ task: RemoteTaskSnapshot,
+        to list: RemoteTaskList
+    ) async throws -> RemoteTaskSnapshot {
         guard list.provider == .todoist,
               list.accountKey == accountKey,
               list.isWritable else {
@@ -280,7 +301,11 @@ final class TodoistTasksProvider: AsyncTaskProviding {
     }
 
     func deleteTask(_ task: RemoteTaskSnapshot, expectedVersion: String?) async throws {
-        _ = try await session.send { TodoistAPI.deleteTaskRequest(id: task.id, accessToken: $0) }
+        try await withSerializedMutation(taskID: task.id) {
+            _ = try await session.send {
+                TodoistAPI.deleteTaskRequest(id: task.id, accessToken: $0)
+            }
+        }
     }
 
     func lookupTask(id: String, parentID: String) async throws -> RemoteTaskSnapshot? {
@@ -384,6 +409,44 @@ final class TodoistTasksProvider: AsyncTaskProviding {
             }
         } while cursor != nil
         return values
+    }
+
+    private func withSerializedMutation<Value>(
+        taskID: String,
+        operation: () async throws -> Value
+    ) async throws -> Value {
+        await acquireMutation(taskID: taskID)
+        do {
+            try _Concurrency.Task<Never, Never>.checkCancellation()
+            let value = try await operation()
+            releaseMutation(taskID: taskID)
+            return value
+        } catch {
+            releaseMutation(taskID: taskID)
+            throw error
+        }
+    }
+
+    private func acquireMutation(taskID: String) async {
+        guard activeMutationTaskIDs.contains(taskID) else {
+            activeMutationTaskIDs.insert(taskID)
+            return
+        }
+        await withCheckedContinuation { continuation in
+            mutationWaiters[taskID, default: []].append(continuation)
+        }
+    }
+
+    private func releaseMutation(taskID: String) {
+        guard var waiters = mutationWaiters[taskID],
+              !waiters.isEmpty else {
+            mutationWaiters[taskID] = nil
+            activeMutationTaskIDs.remove(taskID)
+            return
+        }
+        let next = waiters.removeFirst()
+        mutationWaiters[taskID] = waiters.isEmpty ? nil : waiters
+        next.resume()
     }
 
     private func snapshot(from data: Data, fallbackParentID: String) throws -> RemoteTaskSnapshot {
@@ -503,6 +566,7 @@ protocol MicrosoftToDoDeltaProviding: AnyObject {
 
 @MainActor
 final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProviding {
+    private static let maximumPageCount = 500
     let provider: TaskProviderKind = .microsoftToDo
     let capabilities = TaskProviderCapabilities(
         supportsNotes: true, supportsTimedDue: true, supportsCompletion: true,
@@ -527,16 +591,23 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
         var nextLink: URL?
         var seenLinks = Set<String>()
         var values = [ListPage.List]()
+        var pageCount = 0
         repeat {
+            pageCount += 1
+            guard pageCount <= Self.maximumPageCount else {
+                throw TaskProviderError.providerFailure(
+                    "Microsoft To Do exceeded the task-list page limit."
+                )
+            }
             let (data, _) = try await session.send {
-                MicrosoftToDoAPI.listsRequest(
+                try MicrosoftToDoAPI.listsRequest(
                     accessToken: $0,
                     nextLink: nextLink
                 )
             }
             let page = try JSONDecoder().decode(ListPage.self, from: data)
             values.append(contentsOf: page.value)
-            nextLink = page.nextLink.flatMap(URL.init(string:))
+            nextLink = try MicrosoftToDoAPI.validatedContinuationURL(page.nextLink)
             if let nextLink, !seenLinks.insert(nextLink.absoluteString).inserted {
                 throw TaskProviderError.providerFailure(
                     "Microsoft To Do returned a repeated task-list page link."
@@ -630,9 +701,16 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
             && list.accountKey == accountKey {
             var nextLink: URL?
             var seenLinks = Set<String>()
+            var pageCount = 0
             repeat {
+                pageCount += 1
+                guard pageCount <= Self.maximumPageCount else {
+                    throw TaskProviderError.providerFailure(
+                        "Microsoft To Do exceeded the task page limit."
+                    )
+                }
                 let (data, _) = try await session.send {
-                    MicrosoftToDoAPI.tasksRequest(
+                    try MicrosoftToDoAPI.tasksRequest(
                         listID: list.id,
                         accessToken: $0,
                         nextLink: nextLink
@@ -642,7 +720,7 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
                 snapshots.append(contentsOf: page.value.map {
                     snapshot($0, parentID: list.id, fallbackDeepLink: nil)
                 })
-                nextLink = page.nextLink.flatMap(URL.init(string:))
+                nextLink = try MicrosoftToDoAPI.validatedContinuationURL(page.nextLink)
                 if let nextLink,
                    !seenLinks.insert(nextLink.absoluteString).inserted {
                     throw TaskProviderError.providerFailure(
@@ -659,10 +737,21 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
         var tasks = [RemoteTaskSnapshot]()
         var deletedTaskIDs = [String]()
         var finalCursor: URL?
+        var seenLinks = Set<String>()
+        if let cursor {
+            seenLinks.insert(cursor.absoluteString)
+        }
+        var pageCount = 0
 
         repeat {
+            pageCount += 1
+            guard pageCount <= Self.maximumPageCount else {
+                throw TaskProviderError.providerFailure(
+                    "Microsoft To Do exceeded the delta page limit."
+                )
+            }
             let (data, _) = try await session.send {
-                MicrosoftToDoAPI.deltaRequest(
+                try MicrosoftToDoAPI.deltaRequest(
                     listID: listID,
                     deltaLink: nextURL,
                     accessToken: $0
@@ -676,8 +765,15 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
                     tasks.append(snapshot(task, parentID: listID, fallbackDeepLink: nil))
                 }
             }
-            nextURL = page.nextLink.flatMap(URL.init(string:))
-            finalCursor = page.deltaLink.flatMap(URL.init(string:)) ?? finalCursor
+            nextURL = try MicrosoftToDoAPI.validatedContinuationURL(page.nextLink)
+            finalCursor = try MicrosoftToDoAPI.validatedContinuationURL(page.deltaLink)
+                ?? finalCursor
+            if let nextURL,
+               !seenLinks.insert(nextURL.absoluteString).inserted {
+                throw TaskProviderError.providerFailure(
+                    "Microsoft To Do returned a repeated delta page link."
+                )
+            }
         } while nextURL != nil
 
         return MicrosoftToDoDelta(
@@ -717,10 +813,22 @@ final class MicrosoftToDoProvider: AsyncTaskProviding, MicrosoftToDoDeltaProvidi
             isCompleted: task.status == "completed",
             priority: taskPriority(task.importance),
             version: task.etag ?? task.lastModifiedDateTime,
-            deepLink: task.linkedResources?
-                .compactMap { $0.webURL.flatMap(URL.init(string:)) }
-                .first ?? fallbackDeepLink
+            deepLink: (
+                task.linkedResources?
+                    .compactMap { $0.webURL.flatMap(URL.init(string:)) }
+                    .first(where: Self.isTrustedMicrosoftToDoURL)
+            ) ?? fallbackDeepLink.flatMap {
+                Self.isTrustedMicrosoftToDoURL($0) ? $0 : nil
+            }
         )
+    }
+
+    private static func isTrustedMicrosoftToDoURL(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https"
+            && url.host?.lowercased() == "to-do.office.com"
+            && (url.port == nil || url.port == 443)
+            && url.user == nil
+            && url.password == nil
     }
 
     private func date(from value: DateTimeTimeZone) -> Date? {

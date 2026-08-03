@@ -42,10 +42,37 @@ jobs:
             -destination 'platform=macOS' \
             -derivedDataPath "$RUNNER_TEMP/KaosCalTestsDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/KaosCalTests.xcresult" \
+            -enableCodeCoverage YES \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             CODE_SIGNING_ALLOWED=NO \
             test
+
+      - name: Enforce app coverage floor
+        run: |
+          set -euo pipefail
+          xcrun xccov view \
+            --report \
+            --json \
+            "$RUNNER_TEMP/KaosCalTests.xcresult" \
+            > "$RUNNER_TEMP/KaosCalCoverage.json"
+          /usr/bin/python3 scripts/check_coverage.py \
+            "$RUNNER_TEMP/KaosCalCoverage.json" \
+            0.50
+
+      - name: Run static analyzer
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project KaosCal.xcodeproj \
+            -scheme KaosCal \
+            -configuration Debug \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/KaosCalAnalyzeDerivedData" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipPackageUpdates \
+            CODE_SIGNING_ALLOWED=NO \
+            analyze
 
       - name: Build unsigned Release app
         run: |
@@ -101,3 +128,34 @@ jobs:
           path: ${{ runner.temp }}/KaosCalTests.xcresult
           if-no-files-found: ignore
           retention-days: 14
+
+  macos-14-compatibility:
+    name: Test minimum supported macOS
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Record toolchain
+        run: |
+          set -euo pipefail
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - name: Run tests on macOS 14
+        run: |
+          set -euo pipefail
+          test "$(sw_vers -productVersion | cut -d. -f1)" = "14"
+          xcodebuild \
+            -project KaosCal.xcodeproj \
+            -scheme KaosCal \
+            -configuration Debug \
+            -destination 'platform=macOS' \
+            -derivedDataPath "$RUNNER_TEMP/KaosCalSonomaDerivedData" \
+            -onlyUsePackageVersionsFromResolvedFile \
+            -skipPackageUpdates \
+            CODE_SIGNING_ALLOWED=NO \
+            test

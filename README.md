@@ -21,7 +21,8 @@ provider와 통합 캘린더 작업은 [v2 실행계획](docs/v2-execution-plan.
 
 - macOS 14 이상
 - macOS Calendar에 구성된 Exchange 캘린더를 우선 검증 대상으로 하는 EventKit 앱
-- Day, Week, Agenda 캘린더, Sidebar mini month와 Task Center
+- Day, Week, Month, Agenda 캘린더, Sidebar mini month와 Task Center
+- 본문 Month의 4~6주 grid, 일정 제목·시간, 주 경계 multi-day segment와 `+N` overflow
 - 종일 일정, 시간대, 반복 일정의 안전한 표시·편집
 - Apple Reminders, Google Tasks, Todoist와 Microsoft To Do의 capability-aware 작업 관리,
   Apple 목록 이동·Todoist project/section 이동, 통합 검색·planning과 Calendar time block
@@ -52,8 +53,9 @@ xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -dest
 
 ## GitHub Actions 자동 빌드·DMG 배포
 
-`main`/`master` push와 pull request에서는 [`ci.yml`](.github/workflows/ci.yml)이 macOS
-테스트와 unsigned Release build를 실행하고, 성공한 `.app` zip과 `.xcresult`를 Actions
+`main`/`master` push와 pull request에서는 [`ci.yml`](.github/workflows/ci.yml)이 최신
+검증 러너의 전체 test·50% app line coverage 하한·static analyzer·unsigned Release build와
+최소 지원 macOS 14의 전체 test를 실행한다. 성공한 `.app` zip과 `.xcresult`는 Actions
 artifact로 7일/14일 동안 보관한다. GitHub 저장소의 **Actions** 탭에서 해당 실행과
 artifact를 확인할 수 있다.
 

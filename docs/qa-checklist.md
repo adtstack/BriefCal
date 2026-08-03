@@ -17,6 +17,26 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 권한을 거부한 상태
 - 앱 재설치 또는 DB 초기화 상태
 
+## 2026-08-03 자동 안전·품질 gate
+
+- 전체 결과: **319 executed / 318 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**. Result bundle: `/private/tmp/KaosCalQualityFinal2.xcresult`.
+- coverage/analyzer: `KaosCal.app` line coverage **53.63% (29,559/55,121)**로 50% floor 통과,
+  `xcodebuild analyze` 통과.
+- provider/OAuth: untrusted/repeated/과다 Graph cursor, 비공식 To Do deep link, duplicate OAuth
+  parameter, cross-origin redirect, non-loopback·incomplete·oversized·absolute-form callback을
+  거부한다. 먼저 도착한 wrong-state callback 뒤의 정상 callback은 성공할 수 있어야 한다.
+- 원자성/maintenance: 반복 완료 중 다음 occurrence insert가 실패하면 task/timer/planning 변경이
+  모두 rollback된다. background refresh가 멈춘 뒤에만 export/import/reset local mutation이
+  시작되고 fence 동안 새 provider 작업은 거부된다.
+- 복구 UX: 검색 결과는 exact occurrence 날짜/event를 선택하고 필요한 event만 임시 reveal한다.
+  source가 사라진 dirty editor는 닫히지 않으며, transient refresh 오류는 기존 calendar data와
+  selection을 유지하고 Retry를 제공한다.
+- mutation/backup: 같은 Todoist task의 concurrent mutation은 FIFO 순서를 지킨다. backup은
+  migration exact set뿐 아니라 orphan planning/checklist와 unsafe context reference도 거부한다.
+- 수동 후속: 실제 창 keyboard/VoiceOver, 최소 지원 macOS 실환경, 실제 provider 계정과
+  EventKit/Exchange fixture는 자동 gate 결과와 별도로 확인한다.
+
 ## 실계정 증거 경로와 fixture 안전
 
 | 경로 | 용도 | 통과로 간주하지 않는 항목 |
@@ -39,7 +59,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 절차:
 1. 앱을 처음 실행한다.
 2. 캘린더 권한 요청을 허용한다.
-3. Agenda와 실제 Day/Week event card를 각각 확인한다.
+3. Agenda와 실제 Day/Week/Month event card를 각각 확인한다.
 
 기대 결과:
 - 실제 Exchange Calendar 일정이 표시된다.
@@ -61,13 +81,13 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 1. Sidebar를 최소 폭 210pt로 줄이고 6행 mini month와 calendar 목록을 확인한다.
 2. 시스템의 주 시작 요일, locale과 time zone을 바꿔 다시 확인한다.
 3. 이전/다음 월로 탐색한 뒤 본문 날짜가 그대로인지 확인한다. toolbar Today와 이미 focused인 같은 spillover 날짜로 focused month 복귀를 확인하고, 현재 월과 인접 월 날짜를 각각 선택한다.
-4. Day, Week, Agenda, Tasks와 선택 없는 상태에서 날짜를 선택한다.
+4. Day, Week, Month, Agenda, Tasks와 선택 없는 상태에서 날짜를 선택한다.
 5. keyboard focus/Space·Return과 VoiceOver 날짜 label·selected/today/adjacent value를 확인한다.
 6. 현재 42일 바깥의 월을 빠르게 연속 탐색해 loading→완료와 stale 응답 무시를 확인한다. 0개·단일·복수, 자정에 끝나는 일정, 자정을 넘는 timed multi-day와 all-day 일정을 월 경계와 spillover 첫·끝 셀에 배치한다. Calendar Set과 calendar visibility도 각각 바꾼다.
 
 기대 결과:
 - 월은 항상 42개의 연속 civil day/6행이며 DST 시작·종료와 윤년·연도 경계에서 누락·중복이 없다.
-- 월 탐색만으로 본문 focused date가 바뀌지 않는다. Today나 동일 날짜 재지정도 local browse를 끝내고 focused month로 복귀한다. 날짜 선택 시 Day/Week/Agenda는 유지되고 Tasks/선택 없음은 Day로 전환한다.
+- 월 탐색만으로 본문 focused date가 바뀌지 않는다. Today나 동일 날짜 재지정도 local browse를 끝내고 focused month로 복귀한다. 날짜 선택 시 Day/Week/Month/Agenda는 유지되고 Tasks/선택 없음은 Day로 전환한다.
 - 같은 loaded range에서 현재 event가 새 visible period에도 남는 Week/Agenda 선택은 event selection과 fetch count를 유지한다. Day에서 다른 날짜를 고르거나 먼 날짜로 이동해 event가 새 visible period 밖이면 selection을 정리한다. 새 range fetch는 선택 날짜를 포함해 정확히 한 번 실행하며 EventKit create/update/delete는 없다.
 - focused는 fill, today는 ring, 인접 월은 낮은 강조도로 구분되고 색만으로 상태를 전달하지 않는다.
 - 긴 월 제목과 6행이 210pt에서 잘리지 않고 calendar 목록만 별도로 scroll한다.
@@ -183,7 +203,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 3. Settings에서 account별 Include All/Remove All과 개별 membership을 바꾸고, 전역 Enabled를 끈 뒤 membership이 보존되는지 확인한다. Block도 독립적으로 바꾼다.
 4. 선택한 saved Set을 재실행 뒤 복원하고, active Set 삭제 시 All fallback을 확인한다. calendar identifier가 사라진 membership은 authoritative loaded/empty 상태에서만 unavailable로 남는지, loading·permission denied·failure에서는 missing으로 단정하지 않는지, 같은 이름 calendar에 자동 연결하지 않는지, 명시적 Replace/Remove만 적용되는지 확인한다.
 5. 같은 제목이며 시작·종료가 각각 15분 이내인 다른-calendar 일정, 같은 all-day civil range인 일정과 경계 밖 일정을 준비한다. filter 밖 calendar에 원본 create/update한 뒤 focus도 확인한다.
-6. Sidebar, Day, Week, Agenda, Inspector, 원본 editor와 Task Center의 role/source/account/permission 표시를 비교한다.
+6. Sidebar, Day, Week, Month, Agenda, Inspector, 원본 editor와 Task Center의 role/source/account/permission 표시를 비교한다.
 7. invitation, attendee, subscription, birthdays와 provider read-only fixture에서 원본 편집을 시도한다.
 
 기대 결과:
@@ -202,12 +222,12 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 1. 같은 account source 아래 둘 이상의 calendar를 준비하고 Settings의 Calendars tab을 연다.
 2. 각 calendar를 show+block, show+ignore, hide+block, hide+ignore 네 조합으로 설정한다.
 3. busy, free, tentative, canceled, current-user-declined와 availability 미지원 event를 준비한다.
-4. Sidebar eye, Settings account bulk action, Day/Week/Agenda와 blocked interval projection을 비교한다.
+4. Sidebar eye, Settings account bulk action, Day/Week/Month/Agenda와 blocked interval projection을 비교한다.
 5. 앱을 재실행하고 backup export/import/reset 뒤 설정을 다시 확인한다.
 
 기대 결과:
 - account group은 EventKit source identifier를 사용하며 source title이 같아도 다른 identifier를 합치지 않는다.
-- hide는 Day/Week/Agenda와 현재 선택만 정리하고 raw fetch, Event Brief observation/relink, duplicate와 editor destination을 줄이지 않는다.
+- hide는 Day/Week/Month/Agenda와 현재 선택만 정리하고 raw fetch, Event Brief observation/relink, duplicate와 editor destination을 줄이지 않는다.
 - hide+block event는 화면에 없지만 blocking projection에는 남고 show+ignore event는 화면에 보이지만 blocking에는 없다.
 - free, canceled와 current-user-declined event는 block하지 않는다. busy, tentative, unavailable과 availability 미지원 event는 blocking calendar에서 block한다.
 - 겹치거나 맞닿은 block interval은 union되어 중복 calendar/event가 시간을 이중 가중하지 않는다.
@@ -287,10 +307,10 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - `Backups`의 recovery ZIP은 자동 삭제·prune되지 않는다.
 - 정상 store를 열지 못하는 failed-bootstrap corrupt DB 상태에는 Settings import를 성공 경로로 표시하지 않는다. 이 recovery UI는 Phase 10이다.
 
-### 10. Day / Week / Agenda 일관성
+### 10. Day / Week / Month / Agenda 일관성
 
 절차:
-1. 같은 날짜 범위에서 Day, Week, Agenda를 각각 연다.
+1. 같은 날짜 범위에서 Day, Week, Month, Agenda를 각각 연다.
 2. 시간 일정, 종일 일정, 반복 occurrence를 확인한다.
 3. 자정을 넘는 일정과 같은 시간대에 겹치는 3개 이상의 일정을 확인한다.
 4. 종일 일정이 10개 이상인 날짜에서 all-day lane을 세로로 scroll한다.
@@ -298,8 +318,9 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 6. 동일한 이벤트를 선택한다.
 
 기대 결과:
-- 세 화면에서 제목, 시간 또는 날짜 범위, source, 읽기 전용 상태가 일관된다.
-- 종일 일정은 Day/Week의 all-day lane과 Agenda의 날짜 범위로 명확히 표시된다.
+- 네 화면에서 제목, 시간 또는 날짜 범위, source, 읽기 전용 상태가 일관된다.
+- 종일 일정은 Day/Week의 all-day lane, Month의 주별 segment와 Agenda의 날짜 범위로
+  명확히 표시된다.
 - 자정에 끝나는 일정은 다음 날에 중복되지 않고, 자정을 넘는 시간 일정은 날짜별 segment로 이어진다.
 - 짧은 일정과 23:59 근처 일정도 카드가 잘리거나 같은 column에서 겹치지 않는다.
 - 고밀도 timed 일정은 가로 scroll, 고밀도 종일 일정은 all-day 내부 세로 scroll로 모두 접근할 수 있다.
@@ -319,6 +340,45 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - fall-back의 두 `01:30`은 같은 y 위치에서 서로 다른 column으로 보인다.
 - all-day/floating 일정이 다른 연도로 이동하거나 화면에서 사라지지 않는다.
 - 이 자동 배치 결과와 실제 Exchange `KC-E3` 지원 판정은 구분해 기록한다.
+
+### 10-b. Full Month MVP (`COM-003`)
+
+절차:
+
+1. 본문 상단 `Day / Week / Month / Agenda` 전환기와 `⌘1` Day, `⌘2` Week,
+   `⌘3` Month, `⌘4` Agenda, `⌘5` Tasks를 각각 사용한다.
+2. Sunday-first와 Monday-first locale에서 4주, 5주, 6주가 필요한 달을 연다. DST 전환,
+   윤년과 연도 경계도 포함한다.
+3. 한 날짜의 timed 일정, all-day 일정, 월·주 경계를 넘는 all-day와 timed multi-day,
+   자정에 정확히 끝나는 timed 일정을 함께 배치한다.
+4. 한 셀의 표시 lane보다 많은 일정을 넣어 `+N more`와 날짜별 popover를 연다.
+5. calendar global Enabled와 선택 Calendar Set을 각각 바꾸고 show+ignore,
+   disable+block 조합도 확인한다.
+6. event segment와 overflow popover의 event를 각각 선택해 Inspector를 확인한다. 날짜 focus를
+   방향키로 이동하고 날짜 동작을 실행해 Day로 전환한다.
+7. 31일에서 다음의 짧은 달, 연말·연초를 이전/다음으로 이동하고 Today를 사용한다. 먼 달을
+   빠르게 왕복하면서 loading, 취소와 실패 상태도 만든다.
+8. 좁은 창과 높은 일정 밀도, light/dark, Increase Contrast에서 keyboard focus와 VoiceOver의
+   날짜·event·overflow label/value/action을 확인한다.
+
+기대 결과:
+
+- grid는 locale의 첫 요일부터 시작하는 완전한 주이며 해당 월에 필요한 최소 4주~최대
+  6주만 사용한다. 인접 월, 오늘과 focused date는 색상 하나에만 의존하지 않고 구분된다.
+- timed 단일 일정은 시작 시간과 제목, all-day 일정은 제목을 표시한다. multi-day는
+  주 경계에서 이어지는 segment로 나뉘며 자정 배타 종료는 다음 날을 차지하지 않는다.
+- lane과 `+N` count는 event 입력 순서와 무관하게 결정적이다. popover에는 해당 날짜에서
+  가려진 일정만 중복 없이 나타나고 선택한 exact event가 공통 Inspector에 열린다.
+- event 선택은 focused calendar section을 Month로 유지한다. 날짜 동작은 exact civil day를
+  focused date로 만들고 Day로 이동한다.
+- 표시 event는 `global Enabled ∩ 선택 Calendar Set`과 일치하되 hide/block 설정은 raw
+  EventKit snapshot, recovery, duplicate projection이나 availability blocking을 삭제하지 않는다.
+- 이전·다음은 한 달씩 이동하고 없는 일자는 대상 월의 마지막 날로 clamp한다. 이전 fetch의
+  늦은 응답이 현재 월을 덮지 않으며, 이미 표시한 월이 있으면 loading 중 grid를 유지한다.
+- keyboard만으로 전환·날짜 이동·popover·event 선택·Day 이동이 가능하고 VoiceOver가
+  날짜 상태, 일정 시간/제목, 연속 상태와 숨겨진 일정 수를 의미 있게 읽는다.
+- drag 이동·resize, Quarter/Year, 전체 일정 검색, Day Summary와 Quick Add/template은
+  이 MVP의 통과 조건으로 오인하지 않는다.
 
 ### 11. 시간대와 DST
 
@@ -567,7 +627,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ## Unit test 후보
 
 Phase 2에서 구현·통과한 항목:
-- visible period 반개구간 경계와 Day/Week/Agenda filtering
+- visible period 반개구간 경계와 Day/Week/Month/Agenda filtering
 - 자정 횡단 timed segment와 종일 배타 종료 column
 - EventKit의 `23:59:59`/자정 all-day raw end 정규화
 - timed overlap cluster, 맞닿는 일정, 최소 visual duration, 23:59 collision
@@ -576,6 +636,20 @@ Phase 2에서 구현·통과한 항목:
 - non-Gregorian display calendar 재구성
 - UI occurrence ID의 이동 안정성·occurrence/calendar 구분·anonymous fallback
 - loaded range 확장 조회, selection 정리, stale pending 조회 취소
+
+Full Month MVP에 추가해 통과한 자동 계약:
+
+- locale first weekday를 따르는 4·5·6주 `MonthGrid`와 DST civil-day 연속성
+- 월 이동과 짧은 달 day clamp, Month visible interval과 제목
+- all-day/timed multi-day의 주·월 경계 분할, continuation과 자정 배타 종료
+- deterministic lane, 날짜별 event 정렬, hidden event와 `+N` count
+- Calendar Set/Enabled projection과 공통 event selection·날짜 navigation 회귀 재사용
+- top view picker, `⌘1`~`⌘5`, 방향키 focus와 VoiceOver semantics
+- 560×520 Sunday-first 6주·고밀도 offscreen bitmap의 multi-day continuation,
+  `+3 more`, 셀·막대 잘림 없음
+- 최종 전체 **312 executed / 311 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**; result bundle
+  `/private/tmp/KaosCalMonthDerived/Logs/Test/Test-KaosCal-2026.08.02_19-55-49-+0900.xcresult`
 
 Phase 3에서 구현·통과한 항목:
 
@@ -842,7 +916,7 @@ Signed automatic update 자동/Release gate:
 - 읽기 전용 일정 설명 표시
 - backup export/import 성공
 - Exchange Editor/Viewer와 KC-E1~KC-E6 fixture 검증 기록
-- Day/Week/Agenda와 Task Center 핵심 흐름 검증
+- Day/Week/Month/Agenda와 Task Center 핵심 흐름 검증
 - local DB 삭제와 원본 일정 삭제가 분리되어 있음
 
 ## 버그 리포트 형식

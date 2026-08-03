@@ -76,6 +76,143 @@ final class AppStateTests: XCTestCase {
         XCTAssertEqual(state.calendarContentState, .disconnected)
     }
 
+    func testMonthSectionMetadataAndNavigationOrder() {
+        XCTAssertEqual(
+            WorkspaceSection.allCases,
+            [.day, .week, .month, .agenda, .tasks]
+        )
+        XCTAssertEqual(WorkspaceSection.month.title, "Month")
+        XCTAssertEqual(WorkspaceSection.month.symbolName, "calendar.circle")
+        XCTAssertEqual(
+            WorkspaceSection.month.accessibilityIdentifier,
+            "nav.month"
+        )
+    }
+
+    func testMonthVisiblePeriodUsesFourToSixCompleteWeeks() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.firstWeekday = 2
+        let provider = FakeCalendarProvider()
+        let scenarios = [
+            (
+                focus: DateComponents(year: 2021, month: 2, day: 15),
+                start: DateComponents(year: 2021, month: 2, day: 1),
+                end: DateComponents(year: 2021, month: 3, day: 1),
+                dayCount: 28
+            ),
+            (
+                focus: DateComponents(year: 2021, month: 3, day: 15),
+                start: DateComponents(year: 2021, month: 3, day: 1),
+                end: DateComponents(year: 2021, month: 4, day: 5),
+                dayCount: 35
+            ),
+            (
+                focus: DateComponents(year: 2021, month: 8, day: 15),
+                start: DateComponents(year: 2021, month: 7, day: 26),
+                end: DateComponents(year: 2021, month: 9, day: 6),
+                dayCount: 42
+            )
+        ]
+
+        for scenario in scenarios {
+            let focus = try! XCTUnwrap(calendar.date(from: scenario.focus))
+            let state = AppState(
+                calendar: calendar,
+                now: { focus },
+                calendarProvider: provider
+            )
+            state.select(.month)
+
+            XCTAssertEqual(state.visibleDates.count, scenario.dayCount)
+            XCTAssertEqual(
+                state.visibleDates.first,
+                calendar.date(from: scenario.start)
+            )
+            XCTAssertEqual(
+                state.visibleInterval.start,
+                calendar.date(from: scenario.start)
+            )
+            XCTAssertEqual(
+                state.visibleInterval.end,
+                calendar.date(from: scenario.end)
+            )
+            XCTAssertEqual(
+                calendar.dateComponents(
+                    [.day],
+                    from: state.visibleInterval.start,
+                    to: state.visibleInterval.end
+                ).day,
+                scenario.dayCount
+            )
+        }
+    }
+
+    func testMonthMovementUsesCalendarMonthsAndClampsEndOfMonth() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        let provider = FakeCalendarProvider()
+        let scenarios = [
+            (2025, 1, 29, 1, 2025, 2, 28),
+            (2025, 1, 30, 1, 2025, 2, 28),
+            (2025, 1, 31, 1, 2025, 2, 28),
+            (2024, 1, 31, 1, 2024, 2, 29),
+            (2026, 3, 31, 1, 2026, 4, 30),
+            (2026, 3, 31, -1, 2026, 2, 28),
+            (2026, 12, 31, 1, 2027, 1, 31)
+        ]
+
+        for scenario in scenarios {
+            let start = try! XCTUnwrap(calendar.date(from: DateComponents(
+                year: scenario.0,
+                month: scenario.1,
+                day: scenario.2
+            )))
+            let state = AppState(
+                calendar: calendar,
+                now: { start },
+                calendarProvider: provider
+            )
+            state.select(.month)
+            state.moveFocusedPeriod(direction: scenario.3)
+
+            XCTAssertEqual(
+                calendar.dateComponents(
+                    [.year, .month, .day],
+                    from: state.focusedDate
+                ),
+                DateComponents(
+                    year: scenario.4,
+                    month: scenario.5,
+                    day: scenario.6
+                )
+            )
+            XCTAssertEqual(state.selectedSection, .month)
+        }
+    }
+
+    func testMonthFocusedPeriodTitleUsesFocusedMonthAndYear() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        let baseline = try! XCTUnwrap(calendar.date(from: DateComponents(
+            year: 2026,
+            month: 8,
+            day: 19
+        )))
+        let state = AppState(
+            calendar: calendar,
+            now: { baseline },
+            calendarProvider: FakeCalendarProvider()
+        )
+
+        state.select(.month)
+
+        XCTAssertEqual(state.focusedPeriodTitle, "August 2026")
+    }
+
     func testMovesWeekBySevenDays() {
         let baseline = Date(timeIntervalSince1970: 1_700_000_000)
         var calendar = Calendar(identifier: .gregorian)
@@ -178,7 +315,7 @@ final class AppStateTests: XCTestCase {
             calendarProvider: FakeCalendarProvider()
         )
 
-        for section in [WorkspaceSection.day, .week, .agenda] {
+        for section in [WorkspaceSection.day, .week, .month, .agenda] {
             state.select(section)
             state.selectMiniMonthDate(selectedDate)
 
@@ -1768,6 +1905,144 @@ final class Phase6AppStateTests: XCTestCase {
         XCTAssertEqual(state.selectedEventID, personal.id)
         XCTAssertNil(state.temporarilyRevealedEventID)
         XCTAssertNil(state.calendarSetTemporaryDisplayMessage)
+        XCTAssertEqual(provider.createCallCount, 0)
+        XCTAssertEqual(provider.updateCallCount, 0)
+        XCTAssertEqual(provider.deleteCallCount, 0)
+    }
+
+    func testCalendarSearchResultFocusesOccurrenceAndTemporarilyRevealsIt() async throws {
+        let visible = makeEvent(
+            id: "search-work",
+            title: "Visible event",
+            start: date(2026, 7, 10, 9),
+            calendarIdentifier: "calendar"
+        )
+        let result = makeEvent(
+            id: "search-personal",
+            title: "Search target",
+            start: date(2026, 7, 18, 15),
+            calendarIdentifier: "destination"
+        )
+        let provider = makeProvider(events: [visible, result])
+        let store = ContextStore(database: try AppDatabase.inMemory())
+        let state = makeState(provider: provider, store: store)
+        await state.loadCalendarStatus()
+        XCTAssertTrue(state.setCalendarRole(
+            .work,
+            for: try XCTUnwrap(state.calendarSources.first { $0.id == "calendar" })
+        ))
+        XCTAssertTrue(state.setCalendarRole(
+            .personal,
+            for: try XCTUnwrap(state.calendarSources.first { $0.id == "destination" })
+        ))
+        XCTAssertTrue(state.selectCalendarSet(.work))
+
+        state.openCalendarSearchResult(result)
+
+        XCTAssertEqual(state.selectedSection, .agenda)
+        XCTAssertEqual(state.focusedDate, date(2026, 7, 18))
+        XCTAssertEqual(state.selectedEventID, result.id)
+        XCTAssertEqual(state.temporarilyRevealedEventID, result.id)
+        XCTAssertTrue(state.visibleEvents.contains { $0.id == result.id })
+        XCTAssertEqual(state.selectedCalendarSet, .work)
+    }
+
+    func testMonthCalendarSixWeekLayoutFitsMinimumWorkspaceAndProducesOffscreenBitmap() async throws {
+        let events = [
+            makeEvent(
+                id: "month-all-day",
+                title: "Product launch window",
+                start: date(2026, 8, 3),
+                end: date(2026, 8, 8),
+                isAllDay: true
+            ),
+            makeEvent(
+                id: "month-week-boundary",
+                title: "Customer migration",
+                start: date(2026, 8, 8, 18),
+                end: date(2026, 8, 10, 10)
+            ),
+            makeEvent(
+                id: "month-timed-1",
+                title: "Design review",
+                start: date(2026, 8, 12, 9),
+                end: date(2026, 8, 12, 10)
+            ),
+            makeEvent(
+                id: "month-timed-2",
+                title: "Tentative partner call",
+                start: date(2026, 8, 12, 10),
+                end: date(2026, 8, 12, 11),
+                availability: .tentative
+            ),
+            makeEvent(
+                id: "month-timed-3",
+                recurrence: .basic(BasicRecurrenceRule(frequency: .weekly)),
+                title: "Weekly planning",
+                start: date(2026, 8, 12, 11),
+                end: date(2026, 8, 12, 12)
+            ),
+            makeEvent(
+                id: "month-timed-4",
+                title: "Cancelled interview",
+                start: date(2026, 8, 12, 13),
+                end: date(2026, 8, 12, 14),
+                isCancelled: true
+            )
+        ]
+        let provider = makeProvider(events: events)
+        var renderCalendar = calendar
+        renderCalendar.locale = Locale(identifier: "en_US_POSIX")
+        renderCalendar.firstWeekday = 1
+        let focusedDate = date(2026, 8, 15, 12)
+        let state = AppState(
+            calendar: renderCalendar,
+            now: { focusedDate },
+            calendarProvider: provider
+        )
+        state.select(.month)
+        await state.loadCalendarStatus()
+
+        XCTAssertEqual(
+            MonthGrid(containing: focusedDate, calendar: renderCalendar).rowCount,
+            6
+        )
+        XCTAssertEqual(Set(state.visibleEvents.map(\.id)), Set(events.map(\.id)))
+
+        let hostingView = NSHostingView(rootView:
+            MonthCalendarView(appState: state)
+                .frame(width: 560, height: 520)
+                .background(Color(nsColor: .windowBackgroundColor))
+        )
+        hostingView.frame = NSRect(x: 0, y: 0, width: 560, height: 520)
+        hostingView.wantsLayer = true
+        let window = NSWindow(
+            contentRect: hostingView.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = hostingView
+        hostingView.layoutSubtreeIfNeeded()
+        hostingView.displayIfNeeded()
+
+        let representation = try XCTUnwrap(
+            hostingView.bitmapImageRepForCachingDisplay(in: hostingView.bounds)
+        )
+        hostingView.cacheDisplay(in: hostingView.bounds, to: representation)
+        let pngData = try XCTUnwrap(
+            representation.representation(using: .png, properties: [:])
+        )
+
+        XCTAssertGreaterThanOrEqual(representation.pixelsWide, 560)
+        XCTAssertGreaterThanOrEqual(representation.pixelsHigh, 520)
+        XCTAssertGreaterThan(pngData.count, 10_000)
+        if let snapshotPath = ProcessInfo.processInfo.environment[
+            "KAOSCAL_MONTH_SNAPSHOT_PATH"
+        ] {
+            try pngData.write(to: URL(fileURLWithPath: snapshotPath))
+        }
+        window.contentView = nil
         XCTAssertEqual(provider.createCallCount, 0)
         XCTAssertEqual(provider.updateCallCount, 0)
         XCTAssertEqual(provider.deleteCallCount, 0)

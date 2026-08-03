@@ -236,7 +236,7 @@ private struct RelinkSelectionBanner: View {
                 systemImage: "link.badge.plus"
             )
                 .font(.callout.weight(.semibold))
-            Text("Use Day, Week, Agenda, or the mini month to find it.")
+            Text("Use Day, Week, Month, Agenda, or the mini month to find it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -1336,10 +1336,23 @@ private struct WorkspaceView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Image(systemName: (appState.selectedSection ?? .week).symbolName)
-                    .foregroundStyle(KaosCalTheme.accent)
-                Text((appState.selectedSection ?? .week).title)
-                    .font(.title3.weight(.semibold))
+                if appState.selectedSection == .tasks {
+                    Image(systemName: WorkspaceSection.tasks.symbolName)
+                        .foregroundStyle(KaosCalTheme.accent)
+                    Text(WorkspaceSection.tasks.title)
+                        .font(.title3.weight(.semibold))
+                } else {
+                    Picker("Calendar view", selection: calendarSectionSelection) {
+                        ForEach(calendarSections) { section in
+                            Text(section.title)
+                                .tag(section)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                    .frame(maxWidth: 340)
+                    .accessibilityIdentifier("calendar.viewPicker")
+                }
                 Spacer()
                 statusBadge
             }
@@ -1370,10 +1383,51 @@ private struct WorkspaceView: View {
                 Divider()
             }
 
+            if let message = appState.calendarRefreshError,
+               appState.selectedSection != .tasks {
+                HStack(spacing: 10) {
+                    Label(
+                        "Calendar refresh failed. Showing previously loaded data. \(message)",
+                        systemImage: "exclamationmark.triangle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+                    Spacer()
+                    Button("Retry") {
+                        Task {
+                            await appState.reloadCalendarData()
+                        }
+                    }
+                    .controlSize(.small)
+                    .accessibilityIdentifier("calendar.refresh.retry")
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.08))
+                .accessibilityIdentifier("calendar.refresh.warning")
+
+                Divider()
+            }
+
             content
             .accessibilityIdentifier("calendar.content")
         }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var calendarSections: [WorkspaceSection] {
+        [.day, .week, .month, .agenda]
+    }
+
+    private var calendarSectionSelection: Binding<WorkspaceSection> {
+        Binding(
+            get: {
+                let section = appState.selectedSection ?? .week
+                return section == .tasks ? .week : section
+            },
+            set: { appState.select($0) }
+        )
     }
 
     @ViewBuilder
@@ -1409,11 +1463,25 @@ private struct WorkspaceView: View {
                 ProgressView()
                     .controlSize(.small)
             case .empty:
-                Text("No events")
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("No events")
+                    if appState.isCalendarRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Refreshing calendars")
+                    }
+                }
+                .foregroundStyle(.secondary)
             case .loaded:
-                Text("\(appState.visibleEvents.count) events")
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Text("\(appState.visibleEvents.count) events")
+                    if appState.isCalendarRefreshing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Refreshing calendars")
+                    }
+                }
+                .foregroundStyle(.secondary)
             case .permissionDenied:
                 Label("Permission required", systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.orange)
@@ -1433,8 +1501,22 @@ private struct WorkspaceView: View {
             case .disconnected:
                 CalendarAccessRequestView(appState: appState)
             case .loading:
-                ProgressView("Loading calendars…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if appState.selectedSection == .month,
+                   !appState.events.isEmpty {
+                    loadedWorkspace
+                        .overlay(alignment: .topTrailing) {
+                            ProgressView("Loading month…")
+                                .controlSize(.small)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(.regularMaterial, in: Capsule())
+                                .padding(12)
+                                .accessibilityIdentifier("month.loading")
+                        }
+                } else {
+                    ProgressView("Loading calendars…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             case .permissionDenied:
                 CalendarPermissionView(state: appState.calendarAuthorizationState)
             case let .failed(message):
@@ -1466,6 +1548,8 @@ private struct WorkspaceView: View {
                         .accessibilityIdentifier("calendar.emptyPeriod")
                     }
                 }
+        case .month:
+            MonthCalendarView(appState: appState)
         case .agenda:
             AgendaView(appState: appState)
         case .tasks:
@@ -1481,7 +1565,7 @@ private struct CalendarAccessRequestView: View {
         ContentUnavailableView {
             Label("Connect your calendars", systemImage: "calendar.badge.plus")
         } description: {
-            Text("KaosCal needs full calendar access to show Day, Week, and Agenda. Your Exchange password and MFA codes stay with macOS.")
+            Text("KaosCal needs full calendar access to show Day, Week, Month, and Agenda. Your Exchange password and MFA codes stay with macOS.")
         } actions: {
             Button("Allow Full Calendar Access") {
                 Task {
@@ -2014,6 +2098,7 @@ struct ProviderTaskSidebarView: View {
     @State private var pendingEditorPresentation: ProviderTaskEditorPresentation?
     @State private var editorHasUnsavedChanges = false
     @State private var showsEditorTransitionPrompt = false
+    @State private var editorSourceUnavailable = false
     @State private var isSelectingTasks = false
     @State private var selectedTaskIDs = Set<String>()
     @State private var isPerformingBulkAction = false
@@ -2092,7 +2177,15 @@ struct ProviderTaskSidebarView: View {
             }
             if let editingTaskID = editorPresentation?.editingTaskID,
                !availableIDs.contains(editingTaskID) {
-                closeEditorImmediately()
+                editorSourceUnavailable = true
+                requestEditorClose()
+            } else if editorSourceUnavailable,
+                      let editingTaskID = editorPresentation?.editingTaskID,
+                      availableIDs.contains(editingTaskID) {
+                editorSourceUnavailable = false
+                if pendingEditorPresentation == nil {
+                    showsEditorTransitionPrompt = false
+                }
             }
         }
         .onChange(of: coordinator.sidebarUndoState?.id) { _, _ in
@@ -2185,6 +2278,9 @@ struct ProviderTaskSidebarView: View {
     }
 
     private var editorTransitionMessage: String {
+        if editorSourceUnavailable {
+            return "This task disappeared during refresh. Keep editing preserves the draft; saving will re-check whether the provider task is still available."
+        }
         if let pendingEditorPresentation {
             return "Save below to continue to \(editorTargetTitle(pendingEditorPresentation)), or discard the current draft."
         }
@@ -3380,6 +3476,7 @@ struct ProviderTaskSidebarView: View {
         editorHasUnsavedChanges = false
         pendingEditorPresentation = nil
         showsEditorTransitionPrompt = false
+        editorSourceUnavailable = false
         editorPresentation = presentation
     }
 
@@ -3413,6 +3510,7 @@ struct ProviderTaskSidebarView: View {
         pendingEditorPresentation = nil
         editorHasUnsavedChanges = false
         showsEditorTransitionPrompt = false
+        editorSourceUnavailable = false
     }
 
     private func editorTargetTitle(
@@ -4536,7 +4634,7 @@ private struct EventInspectorView: View {
                 .foregroundStyle(KaosCalTheme.accent)
             Text("Select an event")
                 .font(.title3.weight(.semibold))
-            Text("Day, Week 또는 Agenda에서 일정을 선택하면 시간, 출처, 편집 가능 상태가 여기에 표시됩니다.")
+            Text("Select an event in Day, Week, Month, or Agenda to see its time, source, and editability here.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }

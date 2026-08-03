@@ -440,6 +440,7 @@ final class TaskProviderCoordinator: ObservableObject {
     private var pendingOAuthCredentialAccessProviders = Set<TaskProviderKind>()
     private var applicationDidBecomeActiveObserver: NSObjectProtocol?
     private var appleRemindersRefreshTask: Task<Void, Never>?
+    private var backgroundTasks = [UUID: Task<Void, Never>]()
     private var activeOAuthListRefreshes = Set<UUID>()
     private var oauthRefreshPending = false
     private var microsoftTaskDetails = [String: String]()
@@ -451,6 +452,8 @@ final class TaskProviderCoordinator: ObservableObject {
         [TaskProviderKind: [ProviderTaskListItem]]()
     private var sidebarTaskSnapshotProviders = Set<TaskProviderKind>()
     private var hasStartedRefresh = false
+    private var activeAsyncOperationCount = 0
+    private(set) var isLocalDataMaintenanceActive = false
 
     @Published private(set) var authorizationState: TaskProviderAuthorizationState
     @Published private(set) var providerAuthorizationStates = [TaskProviderKind: TaskProviderAuthorizationState]()
@@ -528,6 +531,7 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     func refresh() {
+        guard !isLocalDataMaintenanceActive else { return }
         hasStartedRefresh = true
         provider.refreshAuthorizationState()
         reloadSidebarCalendarLinks()
@@ -571,12 +575,75 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     func refreshIfNeeded() {
-        guard !hasStartedRefresh else { return }
+        guard !isLocalDataMaintenanceActive, !hasStartedRefresh else { return }
         refresh()
+    }
+
+    /// Suspends every coordinator-owned background operation before backup,
+    /// import, or reset can touch the live local database.
+    func beginLocalDataMaintenance() async throws {
+        guard !isLocalDataMaintenanceActive else {
+            throw TaskProviderError.providerFailure(
+                "Local data maintenance is already in progress."
+            )
+        }
+        guard activeSidebarMutationIDs.isEmpty,
+              connectingOAuthProviders.isEmpty,
+              activeAsyncOperationCount == 0 else {
+            throw TaskProviderError.providerFailure(
+                "Finish the active task-provider operation before changing local data."
+            )
+        }
+
+        isLocalDataMaintenanceActive = true
+        oauthRefreshPending = false
+        let appleTask = appleRemindersRefreshTask
+        appleRemindersRefreshTask = nil
+        let tasks = Array(backgroundTasks.values)
+        backgroundTasks.removeAll()
+        appleTask?.cancel()
+        tasks.forEach { $0.cancel() }
+        await appleTask?.value
+        for task in tasks {
+            await task.value
+        }
+        activeOAuthListRefreshes.removeAll()
+        isRefreshingOAuthTaskLists = false
+    }
+
+    func endLocalDataMaintenance() {
+        guard isLocalDataMaintenanceActive else { return }
+        isLocalDataMaintenanceActive = false
+    }
+
+    private func startBackgroundTask(
+        _ operation: @escaping @MainActor () async -> Void
+    ) {
+        guard !isLocalDataMaintenanceActive else { return }
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            await operation()
+            self?.backgroundTasks[id] = nil
+        }
+        backgroundTasks[id] = task
+    }
+
+    private func beginAsyncOperation() throws {
+        guard !isLocalDataMaintenanceActive else {
+            throw TaskProviderError.providerFailure(
+                "Task changes are paused during local data maintenance."
+            )
+        }
+        activeAsyncOperationCount += 1
+    }
+
+    private func endAsyncOperation() {
+        activeAsyncOperationCount = max(0, activeAsyncOperationCount - 1)
     }
 
     private func scheduleAppleRemindersTaskRefresh(_ lists: [RemoteTaskList]) {
         appleRemindersRefreshTask?.cancel()
+        guard !isLocalDataMaintenanceActive else { return }
         guard let listingProvider = provider as? any TaskSnapshotListing else {
             setSidebarTaskState(.unavailable, for: .appleReminders)
             return
@@ -586,7 +653,9 @@ final class TaskProviderCoordinator: ObservableObject {
         appleRemindersRefreshTask = Task { [weak self] in
             do {
                 let snapshots = try await listingProvider.listTasks(in: lists)
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled,
+                      let self,
+                      !self.isLocalDataMaintenanceActive else { return }
                 let listsByID = Dictionary(grouping: lists, by: \.id)
                 let items = snapshots.compactMap { snapshot -> ProviderTaskListItem? in
                     let candidates = listsByID[snapshot.parentID] ?? []
@@ -634,6 +703,8 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     func requestAccess() async {
+        guard (try? beginAsyncOperation()) != nil else { return }
+        defer { endAsyncOperation() }
         do {
             _ = try await provider.requestFullAccess()
             refresh()
@@ -785,6 +856,8 @@ final class TaskProviderCoordinator: ObservableObject {
         _ item: ProviderTaskListItem,
         toEventTaskID eventTaskID: String
     ) async throws {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         guard let task = try contextStore.eventTasks.fetch(id: eventTaskID),
               let brief = try contextStore.eventContexts.fetchBrief(
                 contextID: task.contextID
@@ -804,6 +877,10 @@ final class TaskProviderCoordinator: ObservableObject {
         )
         let capabilities = try requireSidebarCapabilities(for: item.provider)
         let remote = try await lookupSidebarTask(item)
+        guard !Task.isCancelled,
+              !isLocalDataMaintenanceActive else {
+            throw CancellationError()
+        }
         guard let remote,
               remote.id == item.remoteTaskID,
               remote.parentID == item.listID,
@@ -836,6 +913,8 @@ final class TaskProviderCoordinator: ObservableObject {
         reminderAt: Date? = nil,
         priority: TaskPriority = .none
     ) async throws -> RemoteTaskSnapshot {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         let exactList = try writableSidebarList(
             provider: list.provider,
             accountKey: list.accountKey,
@@ -870,6 +949,8 @@ final class TaskProviderCoordinator: ObservableObject {
         _ item: ProviderTaskListItem,
         isCompleted: Bool
     ) async throws -> RemoteTaskSnapshot {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         _ = try writableSidebarList(for: item)
         guard sidebarCapabilities(for: item.provider)?.supportsCompletion == true
         else {
@@ -923,6 +1004,8 @@ final class TaskProviderCoordinator: ObservableObject {
         priority: TaskPriority? = nil,
         destination: RemoteTaskList? = nil
     ) async throws -> RemoteTaskSnapshot {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         let sourceList = try writableSidebarList(for: item)
         let destinationList = try destination.map {
             try writableSidebarList(
@@ -1030,6 +1113,8 @@ final class TaskProviderCoordinator: ObservableObject {
         _ item: ProviderTaskListItem,
         baseline: RemoteTaskSnapshot
     ) async throws {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         _ = try writableSidebarList(for: item)
         guard sidebarCapabilities(for: item.provider)?.supportsDeletion == true
         else {
@@ -1065,6 +1150,8 @@ final class TaskProviderCoordinator: ObservableObject {
         baseline: RemoteTaskSnapshot,
         to destination: RemoteTaskList
     ) async throws -> RemoteTaskSnapshot {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         let source = try writableSidebarList(for: item)
         let destination = try writableSidebarList(
             provider: destination.provider,
@@ -1125,6 +1212,8 @@ final class TaskProviderCoordinator: ObservableObject {
         _ items: [ProviderTaskListItem],
         isCompleted: Bool
     ) async throws -> [RemoteTaskSnapshot] {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         guard !items.isEmpty else { return [] }
         let uniqueItems = uniqueSidebarItems(items)
         let scopes = try uniqueItems.map { item in
@@ -1188,6 +1277,8 @@ final class TaskProviderCoordinator: ObservableObject {
         _ items: [ProviderTaskListItem],
         to destination: RemoteTaskList
     ) async throws -> [RemoteTaskSnapshot] {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         guard !items.isEmpty else { return [] }
         let destination = try writableSidebarList(
             provider: destination.provider,
@@ -1266,6 +1357,8 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     func undoLastSidebarMutation() async throws {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         let operations = sidebarUndoOperations
         guard !operations.isEmpty else { return }
         let mutationID = "sidebar:undo"
@@ -1723,6 +1816,11 @@ final class TaskProviderCoordinator: ObservableObject {
         id: String,
         operation: () async throws -> Result
     ) async throws -> Result {
+        guard !isLocalDataMaintenanceActive else {
+            throw TaskProviderError.providerFailure(
+                "Task changes are paused during local data maintenance."
+            )
+        }
         guard activeSidebarMutationIDs.insert(id).inserted else {
             throw TaskProviderError.providerFailure(
                 "This task change is already in progress."
@@ -1731,6 +1829,10 @@ final class TaskProviderCoordinator: ObservableObject {
         defer { activeSidebarMutationIDs.remove(id) }
         do {
             let result = try await operation()
+            guard !Task.isCancelled,
+                  !isLocalDataMaintenanceActive else {
+                throw CancellationError()
+            }
             lastErrorMessage = nil
             lastSidebarSyncAt = now()
             refresh()
@@ -1769,6 +1871,8 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     func connectOAuthProvider(_ provider: TaskProviderKind) async {
+        guard (try? beginAsyncOperation()) != nil else { return }
+        defer { endAsyncOperation() }
         guard provider != self.provider.provider,
               let configuration = loadOAuthConfiguration(provider) else {
             lastErrorMessage = "This provider is not configured for this build."
@@ -1790,6 +1894,8 @@ final class TaskProviderCoordinator: ObservableObject {
                 pkce: authorization.pkce,
                 credentials: oauthCredentials
             )
+            guard !Task.isCancelled,
+                  !isLocalDataMaintenanceActive else { return }
             installOAuthProvider(
                 configuration: configuration,
                 credential: credential
@@ -1807,7 +1913,8 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     func disconnectOAuthProvider(_ provider: TaskProviderKind) {
-        guard provider != self.provider.provider else { return }
+        guard !isLocalDataMaintenanceActive,
+              provider != self.provider.provider else { return }
         do {
             // Provider revocation differs by client type and must not be faked
             // from a desktop public client. This removes KaosCal's Keychain
@@ -1938,6 +2045,7 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     private func scheduleOAuthProviderRefresh() {
+        guard !isLocalDataMaintenanceActive else { return }
         guard !oauthCredentialReadyProviders.isEmpty
                 || !pendingOAuthCredentialAccessProviders.isEmpty
                 || !injectedAsyncProviderKinds.isEmpty else {
@@ -1948,7 +2056,7 @@ final class TaskProviderCoordinator: ObservableObject {
             return
         }
         let token = beginOAuthListRefresh()
-        Task { [weak self] in
+        startBackgroundTask { [weak self] in
             await self?.refreshOAuthProviders(token: token)
         }
     }
@@ -1963,13 +2071,16 @@ final class TaskProviderCoordinator: ObservableObject {
     private func endOAuthListRefresh(_ token: UUID) {
         activeOAuthListRefreshes.remove(token)
         isRefreshingOAuthTaskLists = !activeOAuthListRefreshes.isEmpty
-        if activeOAuthListRefreshes.isEmpty, oauthRefreshPending {
+        if !isLocalDataMaintenanceActive,
+           activeOAuthListRefreshes.isEmpty,
+           oauthRefreshPending {
             oauthRefreshPending = false
             scheduleOAuthProviderRefresh()
         }
     }
 
     private func refreshOAuthProviders(token suppliedToken: UUID? = nil) async {
+        guard !isLocalDataMaintenanceActive else { return }
         let token = suppliedToken ?? beginOAuthListRefresh()
         defer { endOAuthListRefresh(token) }
         configureOAuthProvidersForPendingAccess()
@@ -2007,6 +2118,8 @@ final class TaskProviderCoordinator: ObservableObject {
             }
             do {
                 let lists = try await asyncProvider.listTaskLists()
+                guard !Task.isCancelled,
+                      !isLocalDataMaintenanceActive else { return }
                 taskListRefreshFailures.remove(kind)
                 replaceTaskLists(for: kind, with: lists)
                 for group in Dictionary(grouping: lists, by: \.accountKey) {
@@ -2055,6 +2168,8 @@ final class TaskProviderCoordinator: ObservableObject {
     ) async {
         do {
             let snapshots = try await asyncProvider.listTasks(in: lists)
+            guard !Task.isCancelled,
+                  !isLocalDataMaintenanceActive else { return }
             let listsByID = Dictionary(grouping: lists, by: \.id)
             let items = snapshots.compactMap {
                 snapshot -> ProviderTaskListItem? in
@@ -2332,7 +2447,7 @@ final class TaskProviderCoordinator: ObservableObject {
                     using: provider
                 )
             } else if let asyncProvider = asyncProviders[account.provider] {
-                Task { [weak self] in
+                startBackgroundTask { [weak self] in
                     await self?.syncBoundEventTask(
                         task: task,
                         brief: brief,
@@ -2365,7 +2480,7 @@ final class TaskProviderCoordinator: ObservableObject {
             guard let asyncProvider = asyncProviders[account.provider] else {
                 return
             }
-            Task { [weak self] in
+            startBackgroundTask { [weak self] in
                 await self?.createRemoteTask(
                     using: asyncProvider,
                     task: task,
@@ -2456,6 +2571,7 @@ final class TaskProviderCoordinator: ObservableObject {
         brief: EventBriefSnapshot,
         pending existingPending: ProviderPendingOperationRecord? = nil
     ) async {
+        guard !isLocalDataMaintenanceActive else { return }
         let dueAt = remoteDueDate(
             task.effectiveDueDate(
                 eventStart: brief.link.startSnapshot,
@@ -2481,6 +2597,8 @@ final class TaskProviderCoordinator: ObservableObject {
             onLocalProjectionChange?()
             do {
                 let remote = try await provider.createTask(draft)
+                guard !Task.isCancelled,
+                      !isLocalDataMaintenanceActive else { return }
                 _ = try repository.replaceLinkedTask(
                     account: account,
                     remote: remote,
@@ -2633,6 +2751,7 @@ final class TaskProviderCoordinator: ObservableObject {
         using provider: any AsyncTaskProviding,
         pending existingPending: ProviderPendingOperationRecord? = nil
     ) async {
+        guard !isLocalDataMaintenanceActive else { return }
         guard account.authorizationState == .authorized,
               provider.authorizationState == .authorized else {
             _ = try? repository.markBinding(
@@ -2654,10 +2773,13 @@ final class TaskProviderCoordinator: ObservableObject {
             guard binding.syncState == .linked || existingPending != nil else {
                 return
             }
-            guard let remote = try await provider.lookupTask(
+            let fetchedRemote = try await provider.lookupTask(
                 id: item.remoteID,
                 parentID: item.remoteParentID
-            ) else {
+            )
+            guard !Task.isCancelled,
+                  !isLocalDataMaintenanceActive else { return }
+            guard let remote = fetchedRemote else {
                 try repository.removePendingOperation(eventTaskID: task.id)
                 _ = try repository.markBinding(
                     bindingID: binding.id,
@@ -2718,6 +2840,8 @@ final class TaskProviderCoordinator: ObservableObject {
                     snapshot(remote, expectedVersion: binding.remoteVersion),
                     with: localRecoveryPatch(task: task, dueAt: dueAt)
                 )
+                guard !Task.isCancelled,
+                      !isLocalDataMaintenanceActive else { return }
                 try repository.updateLinkedTask(
                     bindingID: binding.id,
                     itemID: item.id,
@@ -2808,6 +2932,8 @@ final class TaskProviderCoordinator: ObservableObject {
     /// same ordering as the Reminders path: a failed remote delete leaves the
     /// local task and binding untouched for the user to resolve.
     func deleteRemoteTaskIfBoundAsync(eventTaskID: String) async throws {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         guard let binding = try repository.fetchBinding(
             eventTaskID: eventTaskID
         ), let item = try repository.fetchProviderItem(
@@ -2991,6 +3117,8 @@ final class TaskProviderCoordinator: ObservableObject {
         eventTaskID: String,
         in contextStore: ContextStore
     ) async throws {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         guard let binding = try repository.fetchBinding(
             eventTaskID: eventTaskID
         ), let item = try repository.fetchProviderItem(
@@ -3055,6 +3183,8 @@ final class TaskProviderCoordinator: ObservableObject {
         eventTaskID: String,
         in contextStore: ContextStore
     ) async throws {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         guard let binding = try repository.fetchBinding(
             eventTaskID: eventTaskID
         ), let item = try repository.fetchProviderItem(
@@ -3331,6 +3461,8 @@ final class TaskProviderCoordinator: ObservableObject {
         eventTaskID: String,
         in contextStore: ContextStore
     ) async throws -> ProviderPendingOperationKind {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         guard let pending = try repository.fetchPendingOperation(
             eventTaskID: eventTaskID
         ) else {
@@ -3565,6 +3697,8 @@ final class TaskProviderCoordinator: ObservableObject {
         to candidate: TaskProviderLinkCandidate,
         in contextStore: ContextStore
     ) async throws {
+        try beginAsyncOperation()
+        defer { endAsyncOperation() }
         guard let task = try contextStore.eventTasks.fetch(id: eventTaskID),
               let brief = try contextStore.eventContexts.fetchBrief(
                 contextID: task.contextID
@@ -3678,14 +3812,17 @@ final class TaskProviderCoordinator: ObservableObject {
         if projectionChanged {
             onLocalProjectionChange?()
         }
-        Task { [weak self] in
+        startBackgroundTask { [weak self] in
             await self?.refreshOAuthLinkedTasks(in: contextStore)
         }
     }
 
     private func refreshOAuthLinkedTasks(in contextStore: ContextStore) async {
+        guard !isLocalDataMaintenanceActive else { return }
         await refreshMicrosoftDeltas(in: contextStore)
-        guard let bindings = try? repository.fetchBindings() else { return }
+        guard !Task.isCancelled,
+              !isLocalDataMaintenanceActive,
+              let bindings = try? repository.fetchBindings() else { return }
         var projectionChanged = false
         for binding in bindings {
             guard let eventTaskID = binding.eventTaskID,
@@ -3699,10 +3836,13 @@ final class TaskProviderCoordinator: ObservableObject {
                 continue
             }
             do {
-                guard let remote = try await asyncProvider.lookupTask(
+                let fetchedRemote = try await asyncProvider.lookupTask(
                     id: item.remoteID,
                     parentID: item.remoteParentID
-                ) else {
+                )
+                guard !Task.isCancelled,
+                      !isLocalDataMaintenanceActive else { return }
+                guard let remote = fetchedRemote else {
                     projectionChanged = (try repository.markBinding(
                         bindingID: binding.id,
                         state: .missing
@@ -3741,7 +3881,8 @@ final class TaskProviderCoordinator: ObservableObject {
     }
 
     private func refreshMicrosoftDeltas(in contextStore: ContextStore) async {
-        guard let asyncMicrosoft = asyncProviders[.microsoftToDo],
+        guard !isLocalDataMaintenanceActive,
+              let asyncMicrosoft = asyncProviders[.microsoftToDo],
               asyncMicrosoft.authorizationState == .authorized,
               let microsoft = asyncMicrosoft as? any MicrosoftToDoDeltaProviding,
               let accounts = try? repository.fetchAccounts() else {
@@ -3800,6 +3941,8 @@ final class TaskProviderCoordinator: ObservableObject {
                         listID: list.id,
                         cursor: cursor
                     )
+                    guard !Task.isCancelled,
+                          !isLocalDataMaintenanceActive else { return }
                     for remoteID in delta.deletedTaskIDs {
                         microsoftTaskDeepLinks[
                             microsoftDetailsKey(

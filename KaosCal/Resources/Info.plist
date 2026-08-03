@@ -46,9 +46,9 @@
 	<key>KaosCalGoogleTasksRedirectURI</key>
 	<string>http://127.0.0.1</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>KaosCal은 Day, Week, Agenda에 일정을 표시하고 사용자가 승인한 변경을 저장하기 위해 캘린더 접근이 필요합니다.</string>
+	<string>KaosCal needs calendar access to display events in Day, Week, Month, and Agenda and to save changes you approve.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
-	<string>KaosCal은 선택한 캘린더의 Before, During, After 작업을 Apple Reminders와 연결하기 위해 미리 알림 접근이 필요합니다.</string>
+	<string>KaosCal needs reminders access to link Before, During, and After tasks from selected calendars with Apple Reminders.</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUAutomaticallyUpdate</key>

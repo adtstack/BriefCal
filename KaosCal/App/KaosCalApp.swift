@@ -73,8 +73,9 @@ private struct KaosCalCommands: Commands {
         CommandMenu("Navigate") {
             navigationCommand("Day", section: .day, key: "1")
             navigationCommand("Week", section: .week, key: "2")
-            navigationCommand("Agenda", section: .agenda, key: "3")
-            navigationCommand("Tasks", section: .tasks, key: "4")
+            navigationCommand("Month", section: .month, key: "3")
+            navigationCommand("Agenda", section: .agenda, key: "4")
+            navigationCommand("Tasks", section: .tasks, key: "5")
             Divider()
             Button("Today") {
                 appState.goToToday()
@@ -219,7 +220,7 @@ struct PaidBetaOnboardingView: View {
             )
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("Shortcuts: ⌘1–⌘4 switch views · ⌘N creates an event · ⌘R reloads")
+                Text("Shortcuts: ⌘1–⌘5 switch views · ⌘N creates an event · ⌘R reloads")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

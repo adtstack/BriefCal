@@ -492,8 +492,7 @@ struct TaskCenterView: View {
             VStack(spacing: 0) {
                 ForEach(events) { event in
                     Button {
-                        appState.select(.agenda)
-                        appState.selectEvent(event.id)
+                        appState.openCalendarSearchResult(event)
                     } label: {
                         HStack(spacing: 10) {
                             Image(systemName: "calendar")

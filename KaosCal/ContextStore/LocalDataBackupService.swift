@@ -1102,6 +1102,7 @@ private enum DatabaseSchemaValidator {
             )
         }
         let migrations = try exactCurrentMigrations(in: db)
+        try validateRowDomains(in: db)
         let rows = try Row.fetchAll(
             db,
             sql: """
@@ -1122,6 +1123,68 @@ private enum DatabaseSchemaValidator {
             migrations: migrations,
             schemaObjects: objects
         )
+    }
+
+    private static func validateRowDomains(in db: Database) throws {
+        let orphanPlanning = try Row.fetchOne(
+            db,
+            sql: """
+                SELECT 1
+                FROM task_planning_metadata AS planning
+                LEFT JOIN event_tasks AS event_task
+                  ON planning.task_kind = 'event'
+                 AND event_task.id = planning.task_id
+                LEFT JOIN personal_tasks AS personal_task
+                  ON planning.task_kind = 'personal'
+                 AND personal_task.id = planning.task_id
+                WHERE (planning.task_kind = 'event' AND event_task.id IS NULL)
+                   OR (planning.task_kind = 'personal' AND personal_task.id IS NULL)
+                LIMIT 1
+                """
+        )
+        guard orphanPlanning == nil else {
+            throw LocalDataBackupError.invalidDatabase(
+                "task planning metadata references a missing task"
+            )
+        }
+
+        let orphanChecklist = try Row.fetchOne(
+            db,
+            sql: """
+                SELECT 1
+                FROM task_checklist_items AS checklist
+                LEFT JOIN event_tasks AS event_task
+                  ON checklist.task_kind = 'event'
+                 AND event_task.id = checklist.parent_task_id
+                LEFT JOIN personal_tasks AS personal_task
+                  ON checklist.task_kind = 'personal'
+                 AND personal_task.id = checklist.parent_task_id
+                WHERE (checklist.task_kind = 'event' AND event_task.id IS NULL)
+                   OR (checklist.task_kind = 'personal' AND personal_task.id IS NULL)
+                LIMIT 1
+                """
+        )
+        guard orphanChecklist == nil else {
+            throw LocalDataBackupError.invalidDatabase(
+                "a task checklist item references a missing task"
+            )
+        }
+
+        let referenceURLs = try String.fetchAll(
+            db,
+            sql: "SELECT url FROM context_references"
+        )
+        for rawURL in referenceURLs {
+            guard let url = URL(string: rawURL),
+                  ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+                  url.host != nil,
+                  url.user == nil,
+                  url.password == nil else {
+                throw LocalDataBackupError.invalidDatabase(
+                    "a context reference contains an unsafe URL"
+                )
+            }
+        }
     }
 
     private static func exactCurrentMigrations(in db: Database) throws -> [String] {

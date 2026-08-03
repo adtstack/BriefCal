@@ -1,6 +1,7 @@
 # KaosCal 사용자 가이드
 
-> 기준 구현: 2026-07-25, Tasks 통합 관리·planning·Calendar 결합과 signed updater
+> 기준 구현: 2026-08-02, Full Month MVP와 Tasks 통합 관리·planning·Calendar 결합,
+> signed updater
 >
 > 이 문서는 현재 저장소의 코드와 승인된 설계 문서를 기준으로 한다. KaosCal은 아직
 > 외부 베타 배포 준비 단계이며, 공개 다운로드 위치·최종 설치 패키지·일반 지원 창구는
@@ -41,7 +42,7 @@ EventKit을 통해 저장한다. KaosCal 안에서 Exchange, iCloud 또는 다�
 
 1. KaosCal을 실행한다.
 2. `Allow Full Calendar Access`를 선택한다.
-3. macOS 권한 창에서 전체 캘린더 접근을 허용한다. KaosCal은 Day, Week, Agenda에
+3. macOS 권한 창에서 전체 캘린더 접근을 허용한다. KaosCal은 Day, Week, Month, Agenda에
    일정을 표시하고 사용자가 요청한 원본 변경을 저장하기 위해 읽기·쓰기 가능한 전체
    접근이 필요하다. `Write Only` 권한만으로는 동작하지 않는다.
 4. 앱으로 돌아오면 권한과 일정을 다시 확인한다. 필요하면 도구 막대의
@@ -74,10 +75,11 @@ backup이 있으면 `Restore From Backup…`을 선택한다. archive가 완전�
 ## 3. 화면과 이동
 
 왼쪽에는 mini month, 화면 선택, Calendar Set, 캘린더 목록이 있다. 가운데는 선택한
-Day, Week, Agenda 또는 Task Center이고, 오른쪽 inspector에는 선택한 일정의 출처,
+Day, Week, Month, Agenda 또는 Task Center이고, 오른쪽 inspector에는 선택한 일정의 출처,
 권한, 중복 후보와 Event Brief가 표시된다.
 
-- `⌘1` Day, `⌘2` Week, `⌘3` Agenda, `⌘4` Tasks
+- 본문 위쪽 `Day / Week / Month / Agenda` 전환기로 캘린더 화면을 바꿈
+- `⌘1` Day, `⌘2` Week, `⌘3` Month, `⌘4` Agenda, `⌘5` Tasks
 - `⌘T` 오늘로 이동
 - `⌘N` 새 일정
 - `⌘R` 현재 일정 또는 Tasks 다시 읽기
@@ -86,11 +88,33 @@ Day, Week, Agenda 또는 Task Center이고, 오른쪽 inspector에는 선택한 
   일정이 하나 이상 있음을 뜻함. 여러 일정이어도 점은 하나이며 VoiceOver는 개수를 읽음
 - `Reload events`는 일정, Tasks 화면의 `Reload tasks`는 로컬 할 일 목록을 다시 읽음
 
+### 본문 Month 보기
+
+Month는 mini month와 달리 일정 내용을 읽는 본문 화면이다. 현재 locale과 주 시작 요일에
+맞춘 4~6주의 완전한 주를 표시하며, 인접 월 날짜도 같은 grid 안에 포함한다.
+
+- 하루짜리 시간 일정은 시작 시간과 제목을, 종일 일정은 제목을 표시한다.
+- 여러 날에 걸친 종일·시간 일정은 주 경계에서 나뉘어 이어지는 막대로 표시된다. 자정에
+  정확히 끝나는 일정은 배타 종료를 지켜 다음 날을 차지하지 않는다.
+- 셀 높이에 다 들어가지 않는 일정은 `+N more`로 요약된다. 이를 선택하면 그 날짜의
+  숨겨진 일정 목록을 popover에서 확인하고 일정을 선택할 수 있다.
+- 일정 제목이나 막대를 선택하면 기존 오른쪽 inspector와 Event Brief가 열린다.
+- 날짜를 선택해 focus를 옮길 수 있고 날짜 동작을 실행하면 해당 날짜의 Day로 이동한다.
+  방향키 이동과 VoiceOver 날짜·일정·overflow 설명도 같은 선택 흐름을 사용한다.
+- Month에도 `global Enabled ∩ 선택한 Calendar Set`이 적용된다. Calendar Set을 바꿔도
+  EventKit 원본, recovery 정보나 availability blocking 설정은 삭제되지 않는다.
+- 이전·다음은 하루나 한 주가 아니라 한 달씩 이동하고, Today는 오늘이 포함된 달로
+  돌아온다. 새 범위를 읽는 동안 기존 월이 있으면 그대로 유지하고 작은 loading 표시를
+  보여 준다.
+
+첫 Month 버전에는 일정 drag 이동·resize, Quarter/Year, 전체 일정 검색, 날짜별 Day
+Summary와 Quick Add/template이 포함되지 않는다.
+
 ## 4. 일정과 Event Brief 사용하기
 
 ### 일정 보기·만들기·편집하기
 
-Day, Week 또는 Agenda에서 일정을 선택하면 오른쪽 inspector에 캘린더, source,
+Day, Week, Month 또는 Agenda에서 일정을 선택하면 오른쪽 inspector에 캘린더, source,
 KaosCal role, 편집 가능 상태가 나타난다.
 
 - 새 일정은 도구 막대의 `New event` 또는 `⌘N`으로 만든다.
@@ -242,7 +266,7 @@ Event Brief task를 Reminders에 생성·수정하려면 Settings의
   이름만 같은 calendar로 자동 연결하지 않는다. 사용자가 `Replace…`로 새 calendar를
   고르거나 `Remove`를 눌러야 membership이 바뀐다. 권한 거부·로딩·조회 실패 중에는
   missing으로 단정하지 않고, 권한 있는 calendar 조회가 완료된 뒤에만 unavailable을 표시한다.
-- Set 전환은 Day/Week/Agenda 표시만 좁히고 raw Calendar fetch, Event Brief 연결·복구,
+- Set 전환은 Day/Week/Month/Agenda 표시만 좁히고 raw Calendar fetch, Event Brief 연결·복구,
   duplicate review와 editor destination을 삭제하거나 제한하지 않는다. 숨겨진 duplicate·
   relink 대상 또는 원본 저장 뒤 focus할 일정이 현재 filter 밖이면 active Set을 바꾸지 않는
   temporary reveal을 사용하고, 이미 보이는 일정에는 임시 상태를 만들지 않는다.
@@ -366,8 +390,9 @@ restore/reset과 rollback까지 실패하면 그 session의 로컬 변경과 캘
 - schema가 다른 backup migration/downgrade, 임의 SQLite 복구와 backup 없는 bootstrap reset
 - exact Release에서 실제 export 파일 작성·backup import·reset mutation의 live gate
 - signed appcast를 사용한 이전 build → 새 build 자동 설치·재실행의 end-to-end gate
+- 전체 일정 검색, Quick Add/template, Quarter/Year와 날짜별 Day Summary
 
-알림·일정 검색·전체 Month부터 시작하는 후속 기능 순서와 현재 상용 기능 격차는
+알림·일정 검색·Quick Add/template 등 후속 기능 순서와 현재 상용 기능 격차는
 [상용 기능 로드맵](commercial-feature-roadmap.md)을 따른다.
 
 KaosCal 고유의 notes, task, history, Calendar Set과 설정은 이 Mac에만 저장된다. Calendar는

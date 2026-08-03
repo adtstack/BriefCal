@@ -1,10 +1,10 @@
 # KaosCal 제품·시스템 스펙
 
 > 상태: Living Specification
-> 기준일: 2026-07-25, Asia/Seoul
+> 기준일: 2026-08-02, Asia/Seoul
 > 기준선: v1 동결 범위, 구현된 v2 T0–T3, T4 결정, T5, saved Calendar Set,
-> `v11_local_task_planning`, ADR-019 local-only 경계와 ADR-020 signed updater를 포함한
-> 저장소 작업 트리
+> `v11_local_task_planning`, Full Month MVP, ADR-019 local-only 경계와 ADR-020 signed
+> updater를 포함한 저장소 작업 트리
 > 목적: 새 기능과 변경을 코드보다 먼저 합의하고, 구현·테스트·수동 검증을 같은 요구사항 ID로 추적한다.
 
 ## 1. 문서의 역할
@@ -66,7 +66,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 
 ### 2.2 핵심 사용자 결과
 
-1. 사용자는 Day, Week, Agenda에서 같은 일정을 같은 의미로 확인한다.
+1. 사용자는 Day, Week, Month, Agenda에서 같은 일정을 같은 의미로 확인한다.
 2. 일정이 이동·변경·삭제되어도 연결된 Event Brief를 조용히 잃지 않는다.
 3. 원본 일정 변경 전에는 권한과 영향 범위를 이해하고 명시적으로 승인한다.
 4. 일정 작업과 개인 작업을 Task Center에서 함께 보되 출처와 정본을 구분한다.
@@ -126,7 +126,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 
 | ID | 상태 | 요구사항과 인수 기준 |
 | --- | --- | --- |
-| `UI-001` | 기준선 | Day, Week, Agenda는 같은 `DisplayEvent` 의미·선택·Inspector 흐름을 공유해야 한다. Task Center는 별도 workspace section으로 열 수 있어야 한다. |
+| `UI-001` | 기준선 | Day, Week, Month, Agenda는 같은 `DisplayEvent` 의미·선택·Inspector 흐름을 공유해야 한다. Task Center는 별도 workspace section으로 열 수 있어야 한다. Month 고유 인수 기준은 `COM-003`을 따른다. |
 | `UI-002` | 기준선 | Sidebar mini month는 고정 6×7 grid로 날짜를 선택하고, 선택 날짜에 맞춰 현재 calendar 화면을 이동해야 한다. |
 | `UI-003` | 기준선 | timed event는 겹침을 최소 column으로 배치하고, 짧은 event의 최소 시각 높이와 자정 경계 multi-day 분할을 보장해야 한다. |
 | `UI-004` | 기준선 | all-day/multi-day event는 배타 종료 날짜를 보존하면서 visible range에 clamp하고 재사용 가능한 lane에 배치해야 한다. |
@@ -260,7 +260,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | --- | --- | --- | --- |
 | `COM-001` | C1 | 설계 승인 / 구현 대기 | 일정·local task notification을 명시적으로 설정·해제하고 due와 reminder 의미를 분리하며, 권한 거부·변경·완료·삭제·재실행 뒤 중복 예약을 만들지 않아야 한다. |
 | `COM-002` | C1 | 설계 승인 / 구현 대기 | 제목·장소·calendar/source·날짜 범위로 bounded EventKit 검색을 제공하고 검색 범위를 공개하며 exact occurrence와 temporary reveal로 이동해야 한다. |
-| `COM-003` | C1 | 설계 승인 / 구현 대기 | 일정 제목이 보이는 본문 Month view가 locale·주 시작·4~6주·all-day/timed multi-day·배타 종료·overflow·Set filter·keyboard·VoiceOver를 보존해야 한다. |
+| `COM-003` | C1 | 구현·자동/offscreen 검증 완료 / live 대기 | 일정 제목과 시간 정보를 보여 주는 본문 Month view가 locale·주 시작·4~6주의 완전한 주, all-day/timed multi-day의 주별 segment, 배타 종료, `+N` overflow와 날짜별 popover, `global Enabled ∩ 선택 Calendar Set`을 보존해야 한다. event 선택은 기존 Inspector로 이어지고 날짜 동작은 해당 Day로 이동해야 하며, 상단 Day/Week/Month/Agenda 전환기와 `⌘1`~`⌘5`, 방향키 focus와 VoiceOver 의미를 제공해야 한다. 첫 버전에는 일정 drag 이동·resize, Quarter/Year, 전체 검색, Day Summary와 Quick Add/template을 포함하지 않는다. |
 | `COM-004` | C1 | 설계 승인 / 구현 대기 | keyboard Quick Add와 이 Mac에 저장하는 deterministic template을 제공하되 AI·자연어 추론·원격 생성 기능을 추가하면 안 된다. |
 | `COM-005` | C1 | 설계 승인 / 구현 대기 | EventKit snapshot에서 안전한 HTTPS 회의 링크 후보를 감지해 사용자가 선택·열 수 있게 하되 notes/URL 원문을 새 local 정본으로 복제하면 안 된다. |
 | `COM-006` | C2 | 구현 / live 대기 | 명시적 drag는 현재 Calendar Set의 writable calendar에 15분 단위·기본 1시간 block과 During task를 만들고 exact provider task를 연결해야 한다. 자동 재배치·완료 전파는 하지 않으며 부분 성공을 조용한 task 삭제로 보정하면 안 된다. |
@@ -407,6 +407,7 @@ linked
 | `SYS-004`, `REL-002` | [ADR-020](adr/ADR-020-signed-automatic-updates.md), [Release Runbook](release-runbook.md) | `UpdateController`, Info.plist updater policy, sandbox entitlements, Sparkle 2 | `UpdateConfigurationTests`, app payload/signature audit, previous-build upgrade smoke |
 | `UI-001`–`UI-004`, `TIME-*` | [ADR-003](adr/ADR-003-all-day-time-zone-and-recurrence.md), [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md) | `CalendarTimelineView`, `CalendarEventLayout`, `CalendarEventDateFormatting` | `CalendarEventLayoutTests`, `CalendarEventEditingTests` |
 | `CAL-007`, `UI-005` | [ADR-002](adr/ADR-002-calendar-and-task-experience.md) | `MiniMonthGrid`, `MiniMonthView`, `AppState`, `CalendarEventDateFormatting` | `AppStateTests`, `CalendarEventLayoutTests`, mini month live QA |
+| `COM-003` | [상용 기능 로드맵](commercial-feature-roadmap.md), [Design System](design-system.md), [Architecture](architecture.md) | `MonthGrid`, `MonthEventLayout`, `MonthCalendarView`, `AppState`, calendar view picker와 navigation commands | `AppStateTests`, `CalendarEventLayoutTests`, Full Month live QA |
 | `CFG-001`–`CFG-005` | [ADR-014](adr/ADR-014-multi-calendar-clarity.md) | `CalendarClarity`, `CalendarRoleRepository`, `AppState` | `CalendarClarityTests`, `AppStateTests` |
 | `CFG-006`–`CFG-011` | [ADR-017](adr/ADR-017-calendar-visibility-and-availability.md) | `CalendarClarity`, `CalendarRoleRepository`, Settings/Sidebar, `AppState` | `CalendarClarityTests`, `AppStateTests`, backup tests |
 | `EVT-*` | [ADR-010](adr/ADR-010-original-event-write-safety.md), [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md) | `CalendarEventEditing`, `EventKitProvider`, `EventEditorView`, `AppState` | `CalendarEventEditingTests`, `AppStateTests` |
@@ -462,7 +463,8 @@ linked
 - final exact Release의 onboarding, keyboard/VoiceOver와 clean-user 실행
 - Developer ID signing, notarization, stapling, 승인 EULA와 support/privacy 연락처
 - signed HTTPS appcast 발행과 직전 notarized build의 end-to-end 자동업데이트
-- C1 `COM-001`~`COM-005`의 상세 설계와 구현. C2/C3는
+- C1 `COM-003` Full Month의 실제 창 keyboard·VoiceOver·고밀도 live 검증
+- C1 `COM-001`, `COM-002`, `COM-004`, `COM-005`의 상세 설계와 구현. C2/C3는
   [상용 기능 로드맵](commercial-feature-roadmap.md)의 ADR 순서를 따른다.
 
 tentative event를 soft conflict로 분리할지, account-level calendar usage 기본값을 상속할지,

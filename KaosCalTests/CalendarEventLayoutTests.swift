@@ -989,3 +989,345 @@ final class MiniMonthGridTests: XCTestCase {
         }
     }
 }
+
+final class MonthEventLayoutTests: XCTestCase {
+    func testMonthGridUsesMinimalFourFiveAndSixWeekCoverage() {
+        let sundayCalendar = makeCalendar(firstWeekday: 1)
+        let mondayCalendar = makeCalendar(firstWeekday: 2)
+
+        let fourWeeks = MonthGrid(
+            containing: date(2026, 2, 15, calendar: sundayCalendar),
+            calendar: sundayCalendar
+        )
+        let fiveWeeks = MonthGrid(
+            containing: date(2026, 4, 15, calendar: mondayCalendar),
+            calendar: mondayCalendar
+        )
+        let sixWeeks = MonthGrid(
+            containing: date(2026, 8, 15, calendar: sundayCalendar),
+            calendar: sundayCalendar
+        )
+
+        XCTAssertEqual(fourWeeks.rowCount, 4)
+        XCTAssertEqual(fourWeeks.days.count, 28)
+        XCTAssertEqual(dayKey(fourWeeks.visibleInterval.start, calendar: sundayCalendar), "2026-02-01")
+        XCTAssertEqual(dayKey(fourWeeks.visibleInterval.end, calendar: sundayCalendar), "2026-03-01")
+
+        XCTAssertEqual(fiveWeeks.rowCount, 5)
+        XCTAssertEqual(fiveWeeks.days.count, 35)
+        XCTAssertEqual(dayKey(fiveWeeks.days.first!.date, calendar: mondayCalendar), "2026-03-30")
+        XCTAssertEqual(dayKey(fiveWeeks.days.last!.date, calendar: mondayCalendar), "2026-05-03")
+
+        XCTAssertEqual(sixWeeks.rowCount, 6)
+        XCTAssertEqual(sixWeeks.days.count, 42)
+        XCTAssertEqual(sixWeeks.weekdayOrdinals, [1, 2, 3, 4, 5, 6, 7])
+        XCTAssertEqual(sixWeeks.weeks.count, 6)
+        XCTAssertTrue(sixWeeks.weeks.allSatisfy { $0.count == 7 })
+    }
+
+    func testGridHonorsFirstWeekdayAndAdvancesByCivilDayAcrossDST() {
+        let sundayCalendar = makeCalendar(
+            timeZoneIdentifier: "America/New_York",
+            firstWeekday: 1
+        )
+        let mondayCalendar = makeCalendar(
+            timeZoneIdentifier: "America/New_York",
+            firstWeekday: 2
+        )
+        let target = date(2026, 3, 15, calendar: sundayCalendar)
+        let sundayGrid = MonthGrid(
+            containing: target,
+            calendar: sundayCalendar
+        )
+        let mondayGrid = MonthGrid(
+            containing: target,
+            calendar: mondayCalendar
+        )
+
+        XCTAssertEqual(dayKey(sundayGrid.days.first!.date, calendar: sundayCalendar), "2026-03-01")
+        XCTAssertEqual(dayKey(mondayGrid.days.first!.date, calendar: mondayCalendar), "2026-02-23")
+        XCTAssertEqual(mondayGrid.weekdayOrdinals, [2, 3, 4, 5, 6, 7, 1])
+
+        for pair in zip(sundayGrid.days, sundayGrid.days.dropFirst()) {
+            XCTAssertEqual(
+                sundayCalendar.date(byAdding: .day, value: 1, to: pair.0.date),
+                pair.1.date
+            )
+        }
+        let march8 = sundayGrid.days.first {
+            dayKey($0.date, calendar: sundayCalendar) == "2026-03-08"
+        }!.date
+        let march9 = sundayGrid.days.first {
+            dayKey($0.date, calendar: sundayCalendar) == "2026-03-09"
+        }!.date
+        XCTAssertEqual(march9.timeIntervalSince(march8), 23 * 60 * 60)
+    }
+
+    func testAllDayEventSplitsAtWeekAndMonthBoundaries() throws {
+        let calendar = makeCalendar(firstWeekday: 2)
+        let grid = MonthGrid(
+            containing: date(2026, 8, 15, calendar: calendar),
+            calendar: calendar
+        )
+        let event = makeEvent(
+            id: "month-boundary",
+            start: date(2026, 7, 31, calendar: calendar),
+            end: date(2026, 8, 4, calendar: calendar),
+            isAllDay: true,
+            calendar: calendar
+        )
+
+        let segments = MonthEventLayout(
+            events: [event],
+            grid: grid,
+            calendar: calendar
+        ).segments
+
+        XCTAssertEqual(segments.count, 2)
+        XCTAssertEqual(segments[0].weekIndex, 0)
+        XCTAssertEqual(segments[0].startWeekdayIndex, 4)
+        XCTAssertEqual(segments[0].endWeekdayIndex, 6)
+        XCTAssertFalse(segments[0].continuesBefore)
+        XCTAssertTrue(segments[0].continuesAfter)
+        XCTAssertEqual(segments[1].weekIndex, 1)
+        XCTAssertEqual(segments[1].startWeekdayIndex, 0)
+        XCTAssertEqual(segments[1].endWeekdayIndex, 0)
+        XCTAssertTrue(segments[1].continuesBefore)
+        XCTAssertFalse(segments[1].continuesAfter)
+    }
+
+    func testTimedMultiDayUsesHorizontalSpanAndSingleDayTimedUsesLane() throws {
+        let calendar = makeCalendar(firstWeekday: 2)
+        let grid = MonthGrid(
+            containing: date(2026, 8, 15, calendar: calendar),
+            calendar: calendar
+        )
+        let multiDay = makeEvent(
+            id: "timed-multi",
+            start: date(2026, 8, 3, hour: 10, calendar: calendar),
+            end: date(2026, 8, 5, hour: 12, calendar: calendar),
+            calendar: calendar
+        )
+        let singleDay = makeEvent(
+            id: "timed-single",
+            start: date(2026, 8, 3, hour: 8, calendar: calendar),
+            end: date(2026, 8, 3, hour: 9, calendar: calendar),
+            calendar: calendar
+        )
+        let layout = MonthEventLayout(
+            events: [multiDay, singleDay],
+            grid: grid,
+            calendar: calendar
+        )
+        let multiSegment = try XCTUnwrap(
+            layout.segments.first { $0.event.id == multiDay.id }
+        )
+        let singleSegment = try XCTUnwrap(
+            layout.segments.first { $0.event.id == singleDay.id }
+        )
+
+        XCTAssertFalse(multiSegment.isAllDay)
+        XCTAssertEqual(multiSegment.spanLength, 3)
+        XCTAssertEqual(multiSegment.weekdaySpan, 0...2)
+        XCTAssertEqual(singleSegment.spanLength, 1)
+        XCTAssertNotEqual(singleSegment.laneIndex, multiSegment.laneIndex)
+        XCTAssertEqual(
+            Set(layout.events(on: date(2026, 8, 3, calendar: calendar)).map(\.id)),
+            Set([multiDay.id, singleDay.id])
+        )
+    }
+
+    func testMidnightEndIsExclusiveForTimedEvent() {
+        let calendar = makeCalendar(firstWeekday: 2)
+        let grid = MonthGrid(
+            containing: date(2026, 8, 15, calendar: calendar),
+            calendar: calendar
+        )
+        let event = makeEvent(
+            id: "ends-at-midnight",
+            start: date(2026, 8, 3, hour: 22, calendar: calendar),
+            end: date(2026, 8, 4, calendar: calendar),
+            calendar: calendar
+        )
+        let layout = MonthEventLayout(
+            events: [event],
+            grid: grid,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(layout.segments.count, 1)
+        XCTAssertEqual(layout.segments[0].spanLength, 1)
+        XCTAssertEqual(layout.events(on: date(2026, 8, 3, calendar: calendar)).map(\.id), [event.id])
+        XCTAssertTrue(layout.events(on: date(2026, 8, 4, calendar: calendar)).isEmpty)
+    }
+
+    func testLaneAssignmentAndOverflowAreDeterministic() {
+        let calendar = makeCalendar(firstWeekday: 2)
+        let grid = MonthGrid(
+            containing: date(2026, 8, 15, calendar: calendar),
+            calendar: calendar
+        )
+        let events = [
+            makeEvent(
+                id: "a",
+                start: date(2026, 8, 3, hour: 8, calendar: calendar),
+                end: date(2026, 8, 3, hour: 9, calendar: calendar),
+                calendar: calendar
+            ),
+            makeEvent(
+                id: "b",
+                start: date(2026, 8, 3, hour: 9, calendar: calendar),
+                end: date(2026, 8, 3, hour: 10, calendar: calendar),
+                calendar: calendar
+            ),
+            makeEvent(
+                id: "c",
+                start: date(2026, 8, 3, hour: 10, calendar: calendar),
+                end: date(2026, 8, 3, hour: 11, calendar: calendar),
+                calendar: calendar
+            )
+        ]
+        let first = MonthEventLayout(
+            events: events,
+            grid: grid,
+            calendar: calendar
+        )
+        let reversed = MonthEventLayout(
+            events: Array(events.reversed()),
+            grid: grid,
+            calendar: calendar
+        )
+        let targetDay = date(2026, 8, 3, calendar: calendar)
+        let firstLanes = Dictionary(
+            uniqueKeysWithValues: first.segments.map { ($0.event.id, $0.laneIndex) }
+        )
+        let reversedLanes = Dictionary(
+            uniqueKeysWithValues: reversed.segments.map { ($0.event.id, $0.laneIndex) }
+        )
+
+        XCTAssertEqual(firstLanes, reversedLanes)
+        XCTAssertEqual(first.events(on: targetDay).map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(
+            first.hiddenEvents(on: targetDay, maximumVisibleLanes: 2).map(\.id),
+            ["c"]
+        )
+        XCTAssertEqual(
+            first.hiddenEventCount(on: targetDay, maximumVisibleLanes: 2),
+            1
+        )
+        XCTAssertEqual(first.rowCount(inWeek: 1), 3)
+    }
+
+    func testVisibleEdgeContinuationFlagsArePreserved() {
+        let calendar = makeCalendar(firstWeekday: 2)
+        let grid = MonthGrid(
+            containing: date(2026, 8, 15, calendar: calendar),
+            calendar: calendar
+        )
+        let event = makeEvent(
+            id: "outside-grid",
+            start: calendar.date(byAdding: .day, value: -1, to: grid.visibleInterval.start)!,
+            end: calendar.date(byAdding: .day, value: 1, to: grid.visibleInterval.end)!,
+            isAllDay: true,
+            calendar: calendar
+        )
+        let layout = MonthEventLayout(
+            events: [event],
+            grid: grid,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(layout.segments.count, grid.rowCount)
+        XCTAssertTrue(layout.segments.first!.continuesBefore)
+        XCTAssertTrue(layout.segments.last!.continuesAfter)
+        XCTAssertEqual(layout.weeks.map(\.rowCount), Array(repeating: 1, count: grid.rowCount))
+    }
+
+    private func makeCalendar(
+        timeZoneIdentifier: String = "UTC",
+        firstWeekday: Int
+    ) -> Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timeZoneIdentifier)!
+        calendar.locale = Locale(identifier: "en_US_POSIX")
+        calendar.firstWeekday = firstWeekday
+        return calendar
+    }
+
+    private func date(
+        _ year: Int,
+        _ month: Int,
+        _ day: Int,
+        hour: Int = 0,
+        minute: Int = 0,
+        calendar: Calendar
+    ) -> Date {
+        calendar.date(
+            from: DateComponents(
+                year: year,
+                month: month,
+                day: day,
+                hour: hour,
+                minute: minute
+            )
+        )!
+    }
+
+    private func dayKey(_ date: Date, calendar: Calendar) -> String {
+        let components = calendar.dateComponents(
+            [.year, .month, .day],
+            from: date
+        )
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year!,
+            components.month!,
+            components.day!
+        )
+    }
+
+    private func makeEvent(
+        id: String,
+        start: Date,
+        end: Date,
+        isAllDay: Bool = false,
+        calendar: Calendar
+    ) -> DisplayEvent {
+        let startComponents = LocalDateTimeComponents(
+            date: start,
+            calendar: calendar
+        )
+        let endComponents = LocalDateTimeComponents(
+            date: end,
+            calendar: calendar
+        )
+        return DisplayEvent(
+            id: id,
+            eventIdentifier: id,
+            calendarItemIdentifier: "item-\(id)",
+            calendarItemExternalIdentifier: nil,
+            calendarIdentifier: "calendar",
+            calendarTitle: "KAOS-TEST",
+            sourceTitle: "Work",
+            accountType: .exchange,
+            calendarColor: nil,
+            title: id,
+            location: nil,
+            startDate: start,
+            endDate: end,
+            isAllDay: isAllDay,
+            timeZoneIdentifier: calendar.timeZone.identifier,
+            timeSemantics: isAllDay
+                ? .allDay(start: startComponents, endExclusive: endComponents)
+                : .zoned(timeZoneIdentifier: calendar.timeZone.identifier),
+            isRecurring: false,
+            occurrenceDate: nil,
+            occurrenceLocalComponents: nil,
+            isDetached: false,
+            isReadOnly: false,
+            isInvitation: false,
+            hasAttendees: false,
+            originalNotes: nil
+        )
+    }
+}

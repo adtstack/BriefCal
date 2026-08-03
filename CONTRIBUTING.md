@@ -87,10 +87,11 @@ ad-hoc app은 private/public beta 배포물이 아니다. Developer ID와 notari
 
 전체 suite를 기본으로 실행한다.
 
-현재 저장소에는 이 gate를 대신 실행하는 versioned CI workflow가 없다. 따라서 변경 제출자는
-아래 local 명령과 결과를 직접 확인해야 한다. CI를 추가할 때도 pinned Xcode/SwiftPM,
-production DB 격리와 manual EventKit opt-in 경계를 유지하고, CI 성공을 live Exchange나
-clean-user 배포 통과로 해석하지 않는다.
+저장소의 versioned CI는 전체 자동 test, 50% app-target line coverage 하한, Xcode static
+analyzer, unsigned Release build와 최소 지원 macOS 14 실행을 확인한다. 변경 제출자는 아래
+local 명령도 실행해 빠르게 피드백을 확인한다. CI는 pinned SwiftPM, production DB 격리와
+manual EventKit opt-in 경계를 유지하며, CI 성공을 live Exchange나 clean-user 배포 통과로
+해석하지 않는다.
 
 ```sh
 xcodebuild \
@@ -280,7 +281,8 @@ shell profile이나 scheme에 영구 저장하지 않는다.
 
 검사를 우회하지 않는다. 현재 app identifier/schema/migration과 정확히 같은 신뢰 가능한
 KaosCal backup만 import할 수 있다. app이 DB open 전에 실패하면 기존 DB와 sidecar를
-보존한다. failed-bootstrap recovery는 아직 구현되지 않았다.
+보존한다. 앱 시작 전에 DB open이 실패한 경우에는 Settings의 bootstrap recovery에서 검증된
+동일-schema backup을 선택한다. live writer가 열린 뒤에는 이 복구 경로를 사용할 수 없다.
 
 ## 변경 제출 전 확인
 

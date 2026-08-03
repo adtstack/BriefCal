@@ -86,6 +86,44 @@ final class ContextStoreTests: XCTestCase {
         )
     }
 
+    func testRepeatingCompletionRollsBackTaskAndTimerWhenNextInsertFails() throws {
+        var current = date(2026, 7, 10, 9)
+        let store = ContextStore(
+            database: try AppDatabase.inMemory(),
+            now: { current },
+            makeID: { "duplicate-task-id" }
+        )
+        let task = try store.personalTasks.create(
+            title: "Atomic recurrence",
+            dueAt: date(2026, 7, 10, 18)
+        )
+        let id = TaskCenterItemID.personalTask(taskID: task.id)
+        _ = try store.taskPlanning.save(
+            for: id,
+            priority: .medium,
+            isImportant: true,
+            repeatFrequency: .daily,
+            repeatInterval: 1,
+            estimatedMinutes: 30
+        )
+        _ = try store.taskPlanning.toggleTimer(for: id)
+        current = current.addingTimeInterval(120)
+
+        XCTAssertThrowsError(
+            try store.applyTaskCenterCompletion(
+                id: id,
+                isCompleted: true,
+                calendar: testCalendar
+            )
+        )
+
+        XCTAssertFalse(try XCTUnwrap(store.personalTasks.fetch(id: task.id)).isCompleted)
+        let planning = try store.taskPlanning.snapshot(for: id).0
+        XCTAssertTrue(planning.isTimerRunning)
+        XCTAssertEqual(planning.actualSeconds, 0)
+        XCTAssertEqual(try store.personalTasks.count(), 1)
+    }
+
     func testV10MigrationAttachesLegacyDeletePendingToItsEventTask() throws {
         let queue = try DatabaseQueue()
         try DatabaseMigrations.migrator.migrate(
@@ -486,6 +524,70 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertFalse(
             coordinator.taskListRefreshFailures.contains(.appleReminders)
         )
+    }
+
+    @MainActor
+    func testCoordinatorQuiescesBackgroundRefreshDuringLocalDataMaintenance() async throws {
+        let harness = try makeHarness()
+        let list = RemoteTaskList(
+            provider: .appleReminders,
+            id: "maintenance-list",
+            accountKey: "icloud-account",
+            title: "Reminders",
+            sourceTitle: "iCloud",
+            isWritable: true
+        )
+        let provider = StubAppleTaskListingProvider(
+            lists: [list],
+            tasks: []
+        )
+        let coordinator = TaskProviderCoordinator(
+            contextStore: harness.store,
+            provider: provider,
+            oauthCredentials: InMemoryOAuthCredentialStore()
+        )
+        for _ in 0..<20 {
+            if case .loaded = coordinator.appleRemindersTaskState { break }
+            await Task.yield()
+        }
+
+        provider.pauseNextTaskListing()
+        coordinator.refresh()
+        guard case .loading = coordinator.appleRemindersTaskState else {
+            return XCTFail("Expected a refresh to be in flight")
+        }
+
+        try await coordinator.beginLocalDataMaintenance()
+
+        XCTAssertTrue(coordinator.isLocalDataMaintenanceActive)
+        do {
+            _ = try await coordinator.createSidebarTask(
+                in: list,
+                title: "Blocked",
+                notes: "",
+                dueAt: nil
+            )
+            XCTFail("Expected maintenance to reject provider mutation")
+        } catch {
+            XCTAssertEqual(
+                error as? TaskProviderError,
+                .providerFailure(
+                    "Task changes are paused during local data maintenance."
+                )
+            )
+        }
+        XCTAssertEqual(provider.createTaskCount, 0)
+
+        coordinator.endLocalDataMaintenance()
+        coordinator.refresh()
+        for _ in 0..<20 {
+            if case .loaded = coordinator.appleRemindersTaskState { break }
+            await Task.yield()
+        }
+        XCTAssertFalse(coordinator.isLocalDataMaintenanceActive)
+        guard case .loaded = coordinator.appleRemindersTaskState else {
+            return XCTFail("Expected refresh to resume after maintenance")
+        }
     }
 
     @MainActor
@@ -3084,6 +3186,17 @@ final class ContextStoreTests: XCTestCase {
                 expectedState: "state-for-test"
             )
         )
+        XCTAssertThrowsError(
+            try OAuthAuthorizationCallback.authorizationCode(
+                from: try XCTUnwrap(URL(string: "http://127.0.0.1/callback?state=state-for-test&state=attacker&code=returned-code")),
+                expectedState: "state-for-test"
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? OAuthAuthorizationCallbackError,
+                .duplicateParameter("state")
+            )
+        }
         let dynamicRedirect = try XCTUnwrap(
             OAuthLoopbackBrowserAuthorization.effectiveRedirectURI(
                 try XCTUnwrap(URL(string: "http://127.0.0.1")),
@@ -3109,6 +3222,22 @@ final class ContextStoreTests: XCTestCase {
                 redirectURI: dynamicRedirect
             )
         )
+        XCTAssertNil(
+            OAuthLoopbackBrowserAuthorization.callbackURL(
+                from: Data(
+                    "GET http://attacker.example/?state=state-for-test&code=returned-code HTTP/1.1\r\n\r\n".utf8
+                ),
+                redirectURI: dynamicRedirect
+            )
+        )
+        XCTAssertNil(
+            OAuthLoopbackBrowserAuthorization.callbackURL(
+                from: Data(
+                    "GET /?state=state-for-test&code=partial HTTP/1.1\r\n".utf8
+                ),
+                redirectURI: dynamicRedirect
+            )
+        )
         XCTAssertThrowsError(
             try OAuthAuthorizationRequest.make(
                 configuration: OAuthProviderConfiguration(
@@ -3117,6 +3246,24 @@ final class ContextStoreTests: XCTestCase {
                     redirectURI: try XCTUnwrap(URL(string: "kaoscal://oauth"))
                 ),
                 pkce: request.pkce
+            )
+        )
+        XCTAssertTrue(
+            OAuthHTTPRedirectPolicy.permitsRedirect(
+                from: try XCTUnwrap(URL(string: "https://graph.microsoft.com/v1.0/me")),
+                to: try XCTUnwrap(URL(string: "https://graph.microsoft.com:443/v1.0/me/todo"))
+            )
+        )
+        XCTAssertFalse(
+            OAuthHTTPRedirectPolicy.permitsRedirect(
+                from: try XCTUnwrap(URL(string: "https://graph.microsoft.com/v1.0/me")),
+                to: try XCTUnwrap(URL(string: "https://attacker.example/collect"))
+            )
+        )
+        XCTAssertFalse(
+            OAuthHTTPRedirectPolicy.permitsRedirect(
+                from: try XCTUnwrap(URL(string: "https://graph.microsoft.com/v1.0/me")),
+                to: try XCTUnwrap(URL(string: "http://graph.microsoft.com/v1.0/me"))
             )
         )
 
@@ -3276,7 +3423,17 @@ final class ContextStoreTests: XCTestCase {
                 guard let callbackURL = callbackComponents.url else {
                     return false
                 }
+                callbackComponents.queryItems = [
+                    URLQueryItem(name: "state", value: "wrong-state"),
+                    URLQueryItem(name: "code", value: "attacker-code")
+                ]
+                guard let invalidCallbackURL = callbackComponents.url else {
+                    return false
+                }
                 callbackTask = Task {
+                    _ = try? await URLSession.shared.data(
+                        from: invalidCallbackURL
+                    )
                     for _ in 0..<2 {
                         _ = try? await URLSession.shared.data(from: callbackURL)
                     }
@@ -3464,14 +3621,14 @@ final class ContextStoreTests: XCTestCase {
     }
 
     func testMicrosoftToDoDeltaKeepsOpaqueCursorAndUsesETagOnWrite() throws {
-        let initial = MicrosoftToDoAPI.deltaRequest(
+        let initial = try MicrosoftToDoAPI.deltaRequest(
             listID: "list-id",
             deltaLink: nil,
             accessToken: "graph-token"
         )
         XCTAssertEqual(initial.url?.path, "/v1.0/me/todo/lists/list-id/tasks/delta")
         let opaque = try XCTUnwrap(URL(string: "https://graph.microsoft.com/v1.0/me/todo/lists/list-id/tasks/delta?$deltatoken=opaque%2Fcursor"))
-        let next = MicrosoftToDoAPI.deltaRequest(listID: "ignored", deltaLink: opaque, accessToken: "graph-token")
+        let next = try MicrosoftToDoAPI.deltaRequest(listID: "ignored", deltaLink: opaque, accessToken: "graph-token")
         XCTAssertEqual(next.url, opaque)
         var patch = RemoteTaskPatch(
             title: "Graph task",
@@ -3511,12 +3668,40 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertTrue(clearBody["reminderDateTime"] is NSNull)
         let listNext = try XCTUnwrap(URL(string: "https://graph.microsoft.com/v1.0/me/todo/lists?$skiptoken=opaque"))
         XCTAssertEqual(
-            MicrosoftToDoAPI.listsRequest(
+            try MicrosoftToDoAPI.listsRequest(
                 accessToken: "graph-token",
                 nextLink: listNext
             ).url,
             listNext
         )
+    }
+
+    func testMicrosoftToDoRejectsUntrustedContinuationURLsBeforeAddingToken() throws {
+        let untrustedURLs = try [
+            XCTUnwrap(URL(string: "https://attacker.example/v1.0/me/todo/lists")),
+            XCTUnwrap(URL(string: "http://graph.microsoft.com/v1.0/me/todo/lists")),
+            XCTUnwrap(URL(string: "https://graph.microsoft.com.evil.example/v1.0/me/todo/lists")),
+            XCTUnwrap(URL(string: "https://user@graph.microsoft.com/v1.0/me/todo/lists")),
+            XCTUnwrap(URL(string: "https://graph.microsoft.com:444/v1.0/me/todo/lists")),
+            XCTUnwrap(URL(string: "https://graph.microsoft.com/beta/me/todo/lists")),
+        ]
+
+        for url in untrustedURLs {
+            XCTAssertThrowsError(
+                try MicrosoftToDoAPI.listsRequest(
+                    accessToken: "must-not-leak",
+                    nextLink: url
+                ),
+                "Expected \(url) to be rejected"
+            ) { error in
+                XCTAssertEqual(
+                    error as? TaskProviderError,
+                    .providerFailure(
+                        "Microsoft Graph returned an untrusted continuation URL."
+                    )
+                )
+            }
+        }
     }
 
     @MainActor
@@ -3731,6 +3916,68 @@ final class ContextStoreTests: XCTestCase {
                 "/api/v1/tasks/task",
                 "/api/v1/tasks/completed/by_completion_date"
             ]
+        )
+    }
+
+    @MainActor
+    func testTodoistSerializesConcurrentMutationsForTheSameTask() async throws {
+        let credential = OAuthCredential(
+            provider: .todoist, accessToken: "todoist", refreshToken: nil,
+            expiresAt: nil, accountKey: "todoist-id", displayName: "Todoist", scopes: []
+        )
+        let transport = PausingOAuthTransport(responses: [
+            Self.httpResponse(
+                host: "api.todoist.com",
+                json: #"{"id":"task","content":"First","description":"","project_id":"p1","completed_at":null,"updated_at":"v2"}"#
+            ),
+            Self.httpResponse(
+                host: "api.todoist.com",
+                json: #"{"id":"task","content":"Second","description":"","project_id":"p1","completed_at":null,"updated_at":"v3"}"#
+            )
+        ])
+        let provider = TodoistTasksProvider(
+            session: OAuthTaskProviderSession(
+                configuration: try Self.oauthConfiguration(.todoist),
+                credentials: InMemoryOAuthCredentialStore([.todoist: credential]),
+                transport: transport
+            ),
+            accountKey: credential.accountKey,
+            displayName: credential.displayName
+        )
+        let baseline = RemoteTaskSnapshot(
+            id: "task", parentID: "project:p1",
+            parentAccountKey: credential.accountKey,
+            title: "Before", notes: "", dueAt: nil,
+            isCompleted: false, version: "v1", deepLink: nil
+        )
+        var firstPatch = RemoteTaskPatch()
+        firstPatch.title = "First"
+        var secondPatch = RemoteTaskPatch()
+        secondPatch.title = "Second"
+
+        let first = Task { @MainActor in
+            try await provider.updateTask(baseline, with: firstPatch)
+        }
+        await transport.waitForFirstRequest()
+        let second = Task { @MainActor in
+            try await provider.updateTask(baseline, with: secondPatch)
+        }
+        for _ in 0..<20 {
+            await Task.yield()
+        }
+
+        let requestCountBeforeRelease = await transport.requestCount
+        XCTAssertEqual(requestCountBeforeRelease, 1)
+        await transport.releaseFirstRequest()
+
+        let firstResult = try await first.value
+        let secondResult = try await second.value
+        let requestedPaths = await transport.requestedPaths
+        XCTAssertEqual(firstResult.title, "First")
+        XCTAssertEqual(secondResult.title, "Second")
+        XCTAssertEqual(
+            requestedPaths,
+            ["/api/v1/tasks/task", "/api/v1/tasks/task"]
         )
     }
 
@@ -4269,7 +4516,7 @@ final class ContextStoreTests: XCTestCase {
                 {
                   "@odata.deltaLink":"\(cursor)",
                   "value":[
-                    {"id":"changed","title":"Updated","status":"completed","isReminderOn":true,"reminderDateTime":{"dateTime":"2026-07-20T08:30:00","timeZone":"UTC"},"@odata.etag":"W/\\\"etag\\\"","body":{"content":""}},
+                    {"id":"changed","title":"Updated","status":"completed","isReminderOn":true,"reminderDateTime":{"dateTime":"2026-07-20T08:30:00","timeZone":"UTC"},"@odata.etag":"W/\\\"etag\\\"","body":{"content":""},"linkedResources":[{"webUrl":"https://attacker.example/collect"}]},
                     {"id":"deleted","@removed":{"reason":"deleted"}}
                   ]
                 }
@@ -4295,6 +4542,7 @@ final class ContextStoreTests: XCTestCase {
         XCTAssertEqual(delta.deletedTaskIDs, ["deleted"])
         XCTAssertEqual(delta.tasks.map(\.id), ["changed"])
         XCTAssertTrue(delta.tasks[0].isCompleted)
+        XCTAssertNil(delta.tasks[0].deepLink)
         XCTAssertEqual(
             delta.tasks[0].reminderAt,
             date(2026, 7, 20, 8, 30)
@@ -8218,9 +8466,16 @@ final class StubAppleTaskListingProvider: TaskProviding, TaskSnapshotListing {
 
     func listTasks(in lists: [RemoteTaskList]) async throws -> [RemoteTaskSnapshot] {
         if pausesNextTaskListing {
-            await withCheckedContinuation { continuation in
-                taskListingContinuation = continuation
+            await withTaskCancellationHandler {
+                await withCheckedContinuation { continuation in
+                    taskListingContinuation = continuation
+                }
+            } onCancel: { [weak self] in
+                Task { @MainActor in
+                    self?.resumeTaskListing()
+                }
             }
+            try Task.checkCancellation()
         }
         let listIDs = Set(lists.map(\.id))
         return tasks.filter { listIDs.contains($0.parentID) }
@@ -8579,6 +8834,50 @@ private final class QueuedOAuthTransport: OAuthHTTPTransport {
             throw TaskProviderError.providerFailure("Unexpected OAuth retry request.")
         }
         return responses.removeFirst()
+    }
+}
+
+private actor PausingOAuthTransport: OAuthHTTPTransport {
+    private var responses: [(Data, HTTPURLResponse)]
+    private var firstRequestWaiters = [CheckedContinuation<Void, Never>]()
+    private var firstRequestRelease: CheckedContinuation<Void, Never>?
+    private(set) var requestCount = 0
+    private(set) var requestedPaths = [String]()
+
+    init(responses: [(Data, HTTPURLResponse)]) {
+        self.responses = responses
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requestCount += 1
+        requestedPaths.append(request.url?.path ?? "")
+        guard !responses.isEmpty else {
+            throw TaskProviderError.providerFailure(
+                "Unexpected OAuth retry request."
+            )
+        }
+        let response = responses.removeFirst()
+        if requestCount == 1 {
+            let waiters = firstRequestWaiters
+            firstRequestWaiters.removeAll()
+            waiters.forEach { $0.resume() }
+            await withCheckedContinuation { continuation in
+                firstRequestRelease = continuation
+            }
+        }
+        return response
+    }
+
+    func waitForFirstRequest() async {
+        guard requestCount == 0 else { return }
+        await withCheckedContinuation { continuation in
+            firstRequestWaiters.append(continuation)
+        }
+    }
+
+    func releaseFirstRequest() {
+        firstRequestRelease?.resume()
+        firstRequestRelease = nil
     }
 }
 

@@ -1,6 +1,6 @@
 # Current Status
 
-> 기준 시각: 2026-07-25, Asia/Seoul
+> 기준 시각: 2026-08-03, Asia/Seoul
 >
 > 용도: 현재 진행 상태의 요약. 범위·판정·실행 증거의 원문은 아래 근거 문서를 따른다.
 
@@ -11,16 +11,22 @@
   오른쪽 `Tasks`의 네 provider capability-aware CRUD, Task Center planning v11, provider task와
   Event Brief 연결, calendar time block, Calendar Set filter와 안정화 경로까지 확장했다.
   2026-07-21에는 Google Tasks Desktop OAuth의 dynamic loopback, 승인 scope gate, date-only due와
-  명시적 기한 제거 계약을 자동 검증했다.
+  명시적 기한 제거 계약을 자동 검증했다. 2026-08-02에는 `COM-003` Full Month MVP와
+  상단 calendar view 전환기를 구현했다. 2026-08-03에는 Graph/OAuth 경계, 반복 완료 원자성,
+  local data maintenance 격리, 검색·draft·refresh 복구 UX와 자동 품질 gate를 보강했다.
 - **다음 기준:** v1 유지보수 예외는 [v1 동결 결정](v1-freeze.md)을 따르고, 새 동작은 [제품·시스템 스펙](specification.md)의 요구사항 ID와 [v2 실행계획](v2-execution-plan.md)을 먼저 갱신한다.
 - **후속 구현 순서:** [상용 기능 로드맵](commercial-feature-roadmap.md)의 C0~C4를 따른다.
-  C0는 현재 T0~T5/v10 live·Release 증거, C1은 알림·일정 검색·전체 Month·Quick Add/template·
-  회의 링크 Join이다. C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, KaosCal
+  C0는 현재 T0~T5/v10 live·Release 증거다. C1 가운데 Full Month는 구현·자동/offscreen
+  검증 완료·live 대기이고, 알림·일정 검색·Quick Add/template·회의 링크 Join은 구현 대기다.
+  C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, KaosCal
   계정/backend/cloud sync, telemetry, scheduling server와 모바일·웹 companion은
   [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 C4 영구 제외다.
-- **최신 완료 자동 결과:** 297 tests executed, 296 passed, 1 intentional `ManualEventKitQATests` skip, 0 failures
+- **최신 완료 판정 자동 결과:** 319 tests executed, 318 passed, 1 intentional
+  `ManualEventKitQATests` skip, 0 failures. Result bundle:
+  `/private/tmp/KaosCalQualityFinal2.xcresult`. `KaosCal.app` line coverage는
+  **53.63% (29,559/55,121)**로 50% floor를 통과했고 정적 분석도 통과했다.
 - **중간 체크포인트:** Apple CRUD 268-test, move/bulk/Undo 271-test와 calendar/planning 집중
-  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 아래 297-test 결과를 따른다.
+  test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 위 312-test 결과를 따른다.
 - **새 구현 / live 대기:** 네 provider 직접 CRUD, Apple 목록/account 이동과 Todoist
   project/section 이동, priority capability, local
   planning/checklist/repeat/timer, exact 날짜 filter·저장 view·통합 검색, provider task drag→calendar
@@ -32,6 +38,13 @@
   연결 재실행은 대기 중이다. Microsoft To Do는 ID token `oid`와 Graph `/me.id`를 중복
   상호 검증하지 않고, 실제 To Do API access token으로 조회한 opaque Graph `/me.id`를 형식
   변환 없이 tenant와 함께 계정 키의 정본으로 사용한다.
+- **Full Month / 자동·offscreen 검증 완료·live 대기:** 4~6주 본문 Month, 시간+제목, all-day/timed
+  multi-day의 주별 segment, `+N more`와 날짜별 popover, Calendar Set/Enabled filter,
+  event→Inspector와 날짜 focus→Day, keyboard/VoiceOver 의미를 구현했다. 상단
+  `Day / Week / Month / Agenda` 전환기와 `⌘1`~`⌘5`도 같은 workspace 순서로 연결했다.
+  drag 이동·resize, Quarter/Year, 전체 일정 검색, Day Summary와 Quick Add/template은
+  이번 범위가 아니다. 560×520의 6주·고밀도 offscreen bitmap과 전체 회귀는 통과했고,
+  실제 창의 keyboard·VoiceOver·appearance와 Exchange fixture 근거는 대기다.
 - **자동업데이트 / 발행 대기:** Sparkle 2.9.2 수신기, automatic check/install,
   `Check for Updates…`, signed-feed/pre-extraction 검증과 sandbox helper entitlement를
   구현했다. 유효한 HTTPS feed와 32-byte Ed25519 공개 키가 없으면 updater를 시작하지 않는다.
@@ -46,9 +59,9 @@
 | --- | --- | --- | --- |
 | 0 · Repo bootstrap | 완료 | build/test, ad-hoc signing, window 생성 | 없음 |
 | 1 · EventKit read-only | 실계정 부분 통과 | full access와 `KAOS-TEST`·`일정`의 Exchange/writable 표시 | 권한 거부·복구 UI, shared read-only, live all-day/recurrence 표시, Calendar.app 변경 반영 |
-| 2 · Calendar layout | 구현·자동·offscreen 검증 완료, event dot live 대기 | Day/Week/Agenda 공통 범위, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count | `CAL-007`/`UI-005` 실창·VoiceOver, 실제 고밀도 scroll·선택·inspector, live all-day/recurrence 배치 |
+| 2 · Calendar layout | Day/Week/Agenda·mini month·Full Month 자동/offscreen 완료, live 대기 | Day/Week/Agenda 공통 범위, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count, 4~6주 Month·주별 multi-day segment·overflow·상단 view 전환 | `CAL-007`/`UI-005`와 `COM-003` 실창·VoiceOver, Month 고밀도·popover·keyboard, 실제 scroll·선택·inspector와 live all-day/recurrence 배치 |
 | 3 · Local context DB | 구현 기준 완료 | v1 DB, repository, identity, 재열기·동시 저장 자동 회귀 | 실제 UI 재실행 유지, identifier churn·detached recurrence |
-| 4 · Event Brief / Task Center | 구현·Google credential/Microsoft identity 보강 포함 293-test 자동 검증 완료·live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Google Cloud External/Testing Desktop client·dynamic loopback·scope/date-only due·revoke local preservation, Git 밖 Desktop credential build injection, Microsoft tenant UUID + opaque Graph account identity, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter | Google `.env` 실제 값 주입 뒤 실계정 consent·CRUD·revoke/reconnect/residue 0, 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
+| 4 · Event Brief / Task Center | 구현·provider 안전성 보강 포함 최신 전체 자동 검증 완료·live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Google Cloud External/Testing Desktop client·dynamic loopback·scope/date-only due·revoke local preservation, Git 밖 Desktop credential build injection, Microsoft tenant UUID + opaque Graph account identity, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter, 반복 완료 원자성·provider mutation 직렬화 | Google `.env` 실제 값 주입 뒤 실계정 consent·CRUD·revoke/reconnect/residue 0, 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
 | 5 · Real event editing | 비반복 live CRUD 부분 통과 | attendee 없는 writable 단일 일정 create→restart/refetch→update→delete와 서버 residue 0 | Calendar.app 시각 round-trip, all-day, floating/zoned time, identifier churn |
 | 6 · Recurrence / safe move | 구현·자동·Release checkpoint 완료 | 명시적 scope, impact Confirm, linked safe move, change log, 좁은 session Undo | 지원 범위 내 recurrence scope/future split과 calendar move의 live 검증 |
 | 7 · Lifecycle / After Review | 7A–7C 구현, 비반복 linked delete live 통과 | lifecycle, missing/orphan/relink, linked original delete 뒤 local Brief/task 보존 | recurring `thisEvent`, 외부 삭제 지연·one-off exception, crash-window recovery, 남겨 둔 live Brief 정리 |
@@ -56,10 +69,51 @@
 | 9 · Backup / Settings | 구현·213-test·signed Release·운영 DB 격리·live visual 완료 | healthy current-schema export/import/reset, recovery ZIP, strict archive/schema 검사, 실제 Settings scroll·file panel·typed `RESET` activation | 실제 export 파일 작성·backup 선택 뒤 import/reset mutation, real rollback failure |
 | 10 · Paid beta polish | 구현·220-test·ad-hoc Release checkpoint 완료, 외부 beta blocked | onboarding, `⌘R`, empty state, bootstrap-only strict restore/quarantine/rollback, 운영 문서와 license placeholder | final exact Release UI/VoiceOver, 실제 손상 DB recovery, Developer ID/notary/package/clean user, 승인 EULA·support/privacy 연락처와 남은 live Exchange gate |
 
-표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 297-test suite,
+표의 테스트 수는 해당 시점 checkpoint이며 서로 더하지 않는다. 최신 완료 판정 319-test suite,
 review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실행 결과다.
 
 ## 최신 자동·Release 증거
+
+### 2026-08-03 안전·원자성·품질 보강 checkpoint
+
+- 결과: 전체 **319 executed / 318 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**. Result bundle은 `/private/tmp/KaosCalQualityFinal2.xcresult`다.
+  `KaosCal.app` line coverage는 **53.63% (29,559/55,121)**로 50% floor를 통과했고
+  `xcodebuild analyze`, workflow YAML 구문 검사와 `git diff --check`도 통과했다.
+- provider/OAuth 안전성: Microsoft Graph continuation을 exact HTTPS origin과 `/v1.0` 경로로
+  제한하고 pagination 상한·반복 cursor 차단을 추가했다. Microsoft To Do deep link도 공식
+  web origin만 연다. OAuth는 duplicate parameter, cross-origin redirect, non-loopback listener,
+  oversized/incomplete/absolute-form callback을 거부하며 잘못된 callback 한 번이 정상 callback을
+  선점하지 못한다.
+- 데이터 원자성·격리: 반복 task 완료, timer actual, 다음 occurrence와 planning/checklist 복사를
+  단일 DB transaction으로 묶었다. export/import/reset은 새 provider 작업을 막고 진행 중인
+  refresh를 취소·대기한 뒤 수행한다. backup은 migration 집합뿐 아니라 orphan planning/checklist와
+  안전하지 않은 reference URL도 거부한다.
+- 복구 UX: calendar 검색 결과가 exact occurrence 날짜와 event를 열고 숨겨진 event만 임시로
+  reveal한다. provider source가 사라져도 dirty editor를 보존하고, transient calendar refresh
+  실패는 기존 화면을 유지한 채 warning/Retry를 제공한다. provider 연결 해제에는 영향 범위를
+  설명하는 확인 단계를 추가했다.
+- 품질 자동화: coverage 50% floor, 정적 분석과 최소 지원 macOS 호환성 job을 CI/Release gate에
+  추가했다. Todoist 동일 task mutation은 순서대로 직렬화하고 제품 UI의 혼재된 한국어 문구를
+  현재 기준 언어인 영어로 정리했다.
+- 남은 비배포 품질 경계: 실제 UI automation target과 실창 VoiceOver/keyboard 검증, 전면
+  localization, EventKit read 경로의 명시적 async/off-main 경계, 대형 AppState/View 파일의
+  책임 분리는 후속 구조 개선으로 남아 있다. 실제 provider 계정 검증도 자동 fixture와 별개다.
+
+### 2026-08-02 Full Month MVP 구현 checkpoint
+
+- 결과: **구현·자동/offscreen 검증 완료 / live 대기**. 전체 **312 executed / 311 passed /
+  1 intentional `ManualEventKitQATests` skip / 0 failures**이며 result bundle은
+  `/private/tmp/KaosCalMonthDerived/Logs/Test/Test-KaosCal-2026.08.02_19-55-49-+0900.xcresult`다.
+- 구현 범위: 4~6주 Month grid, 시간+제목, all-day/timed multi-day 주별 segment,
+  자정 배타 종료, deterministic lane, `+N more`/popover, Calendar Set/Enabled,
+  event→Inspector, 날짜 focus→Day, 상단 view picker, `⌘1`~`⌘5`, keyboard/VoiceOver semantics.
+- 제외 범위: drag 이동·resize, Quarter/Year, 전체 일정 검색, Day Summary,
+  Quick Add/template.
+- offscreen: Sunday-first 6주와 multi-day continuation, 밀집일 `+3 more`를 560×520 bitmap으로
+  렌더해 셀·막대·overflow 잘림이 없음을 확인했다.
+- live 대기: 실제 Exchange fixture, 좁은 창·고밀도 overflow, 빠른 월 이동 중 loading/error,
+  keyboard focus, VoiceOver, light/dark와 Increase Contrast.
 
 ### 2026-07-25 signed automatic updater 구현·Release gate
 
@@ -356,7 +410,8 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 ## 남은 live/manual gate
 
 1. 권한 거부→System Settings 복구와 shared read-only Exchange 설명
-2. Day/Week/Agenda·mini month·Inspector·Task Center의 실제 고밀도, keyboard, scroll, VoiceOver
+2. Day/Week/Month/Agenda·mini month·Inspector·Task Center의 실제 고밀도, Month overflow
+   popover, keyboard, scroll, VoiceOver
 3. Calendar usage·saved Set Settings/Sidebar의 show/block 네 조합, saved Set CRUD·순서·겹침·혼합 role,
    exact membership·missing 보존/명시적 Replace, 재실행·backup/reset, account bulk action,
    free/busy/tentative/canceled/declined, 고밀도·keyboard·VoiceOver

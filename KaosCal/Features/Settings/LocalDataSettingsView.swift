@@ -1318,6 +1318,7 @@ struct SettingsRootView: View {
 private struct TaskProviderSettingsView: View {
     @ObservedObject var appState: AppState
     @ObservedObject var coordinator: TaskProviderCoordinator
+    @State private var pendingOAuthDisconnect: TaskProviderKind?
 
     var body: some View {
         ScrollView {
@@ -1349,6 +1350,30 @@ private struct TaskProviderSettingsView: View {
         .tint(KaosCalTheme.accent)
         .task {
             coordinator.refresh()
+        }
+        .confirmationDialog(
+            "Disconnect task provider?",
+            isPresented: Binding(
+                get: { pendingOAuthDisconnect != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        pendingOAuthDisconnect = nil
+                    }
+                }
+            ),
+            presenting: pendingOAuthDisconnect
+        ) { provider in
+            Button("Disconnect \(provider.title)", role: .destructive) {
+                coordinator.disconnectOAuthProvider(provider)
+                pendingOAuthDisconnect = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingOAuthDisconnect = nil
+            }
+        } message: { provider in
+            Text(
+                "This removes the saved \(provider.title) credential and account metadata from KaosCal. Remote tasks are not deleted, but linked tasks require reconnection."
+            )
         }
         .accessibilityIdentifier("settings.taskProviders")
     }
@@ -1389,8 +1414,11 @@ private struct TaskProviderSettingsView: View {
                         if coordinator.isConfigured(provider) {
                             if coordinator.authorizationState(for: provider) == .authorized {
                                 Button("Disconnect", role: .destructive) {
-                                    coordinator.disconnectOAuthProvider(provider)
+                                    pendingOAuthDisconnect = provider
                                 }
+                                .accessibilityIdentifier(
+                                    "settings.taskProviders.disconnect.\(provider.rawValue)"
+                                )
                             } else if coordinator.supportsInAppOAuthConnection(provider) {
                                 if coordinator.isConnectingOAuthProvider(provider) {
                                     ProgressView()

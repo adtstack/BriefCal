@@ -9,12 +9,13 @@ enum MicrosoftToDoAPI {
     static func listsRequest(
         accessToken: String,
         nextLink: URL? = nil
-    ) -> URLRequest {
+    ) throws -> URLRequest {
         if let nextLink {
-            var request = URLRequest(url: nextLink)
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            return request
+            return try continuationRequest(
+                url: nextLink,
+                accessToken: accessToken,
+                prefersUTC: false
+            )
         }
         return request(path: "lists", accessToken: accessToken)
     }
@@ -23,13 +24,13 @@ enum MicrosoftToDoAPI {
         listID: String,
         accessToken: String,
         nextLink: URL? = nil
-    ) -> URLRequest {
+    ) throws -> URLRequest {
         if let nextLink {
-            var request = URLRequest(url: nextLink)
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            request.setValue("outlook.timezone=\"UTC\"", forHTTPHeaderField: "Prefer")
-            return request
+            return try continuationRequest(
+                url: nextLink,
+                accessToken: accessToken,
+                prefersUTC: true
+            )
         }
         return request(
             path: "lists/\(component(listID))/tasks",
@@ -48,14 +49,30 @@ enum MicrosoftToDoAPI {
         )
     }
 
-    static func deltaRequest(listID: String, deltaLink: URL?, accessToken: String) -> URLRequest {
+    static func deltaRequest(
+        listID: String,
+        deltaLink: URL?,
+        accessToken: String
+    ) throws -> URLRequest {
         if let deltaLink {
-            var request = URLRequest(url: deltaLink)
-            request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/json", forHTTPHeaderField: "Accept")
-            return request
+            return try continuationRequest(
+                url: deltaLink,
+                accessToken: accessToken,
+                prefersUTC: true
+            )
         }
         return request(path: "lists/\(component(listID))/tasks/delta", accessToken: accessToken)
+    }
+
+    static func validatedContinuationURL(_ rawValue: String?) throws -> URL? {
+        guard let rawValue else { return nil }
+        guard let url = URL(string: rawValue) else {
+            throw TaskProviderError.providerFailure(
+                "Microsoft Graph returned an invalid continuation URL."
+            )
+        }
+        try validateContinuationURL(url)
+        return url
     }
 
     static func createTaskRequest(
@@ -68,7 +85,10 @@ enum MicrosoftToDoAPI {
         deepLink: URL?,
         accessToken: String
     ) throws -> URLRequest {
-        var request = tasksRequest(listID: listID, accessToken: accessToken)
+        var request = try tasksRequest(
+            listID: listID,
+            accessToken: accessToken
+        )
         request.httpMethod = "POST"
         var payload = taskBody(
             title: title, body: body, dueAt: dueAt, completed: nil,
@@ -111,6 +131,42 @@ enum MicrosoftToDoAPI {
         // the persisted task projection deterministic across device time zones.
         request.setValue("outlook.timezone=\"UTC\"", forHTTPHeaderField: "Prefer")
         return request
+    }
+
+    /// Graph continuation URLs are server-controlled opaque values. Validate
+    /// their origin before attaching a bearer token so a compromised response
+    /// or persisted cursor cannot exfiltrate credentials.
+    private static func continuationRequest(
+        url: URL,
+        accessToken: String,
+        prefersUTC: Bool
+    ) throws -> URLRequest {
+        try validateContinuationURL(url)
+
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if prefersUTC {
+            request.setValue(
+                "outlook.timezone=\"UTC\"",
+                forHTTPHeaderField: "Prefer"
+            )
+        }
+        return request
+    }
+
+    private static func validateContinuationURL(_ url: URL) throws {
+        guard url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "graph.microsoft.com",
+              url.user == nil,
+              url.password == nil,
+              url.port == nil || url.port == 443,
+              url.fragment == nil,
+              url.path == "/v1.0" || url.path.hasPrefix("/v1.0/") else {
+            throw TaskProviderError.providerFailure(
+                "Microsoft Graph returned an untrusted continuation URL."
+            )
+        }
     }
 
     private static func taskBody(

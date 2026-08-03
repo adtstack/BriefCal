@@ -4,6 +4,7 @@ import Foundation
 enum WorkspaceSection: String, CaseIterable, Hashable, Identifiable {
     case day
     case week
+    case month
     case agenda
     case tasks
 
@@ -13,6 +14,7 @@ enum WorkspaceSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .day: "Day"
         case .week: "Week"
+        case .month: "Month"
         case .agenda: "Agenda"
         case .tasks: "Tasks"
         }
@@ -22,6 +24,7 @@ enum WorkspaceSection: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .day: "calendar"
         case .week: "calendar.badge.clock"
+        case .month: "calendar.circle"
         case .agenda: "list.bullet"
         case .tasks: "checklist"
         }
@@ -327,6 +330,8 @@ final class AppState: ObservableObject {
     @Published var focusedDate: Date
     @Published private(set) var selectedEventID: String?
     @Published var calendarContentState: CalendarContentState = .disconnected
+    @Published private(set) var isCalendarRefreshing = false
+    @Published private(set) var calendarRefreshError: String?
     @Published private(set) var calendarAuthorizationState: CalendarAuthorizationState
     @Published private(set) var calendarSources: [CalendarSource] = []
     @Published private(set) var calendarRoleOverrides: [String: CalendarRole] = [:]
@@ -475,6 +480,11 @@ final class AppState: ObservableObject {
                 for: focusedDay
             )?.start ?? focusedDay
             dayCount = 7
+        case .month:
+            return MonthGrid(
+                containing: focusedDay,
+                calendar: calendar
+            ).days.map(\.date)
         }
 
         return (0..<dayCount).compactMap {
@@ -483,6 +493,13 @@ final class AppState: ObservableObject {
     }
 
     var visibleInterval: DateInterval {
+        if (selectedSection ?? .week) == .month {
+            return MonthGrid(
+                containing: focusedDate,
+                calendar: calendar
+            ).visibleInterval
+        }
+
         let start = visibleDates.first ?? calendar.startOfDay(for: focusedDate)
         let finalDate = visibleDates.last ?? start
         let end = calendar.date(byAdding: .day, value: 1, to: finalDate)
@@ -717,6 +734,11 @@ final class AppState: ObservableObject {
                 )
             }
             return "\(CalendarEventDateFormatting.abbreviatedDate(start, calendar: calendar)) – \(CalendarEventDateFormatting.abbreviatedDate(end, calendar: calendar))"
+        case .month:
+            return CalendarEventDateFormatting.monthAndYear(
+                focusedDate,
+                calendar: calendar
+            )
         }
     }
 
@@ -1390,6 +1412,22 @@ final class AppState: ObservableObject {
         selectEvent(candidate.event.id)
     }
 
+    func openCalendarSearchResult(_ event: DisplayEvent) {
+        guard localDataOperationState == .idle,
+              events.contains(where: { $0.id == event.id }) else {
+            return
+        }
+        revealTemporarilyIfNeeded(event)
+        let range = CalendarEventDateFormatting.effectiveDateRange(
+            for: event,
+            calendar: calendar
+        )
+        focusedDate = calendar.startOfDay(for: range.start)
+        selectedSection = .agenda
+        visiblePeriodDidChange()
+        selectEvent(event.id)
+    }
+
     func selectEvent(_ id: String?) {
         guard localDataOperationState == .idle else { return }
         let event = id.flatMap { requestedID in
@@ -1533,7 +1571,7 @@ final class AppState: ObservableObject {
     ) async -> LocalDataExportResult? {
         let service: LocalDataBackupService
         do {
-            service = try beginLocalDataOperation(
+            service = try await beginLocalDataOperation(
                 .exporting,
                 replacesLocalData: false
             )
@@ -1578,7 +1616,7 @@ final class AppState: ObservableObject {
         let automaticDirectory: URL
         var operationBegan = false
         do {
-            service = try beginLocalDataOperation(
+            service = try await beginLocalDataOperation(
                 .importing,
                 replacesLocalData: true
             )
@@ -1640,7 +1678,7 @@ final class AppState: ObservableObject {
         let automaticDirectory: URL
         var operationBegan = false
         do {
-            service = try beginLocalDataOperation(
+            service = try await beginLocalDataOperation(
                 .resetting,
                 replacesLocalData: true
             )
@@ -2202,70 +2240,12 @@ final class AppState: ObservableObject {
             guard let contextStore else {
                 throw ContextStoreError.missingPersonalTask("local-store")
             }
-            var planning = try contextStore.taskPlanning.snapshot(for: id).0
-            let wasCompleted: Bool
-            switch id {
-            case let .eventTask(taskID, _):
-                wasCompleted = try contextStore.eventTasks.fetch(id: taskID)?
-                    .isCompleted ?? false
-            case let .personalTask(taskID):
-                wasCompleted = try contextStore.personalTasks.fetch(id: taskID)?
-                    .isCompleted ?? false
-            }
-            let result = try contextStore.setTaskCenterItemCompleted(
+            let outcome = try contextStore.applyTaskCenterCompletion(
                 id: id,
-                isCompleted: isCompleted
+                isCompleted: isCompleted,
+                calendar: calendar
             )
-            if isCompleted, !wasCompleted, planning.isTimerRunning {
-                planning = try contextStore.taskPlanning.toggleTimer(for: id)
-            }
-            guard isCompleted,
-                  !wasCompleted,
-                  planning.repeatFrequency != .none else {
-                return
-            }
-            switch result {
-            case let .personalTask(task):
-                let next = try contextStore.personalTasks.create(
-                    title: task.title,
-                    notes: task.notes,
-                    dueAt: Self.nextRepeatingDate(
-                        task.dueAt,
-                        frequency: planning.repeatFrequency,
-                        interval: planning.repeatInterval,
-                        calendar: calendar
-                    ),
-                    sortOrder: task.sortOrder
-                )
-                try contextStore.taskPlanning.copyPlanning(
-                    from: id,
-                    to: .personalTask(taskID: next.id)
-                )
-            case let .eventTask(task):
-                let nextDue: EventTaskDue = switch task.due {
-                case .none:
-                    .none
-                case let .relative(anchor, offsetMinutes):
-                    .relative(anchor: anchor, offsetMinutes: offsetMinutes)
-                case let .fixed(date):
-                    .fixed(Self.nextRepeatingDate(
-                        date,
-                        frequency: planning.repeatFrequency,
-                        interval: planning.repeatInterval,
-                        calendar: calendar
-                    ) ?? date)
-                }
-                let next = try contextStore.repeatEventTask(
-                    taskID: task.id,
-                    due: nextDue
-                )
-                try contextStore.taskPlanning.copyPlanning(
-                    from: id,
-                    to: .eventTask(
-                        taskID: next.id,
-                        contextID: next.contextID
-                    )
-                )
+            if case let .eventTask(next) = outcome.repeated {
                 repeatedEventTaskID = next.id
             }
         }
@@ -3831,6 +3811,10 @@ final class AppState: ObservableObject {
             dayCount = 1
         case .week, .agenda:
             dayCount = 7
+        case .month:
+            focusedDate = focusedDateByAddingMonths(direction)
+            visiblePeriodDidChange()
+            return
         }
 
         focusedDate = calendar.date(
@@ -3839,6 +3823,37 @@ final class AppState: ObservableObject {
             to: focusedDate
         ) ?? focusedDate
         visiblePeriodDidChange()
+    }
+
+    private func focusedDateByAddingMonths(_ value: Int) -> Date {
+        let focusedDay = calendar.startOfDay(for: focusedDate)
+        guard let currentMonthStart = calendar.dateInterval(
+            of: .month,
+            for: focusedDay
+        )?.start,
+        let targetMonthStart = calendar.date(
+            byAdding: .month,
+            value: value,
+            to: currentMonthStart
+        ),
+        let targetDayRange = calendar.range(
+            of: .day,
+            in: .month,
+            for: targetMonthStart
+        ) else {
+            return focusedDay
+        }
+
+        let focusedDayNumber = calendar.component(.day, from: focusedDay)
+        let targetDayNumber = min(
+            max(focusedDayNumber, targetDayRange.lowerBound),
+            targetDayRange.upperBound - 1
+        )
+        return calendar.date(
+            byAdding: .day,
+            value: targetDayNumber - targetDayRange.lowerBound,
+            to: targetMonthStart
+        ) ?? targetMonthStart
     }
 
     func loadCalendarStatus() async {
@@ -3927,7 +3942,13 @@ final class AppState: ObservableObject {
             return
         }
 
-        calendarContentState = .loading
+        let hasLoadedProjection = loadedEventInterval != nil
+        if hasLoadedProjection {
+            isCalendarRefreshing = true
+        } else {
+            calendarContentState = .loading
+        }
+        defer { isCalendarRefreshing = false }
         do {
             let interval = requestedInterval
                 ?? loadedEventInterval
@@ -3954,9 +3975,16 @@ final class AppState: ObservableObject {
             }
             clearSelectionOutsideVisiblePeriod()
             calendarContentState = fetchedEvents.isEmpty ? .empty : .loaded
+            calendarRefreshError = nil
             refreshTaskCenter()
         } catch {
-            calendarContentState = .failed(Self.message(for: error))
+            let message = Self.message(for: error)
+            if hasLoadedProjection {
+                calendarContentState = events.isEmpty ? .empty : .loaded
+                calendarRefreshError = message
+            } else {
+                calendarContentState = .failed(message)
+            }
         }
     }
 
@@ -4395,7 +4423,7 @@ final class AppState: ObservableObject {
     private func beginLocalDataOperation(
         _ operation: LocalDataOperationState,
         replacesLocalData: Bool
-    ) throws -> LocalDataBackupService {
+    ) async throws -> LocalDataBackupService {
         guard localDataOperationState == .idle else {
             throw localDataMaintenanceBlockError
         }
@@ -4437,6 +4465,13 @@ final class AppState: ObservableObject {
         rangeLoadTask = nil
         storeRefreshTask?.cancel()
         storeRefreshTask = nil
+        do {
+            try await taskProviderCoordinator?.beginLocalDataMaintenance()
+        } catch {
+            localDataOperationState = .idle
+            scheduleVisiblePeriodLoadIfNeeded()
+            throw error
+        }
         return contextStore.localDataBackups
     }
 
@@ -4491,9 +4526,11 @@ final class AppState: ObservableObject {
     ) {
         guard localDataOperationState != .quarantined else { return }
         localDataOperationState = .idle
+        taskProviderCoordinator?.endLocalDataMaintenance()
         if reloadLocalProjections {
             reloadLocalDataProjections()
         }
+        taskProviderCoordinator?.refresh()
         scheduleVisiblePeriodLoadIfNeeded()
 
         guard calendarRefreshDeferredByLocalDataOperation else { return }
@@ -4572,33 +4609,6 @@ final class AppState: ObservableObject {
             }
             return .fixed(fixedDueAt)
         }
-    }
-
-    private static func nextRepeatingDate(
-        _ date: Date?,
-        frequency: TaskRepeatFrequency,
-        interval: Int,
-        calendar: Calendar
-    ) -> Date? {
-        guard let date else { return nil }
-        let component: Calendar.Component
-        switch frequency {
-        case .none:
-            return date
-        case .daily:
-            component = .day
-        case .weekly:
-            component = .weekOfYear
-        case .monthly:
-            component = .month
-        case .yearly:
-            component = .year
-        }
-        return calendar.date(
-            byAdding: component,
-            value: max(1, interval),
-            to: date
-        )
     }
 
     private func visiblePeriodDidChange() {
@@ -4696,6 +4706,8 @@ final class AppState: ObservableObject {
 
     private func clearCalendarData() {
         rangeLoadTask?.cancel()
+        isCalendarRefreshing = false
+        calendarRefreshError = nil
         pendingEventMutation = nil
         pendingLinkedOriginalDeletion = nil
         eventEditorSession = nil
