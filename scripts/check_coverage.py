@@ -38,6 +38,21 @@ def main() -> int:
     target = targets[0]
     covered = int(target.get("coveredLines", 0))
     executable = int(target.get("executableLines", 0))
+    if executable <= 0:
+        print(
+            "BriefCal.app coverage target has no executable lines; "
+            "verify the coverage build's debug dylib and source-path mapping settings",
+            file=sys.stderr,
+        )
+        return 2
+    if not 0 <= covered <= executable:
+        print(
+            "BriefCal.app coverage counts are invalid: "
+            f"covered={covered}, executable={executable}",
+            file=sys.stderr,
+        )
+        return 2
+
     coverage = float(target.get("lineCoverage", 0))
     print(
         f"BriefCal.app line coverage: {coverage:.2%} "

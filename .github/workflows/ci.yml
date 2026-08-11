@@ -46,6 +46,7 @@ jobs:
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             -skip-testing:BriefCalUITests \
+            ENABLE_DEBUG_DYLIB=NO \
             CODE_SIGNING_ALLOWED=NO \
             test
 
@@ -178,7 +179,8 @@ jobs:
           retention-days: 14
 
   macos-14-compatibility:
-    name: Test minimum supported macOS
+    name: Run packaged app on minimum macOS
+    needs: build-and-test
     runs-on: macos-14
     timeout-minutes: 45
 
@@ -186,25 +188,25 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v6
 
-      - name: Record toolchain
+      - name: Record environment
         run: |
           set -euo pipefail
           sw_vers
-          xcodebuild -version
-          swift --version
+          uname -m
 
-      - name: Run tests on macOS 14
+      - name: Download packaged app
+        uses: actions/download-artifact@v6
+        with:
+          name: BriefCal-${{ github.sha }}-local-test-macOS
+          path: ${{ runner.temp }}/BriefCalMinimumOSArtifact
+
+      - name: Verify packaged app on macOS 14
         run: |
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = "14"
-          xcodebuild \
-            -project BriefCal.xcodeproj \
-            -scheme BriefCal \
-            -configuration Debug \
-            -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/BriefCalSonomaDerivedData" \
-            -onlyUsePackageVersionsFromResolvedFile \
-            -skipPackageUpdates \
-            -skip-testing:BriefCalUITests \
-            CODE_SIGNING_ALLOWED=NO \
-            test
+          ARCHIVE="$RUNNER_TEMP/BriefCalMinimumOSArtifact/BriefCal-${GITHUB_SHA}.zip"
+          UNPACKED="$RUNNER_TEMP/BriefCalMinimumOSSmoke"
+          test -f "$ARCHIVE"
+          mkdir -p "$UNPACKED"
+          ditto -x -k "$ARCHIVE" "$UNPACKED"
+          bash scripts/verify_local_test_app.sh "$UNPACKED/BriefCal.app"

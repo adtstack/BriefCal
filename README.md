@@ -86,8 +86,8 @@ macOS UI test runner가 시작되려면 해당 host의 Developer Tools authoriza
 
 `main`/`master` push와 pull request에서는 [`ci.yml`](.github/workflows/ci.yml)이 최신
 검증 러너의 unit suite·50% app line coverage 하한, 격리된 UI automation, static analyzer,
-실제 launch smoke를 통과한 local-test Release build와 최소 지원 macOS 14의 unit suite를
-실행한다. 성공한 `.app` zip과
+실제 launch smoke를 통과한 local-test Release build를 실행한다. 같은 `.app` zip은 최소 지원
+macOS 14 runner에서 다시 풀어 signature·payload·실제 launch smoke를 검증한다. 성공한 `.app` zip과
 unit/UI `.xcresult`는 Actions artifact로 7일/14일 동안 보관한다. GitHub 저장소의 **Actions** 탭에서 해당 실행과
 artifact를 확인할 수 있다.
 

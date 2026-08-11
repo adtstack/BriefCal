@@ -666,10 +666,6 @@
 					"$(inherited)",
 					"-debug-prefix-map",
 					"$(PROJECT_DIR)=.",
-					"-file-prefix-map",
-					"$(PROJECT_DIR)=.",
-					"-coverage-prefix-map",
-					"$(PROJECT_DIR)=.",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.adtstack.briefcal;
 				PRODUCT_NAME = "$(TARGET_NAME)";

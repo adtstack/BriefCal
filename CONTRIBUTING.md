@@ -87,11 +87,12 @@ ad-hoc app은 private/public beta 배포물이 아니다. Developer ID와 notari
 
 전체 suite를 기본으로 실행한다.
 
-저장소의 versioned CI는 전체 자동 test, 50% app-target line coverage 하한, Xcode static
-analyzer, unsigned Release build와 최소 지원 macOS 14 실행을 확인한다. 변경 제출자는 아래
-local 명령도 실행해 빠르게 피드백을 확인한다. CI는 pinned SwiftPM, production DB 격리와
-manual EventKit opt-in 경계를 유지하며, CI 성공을 live Exchange나 clean-user 배포 통과로
-해석하지 않는다.
+저장소의 versioned CI는 최신 검증 러너에서 전체 자동 test, 50% app-target line coverage
+하한, Xcode static analyzer와 unsigned Release build를 수행한다. 여기서 만든 동일한 Local
+Test ZIP은 최소 지원 macOS 14 runner에서 signature·payload·실제 launch smoke를 검증한다.
+변경 제출자는 아래 local 명령도 실행해 빠르게 피드백을 확인한다. CI는 pinned SwiftPM,
+production DB 격리와 manual EventKit opt-in 경계를 유지하며, CI 성공을 live Exchange나
+clean-user 배포 통과로 해석하지 않는다.
 
 ```sh
 xcodebuild \

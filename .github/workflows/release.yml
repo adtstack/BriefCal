@@ -59,6 +59,7 @@ jobs:
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             -skip-testing:BriefCalUITests \
+            ENABLE_DEBUG_DYLIB=NO \
             CODE_SIGNING_ALLOWED=NO \
             test
 
