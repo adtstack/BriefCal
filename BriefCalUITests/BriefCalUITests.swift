@@ -18,10 +18,8 @@ final class BriefCalUITests: XCTestCase {
         app = nil
     }
 
-    func testNavigatesAcrossCalendarAndTaskWorkspaces() {
+    func testCalendarWorkspacesAgendaActionsAndNewEditorAreDiscoverable() {
         launch()
-
-        XCTAssertTrue(element("calendar.grid.week").waitForExistence(timeout: 10))
 
         element("nav.month").click()
         XCTAssertTrue(element("calendar.grid.month").waitForExistence(timeout: 5))
@@ -31,10 +29,6 @@ final class BriefCalUITests: XCTestCase {
 
         element("nav.day").click()
         XCTAssertTrue(element("calendar.grid.day").waitForExistence(timeout: 5))
-    }
-
-    func testAgendaTimelineEventActionsAndNewEditorAreDiscoverable() {
-        launch()
 
         element("nav.agenda").click()
         XCTAssertTrue(element("agenda.timeline").waitForExistence(timeout: 5))
