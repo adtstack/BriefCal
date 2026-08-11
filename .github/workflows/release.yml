@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ ! "$RELEASE_TAG" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            echo "Release tags must use the form v0.1.0; received: $RELEASE_TAG" >&2
+            echo "Release tags must use the form v1.2.3; received: $RELEASE_TAG" >&2
             exit 1
           fi
           echo "VERSION=${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
