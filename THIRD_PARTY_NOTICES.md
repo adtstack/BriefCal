@@ -1,13 +1,13 @@
 # Third-Party Notices
 
-이 문서는 현재 KaosCal source dependency의 notice inventory다. KaosCal 자체의 license나
+이 문서는 현재 BriefCal source dependency의 notice inventory다. BriefCal 자체의 license나
 EULA를 정하지 않으며, 완전한 법률 검토 또는 최종 배포물에 notice가 포함됐다는 증거를
 대체하지 않는다.
 
 ## 현재 SwiftPM inventory
 
 2026-07-25의
-`KaosCal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`에는 다음
+`BriefCal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`에는 다음
 remote SwiftPM pin 두 개가 기록되어 있다.
 
 | Component | Resolved version | Resolved revision | Upstream | License evidence |
@@ -197,7 +197,7 @@ THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
   실제로 포함됐는지
 - source, asset, build tool, copied snippet 등 SwiftPM 밖의 항목에 별도 license 의무가
   없는지
-- KaosCal 자체 license/EULA와 third-party notice 표시 방식이 법적 요구를 충족하는지
+- BriefCal 자체 license/EULA와 third-party notice 표시 방식이 법적 요구를 충족하는지
 
 따라서 외부 배포 전 release 담당자는 다음 gate를 모두 수행해야 한다.
 

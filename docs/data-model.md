@@ -3,7 +3,7 @@
 ## 데이터 원칙
 
 원본 일정은 캘린더 계정이 소유한다.
-KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
+BriefCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 절대 원칙:
 - Event Brief 데이터는 `EKEvent.notes`에 쓰지 않는다.
@@ -12,16 +12,16 @@ KaosCal은 일정에 붙는 맥락을 로컬 SQLite에 소유한다.
 
 ## 저장 위치
 
-현재 App Sandbox 빌드(`com.adtstack.kaoscal`):
+현재 App Sandbox 빌드(`com.adtstack.briefcal`):
 
 ```text
-~/Library/Containers/com.adtstack.kaoscal/Data/Library/Application Support/KaosCal/kaoscal.sqlite
+~/Library/Containers/com.adtstack.briefcal/Data/Library/Application Support/BriefCal/briefcal.sqlite
 ```
 
 샌드박스를 사용하지 않는 내부 진단 빌드에서만:
 
 ```text
-~/Library/Application Support/KaosCal/kaoscal.sqlite
+~/Library/Application Support/BriefCal/briefcal.sqlite
 ```
 
 경로는 하드코딩하지 않고 `FileManager.applicationSupportDirectory`에서 계산한다.
@@ -53,7 +53,7 @@ Phase 5는 EventKit 객체를 UI 값 snapshot으로 분리하고 필요한 연�
 | `CalendarEventLookupQuery` / `CalendarEventLookupResult` | 저장 link 또는 최종 선택 event의 strong identifiers, occurrence anchor와 마지막-known snapshot으로 전용 조회 | provider read 값이다. 일반 구간 fetch의 부재나 SQLite 상태 자체가 아님 |
 | `LinkedEventRecoverySession` | 첫 missing, recheck, candidate, orphan 확인과 relink 확인을 보관 | AppState의 일시 상태다. expected `EventLink` snapshot은 최종 relink CAS에 사용하지만 별도 DB record는 아님 |
 | `LinkedOriginalDeletionPreparation` / `LinkedOriginalDeletionPreview` | active Brief, notes/tasks/history impact, expected `EventLink`와 saved-link change snapshot을 최종 삭제 review에 고정 | 비영속 read 모델이다. final Confirm 전에는 EventKit과 DB를 바꾸지 않으며 expected link/snapshot은 pre-provider 및 post-provider CAS에 사용 |
-| `EventBriefSnapshot.hasRecordedOriginalDeletion` / `TaskCenterItem.wasOriginalDeletedByKaosCal` | 현재 link 세대에 유효한 KaosCal deletion provenance를 UI에 전달 | 저장 column이 아니다. unavailable `cancelled` log가 있고 `(created_at, rowid)`상 이후 `relinked`가 없을 때만 true |
+| `EventBriefSnapshot.hasRecordedOriginalDeletion` / `TaskCenterItem.wasOriginalDeletedByBriefCal` | 현재 link 세대에 유효한 BriefCal deletion provenance를 UI에 전달 | 저장 column이 아니다. unavailable `cancelled` log가 있고 `(created_at, rowid)`상 이후 `relinked`가 없을 때만 true |
 | session Undo token | 직전 비반복 `single` write의 change ID와 after snapshot | process 메모리에만 존재. persistent `undo_state`만으로 재실행 뒤 Undo하지 않음 |
 
 영속 Event Brief 연결은 아래 `Identity resolution 순서`로 구현되어 있다. UI ID가 같거나 달라졌다는 사실만으로 local context를 자동 연결·삭제하지 않는다.
@@ -192,7 +192,7 @@ Phase 5 원본 일정 편집은 schema를 바꾸지 않았다. Phase 6은 immuta
 - 성공한 delete receipt 뒤 `finalizeLinkedOriginalDeletion`은 expected link/snapshot을 다시 CAS하고 context lifecycle `cancelled`, link status `orphaned`, 이전 available Undo supersede와 unavailable `cancelled` log insert를 한 SQLite transaction에서 수행한다. `context_id`, notes/tasks, link identifiers/snapshots/fingerprint와 `last_seen_at`은 유지한다.
 - deletion log의 before/after는 같은 saved-link snapshot이다. post-delete event가 없고 v1 link는 원본 notes를 저장하지 않으므로 `originalNotes = nil`은 unavailable이며 local notes를 대입하지 않는다. scope는 nonrecurring `single` 또는 recurring `this_event`, undo state는 `unavailable`이다.
 - EventKit remove와 local finalize는 원자적이지 않다. receipt가 모순되거나 transaction/CAS가 실패하면 SQLite status/log/Undo supersede는 모두 rollback되지만 원본은 이미 삭제됐거나 삭제됐을 수 있다. UI는 review를 닫고 refresh하며 동일 Delete 재시도를 막고 local Brief 보존을 안내한다. 두 경계 사이 crash도 Phase 7B recovery로 돌아가는 부분 성공이다.
-- deleted-original read projection은 상태쌍만으로 만들지 않는다. 해당 context의 unavailable `cancelled` log 중 더 최신 `relinked`가 없는 row가 있어야 하며 순서는 `created_at`, 동일 timestamp에서는 `rowid`로 판정한다. relink 뒤의 current link generation은 과거 cancellation을 상속하지 않는다. 따라서 이후 provider 관찰이나 수동 상태 전이로 다시 `cancelled + orphaned`가 되어도 새 KaosCal deletion log 없이는 일반 orphan이다.
+- deleted-original read projection은 상태쌍만으로 만들지 않는다. 해당 context의 unavailable `cancelled` log 중 더 최신 `relinked`가 없는 row가 있어야 하며 순서는 `created_at`, 동일 timestamp에서는 `rowid`로 판정한다. relink 뒤의 current link generation은 과거 cancellation을 상속하지 않는다. 따라서 이후 provider 관찰이나 수동 상태 전이로 다시 `cancelled + orphaned`가 되어도 새 BriefCal deletion log 없이는 일반 orphan이다.
 - Phase 7C는 새 status, table, column이나 change type을 요구하지 않으므로 schema migration이 없다.
 
 ### Event link temporal and recurrence fields
@@ -507,7 +507,7 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 - `Upcoming`: 미완료이며 내일 시작 이후 due. completed context는 After section만 포함
 - `After Review`: completed context의 미완료 After만 포함하고 personal task는 제외
 - `Completed`: event/personal 완료 항목을 완료 시각 역순으로 결합
-- deleted-original source prefix는 `cancelled + orphaned`와 함께 current-link-generation KaosCal deletion provenance가 있을 때만 표시. 이후 relink는 과거 deletion source를 무효화
+- deleted-original source prefix는 `cancelled + orphaned`와 함께 current-link-generation BriefCal deletion provenance가 있을 때만 표시. 이후 relink는 과거 deletion source를 무효화
 
 `ContextStore.refreshTemporalLifecycle`은 Task Center refresh 전에 같은 DB에서 active context 상태를 갱신한다. `TaskCenterRepository`도 전달받은 `now`와 calendar로 같은 lifecycle을 projection 시점에 계산해, direct read나 clock/time-zone 경계에서도 stale Before/During 작업을 노출하지 않는다. 어떤 경로도 숨긴 작업 row를 삭제하거나 완료 처리하지 않는다.
 
@@ -552,8 +552,8 @@ Fingerprint는 복구 후보를 찾기 위한 보조 키다.
 Phase 9 export 경로는 Event Brief·task·change log, calendar role/usage, v9 saved Set·membership·selection을 포함한 현재 SQLite 전체의 online snapshot과 metadata를 함께 묶는다. 같은 live `DatabaseWriter`에서 snapshot/restore하므로 실행 중 DB 파일이나 WAL sidecar를 직접 복사·교체하지 않는다.
 
 ```text
-KaosCal-Backup-YYYY-MM-DD-HHmm.zip
-├─ kaoscal.sqlite
+BriefCal-Backup-YYYY-MM-DD-HHmm.zip
+├─ briefcal.sqlite
 └─ manifest.json
 ```
 
@@ -581,7 +581,7 @@ SHA-256은 manifest와 DB entry의 byte 일치 확인이며 제작자 서명은 
 
 Import는 archive/manifest/hash/schema/migration을 검사한 뒤 추출 DB의 SQLite integrity와 foreign key를 확인한다. 그 뒤 현재 DB를 `Backups`에 자동 ZIP으로 보존하고 검증된 snapshot을 같은 writer에 restore한다. 사후 schema/integrity/FK도 확인하며 실패 시 pre-operation snapshot rollback을 시도한다. record-level merge는 제공하지 않는다.
 
-Reset은 사전 자동 ZIP 뒤 KaosCal이 소유한 active user-data table을 한 transaction에서 비운다.
+Reset은 사전 자동 ZIP 뒤 BriefCal이 소유한 active user-data table을 한 transaction에서 비운다.
 
 - `event_change_log`
 - `task_checklist_items`
@@ -607,11 +607,11 @@ Reset은 사전 자동 ZIP 뒤 KaosCal이 소유한 active user-data table을 �
 reset은 GRDB migration history와 schema를 유지한다. import/reset/export 어느 경로도 EventKit write를 호출하지 않는다.
 
 SQLite에는 linked title/time/location/calendar identifiers와 change payload의 원본
-event notes snapshot이 있을 수 있으므로 ZIP은 민감한 plaintext다. KaosCal은 계정
+event notes snapshot이 있을 수 있으므로 ZIP은 민감한 plaintext다. BriefCal은 계정
 credential, Exchange password/MFA, OAuth token과 attendee 전체 목록을 전용 필드로
 수집·저장하지 않고 EventKit 전체 event store도 export하지 않는다. 그러나 사용자
 notes/tasks 본문은 검사하거나 redact하지 않으므로 거기에 입력한 민감정보는 그대로
-포함될 수 있다. KaosCal은 backup을 자동 암호화·서명하거나 자동 삭제하지 않으며
+포함될 수 있다. BriefCal은 backup을 자동 암호화·서명하거나 자동 삭제하지 않으며
 retention과 신뢰할 수 있는 출처 확인은 사용자 책임이다.
 
 정상 current-schema DB가 열린 Settings 경로만 Phase 9에서 지원한다. failed-bootstrap corrupt live DB recovery는 Phase 10이다. 상세 계약은 [backup-restore.md](backup-restore.md)와 [ADR-015](adr/ADR-015-backup-import-reset-safety.md)를 따른다.

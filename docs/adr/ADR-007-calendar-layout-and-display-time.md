@@ -10,7 +10,8 @@ Day, Week, Agenda가 같은 EventKit snapshot을 사용해도 날짜 경계, DST
 
 ## 결정
 
-- Day는 표시 달력 기준 1일, Week와 Agenda는 같은 기준의 7일을 사용한다.
+- Day는 표시 달력 기준 1일, Week는 7일을 사용한다. Agenda의 각 section도 같은 7일 civil
+  week이지만 선택 주부터 여러 section을 연속으로 이어서 표시한다.
 - 모든 표시 범위와 일정 교차 판정은 반개구간 `[start, end)`으로 계산한다.
 - 시간 일정은 표시 달력의 현지 자정에서 분할하고, 자정에 끝나는 일정은 다음 날 segment를 만들지 않는다.
 - 종일 일정은 provider 경계에서 시작일 자정과 배타 종료일 자정으로 정규화한다. raw end가 날짜 중간이나 `23:59:59`면 그 날짜의 다음 날 자정으로 올리고, 이미 자정이면 그대로 사용한다.
@@ -24,7 +25,8 @@ Day, Week, Agenda가 같은 EventKit snapshot을 사용해도 날짜 경계, DST
 
 ## 결과
 
-- Day/Week/Agenda가 같은 visible period와 명시적 display calendar를 공유한다.
+- Day/Week와 Agenda의 각 주가 같은 시간 의미와 명시적 display calendar를 공유한다. Agenda는
+  focused week를 시작점으로 삼되 scroll에 따라 이후 주와 필요한 조회 범위를 확장한다.
 - 레이아웃 계산은 Foundation 값 타입이며 SwiftUI 좌표와 분리해 DST·경계·겹침을 단위 테스트할 수 있다.
 - 초기 조회 범위를 벗어나 이동하면 현재 화면을 포함하는 새 범위를 가져오고, 빠르게 되돌아오면 오래된 pending 조회를 취소한다.
 - 실제 Exchange의 종일·DST·반복 동작은 자동 모델 테스트만으로 지원 완료를 선언하지 않고 `KC-E2`~`KC-E4` 실계정 결과로 확정한다.

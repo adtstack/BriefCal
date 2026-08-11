@@ -2,7 +2,7 @@
 
 ## QA 목표
 
-KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정 맥락을 잃지 않는지"를 확인하는 것이다.
+BriefCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정 맥락을 잃지 않는지"를 확인하는 것이다.
 특히 Event Brief 데이터가 원본 calendar notes를 오염시키지 않는지, 일정 이동과 삭제에서 context가 살아남는지 반복 검증한다.
 
 ## 테스트 환경
@@ -17,12 +17,29 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - 권한을 거부한 상태
 - 앱 재설치 또는 DB 초기화 상태
 
+## 2026-08-07 BriefCal 미출시 제품 식별자 gate
+
+- app/test bundle identifier, Application Support DB, backup manifest·entry, Keychain·EventKit·
+  Sparkle namespace, build/QA 변수와 internal payload가 `BriefCal`/`briefcal` 기준인지 확인한다.
+- app은 `briefcal://` task scheme 하나만 등록하고 strong local lookup 경계로 처리해야 한다.
+- 현재 작업 트리에서 폐기한 임시 제품 식별자를 대소문자 비구분으로 검색했을 때 0건이어야
+  한다. 미출시 개발 binary와 checksum은 새 artifact 검증에 재사용하지 않는다.
+- 전체 unit suite, universal Local Test Release의 표시명·executable·bundle identifier·
+  architecture, strict deep signature, sandbox·Calendar·Reminders entitlement, XCTest 부재와
+  실제 launch smoke를 다시 검증한다.
+- 기준은 [ADR-021](adr/ADR-021-briefcal-pre-release-identity-baseline.md)을 따른다.
+- 결과: **329 executed / 328 passed / 1 intentional `ManualEventKitQATests` skip /
+  0 failures**, `/private/tmp/BriefCalIdentityTestsFinal.xcresult`. universal app
+  `/private/tmp/BriefCalIdentityReleaseDerivedData/Build/Products/Release/BriefCal.app`은
+  `com.adtstack.briefcal`, 단일 `briefcal://`, arm64/x86_64, strict deep signature·entitlement,
+  XCTest 부재, launch smoke와 app executable 잔여 검색 0건을 통과했다.
+
 ## 2026-08-03 runnable Local Test 서명·launch gate
 
 - 과거 ad-hoc+hardened Release는 strict `codesign`이 통과해도 Sparkle을 load할 때 dyld가 Team
   identity 불일치로 종료됐다. `Library missing` 문구만으로 framework 파일 부재로 판정하지 않고
   crash report의 dyld reason까지 확인한다.
-- production-shaped compile은 `KaosCalLocalTestBuild=NO`와 hardened runtime setting을 확인하고
+- production-shaped compile은 `BriefCalLocalTestBuild=NO`와 hardened runtime setting을 확인하고
   패키징하지 않는다. 실제 배포 artifact는 같은 Developer ID Team의 nested code와 notarization이
   추가로 필요하다.
 - local-test app은 marker `YES`, hardened runtime 부재, universal/host architecture, strict deep
@@ -30,19 +47,19 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - `--ui-testing` launch smoke는 Local Test compiler condition에서만 in-memory DB와 process-local
   fixture를 사용한다. 앱이 최소 3초 생존해야 하며 crash report를 만들거나 Calendar, Keychain,
   provider 계정과 운영 DB를 건드리면 통과가 아니다.
-- exact app `/private/tmp/KaosCalRunnableLocalTest/Build/Products/Release/KaosCal.app`은 직접
+- exact app `/private/tmp/BriefCalRunnableLocalTest/Build/Products/Release/BriefCal.app`은 직접
   launch smoke 2회, ZIP 압축 해제본과 읽기 전용 DMG 내부 app smoke, 새 crash report 부재를
   통과했다. 검증 DMG SHA-256은
   `704d13f15a995cb8fc3a19d7702e74e109c1feb64377ef20f1b57564ca7e8d47`이다.
 - 최신 회귀는 **322 executed / 321 passed / 1 intentional skip / 0 failures**, result bundle
-  `/private/tmp/KaosCalSigningFixUnit.xcresult`, app coverage **53.61% (29,698/55,395)**다.
+  `/private/tmp/BriefCalSigningFixUnit.xcresult`, app coverage **53.61% (29,698/55,395)**다.
 
 ## 2026-08-03 UI 자동화·EventKit 비동기 경계 gate
 
 - unit 결과: **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
   0 failures**. 후속 signing fix까지 포함한 최신 result bundle:
-  `/private/tmp/KaosCalSigningFixUnit.xcresult`.
-- coverage/build: `KaosCal.app` line coverage **53.61% (29,698/55,395)**로 50% floor,
+  `/private/tmp/BriefCalSigningFixUnit.xcresult`.
+- coverage/build: `BriefCal.app` line coverage **53.61% (29,698/55,395)**로 50% floor,
   정적 분석, production-shaped Release compile과 Local Test bundle ID·macOS 14 minimum·XCTest
   미포함 검증 통과. 실제 launch 판정은 바로 위 signing gate를 따른다.
 - EventKit read: calendar list, bounded event fetch와 strong lookup은 async protocol을 통해 전용
@@ -60,8 +77,8 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 ## 2026-08-03 자동 안전·품질 gate
 
 - 전체 결과: **319 executed / 318 passed / 1 intentional `ManualEventKitQATests` skip /
-  0 failures**. Result bundle: `/private/tmp/KaosCalQualityFinal2.xcresult`.
-- coverage/analyzer: `KaosCal.app` line coverage **53.63% (29,559/55,121)**로 50% floor 통과,
+  0 failures**. Result bundle: `/private/tmp/BriefCalQualityFinal2.xcresult`.
+- coverage/analyzer: `BriefCal.app` line coverage **53.63% (29,559/55,121)**로 50% floor 통과,
   `xcodebuild analyze` 통과.
 - provider/OAuth: untrusted/repeated/과다 Graph cursor, 비공식 To Do deep link, duplicate OAuth
   parameter, cross-origin redirect, non-loopback·incomplete·oversized·absolute-form callback을
@@ -81,8 +98,8 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 | 경로 | 용도 | 통과로 간주하지 않는 항목 |
 | --- | --- | --- |
-| Outlook connector server | exact-name calendar와 서버 측 CRUD·시간대·지원 반복·cleanup 확인 | TCC, EventKit `.exchange`·writable, Calendar.app, KaosCal UI·local context |
-| 최신 서명 KaosCal/EventKit | full access, EventKit source·권한, Calendar.app round-trip, identifier·series 동작, local context 안전성 확인 | connector의 server pass만으로 자동 통과하지 않음 |
+| Outlook connector server | exact-name calendar와 서버 측 CRUD·시간대·지원 반복·cleanup 확인 | TCC, EventKit `.exchange`·writable, Calendar.app, BriefCal UI·local context |
+| 최신 서명 BriefCal/EventKit | full access, EventKit source·권한, Calendar.app round-trip, identifier·series 동작, local context 안전성 확인 | connector의 server pass만으로 자동 통과하지 않음 |
 
 서버 fixture는 고유 run marker, attendee·실제 연락처 없는 내용, 제한된 날짜 범위를 사용한다. 기존 일정은 수정·삭제하지 않으며 mutation 응답으로 받은 exact fixture만 cleanup한 뒤 source/destination을 두 번 다시 조회해 잔여 0건을 확인한다. raw calendar/event ID, account/email, owner와 source title은 저장소 문서·프로젝트 로그·commit에 복사하지 않는다.
 
@@ -136,6 +153,21 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - timed multi-day와 all-day 일정은 배타 종료를 지켜 겹치는 각 civil day에 dot을 만든다. 자정에 끝나는 일정은 다음 날에 표시하지 않으며 hide+block은 세지 않고 show+ignore는 센다. 선택 Set 밖의 일정도 제외한다. 여러 일정도 dot은 하나지만 VoiceOver value는 정확히 `일정 N개`를 전달한다.
 - 월 탐색과 요약 조회는 본문 focused date·현재 event snapshot을 바꾸거나 EventKit create/update/delete를 호출하지 않는다.
 
+### 1-b. 주 시작 요일 설정
+
+절차:
+1. **Settings > General**을 열고 `First day of week`를 Sunday에서 Monday로 바꾼다.
+2. Sidebar mini month, Week, Month와 Agenda에서 같은 focused date의 첫 열·시작 날짜를 비교한다.
+3. 앱을 종료했다 다시 열고 선택값과 주 경계를 다시 확인한 뒤 Sunday로 되돌린다.
+
+기대 결과:
+- 설정 화면은 Sunday와 Monday 두 선택을 명확히 제공하고 keyboard와 VoiceOver에서
+  `First day of week` 의미를 잃지 않는다.
+- 선택 즉시 네 화면의 요일 순서와 주 경계가 함께 바뀌며 focused civil day는 이동하지 않는다.
+- mini month는 새 42일 coverage를 다시 조회하고 이전 주 시작 기준의 stale summary를
+  현재 grid 결과로 표시하지 않는다.
+- 재실행 뒤 선택이 유지되며 변경 자체는 EventKit create/update/delete를 호출하지 않는다.
+
 ### 2. 권한 거부
 
 절차:
@@ -164,7 +196,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - pending notes와 편집 중 task 제목이 화면 전환·완료·이동 전에 저장된다.
 - notes 저장 실패 시 draft와 Retry가 남고 빈 상태로 위장하지 않는다.
 - 같은 원본 일정에 같은 Event Brief가 연결된다.
-- Calendar.app의 원본 notes에는 KaosCal 체크리스트가 쓰이지 않는다.
+- Calendar.app의 원본 notes에는 BriefCal 체크리스트가 쓰이지 않는다.
 
 ### 4. 새 일정 생성
 
@@ -176,7 +208,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 기대 결과:
 - 새 일정이 EventKit을 통해 실제 캘린더에 저장된다.
-- 원본 notes만 Calendar.app notes에 보이고 KaosCal Event Brief는 local DB에만 저장된다.
+- 원본 notes만 Calendar.app notes에 보이고 BriefCal Event Brief는 local DB에만 저장된다.
 - writable calendar에만 생성할 수 있다.
 - 종일 일정은 UI 포함 종료와 EventKit 배타 종료가 같은 날짜 범위를 뜻한다.
 - editor가 열린 동안 두 번째 `⌘N`이 현재 draft를 교체하지 않는다.
@@ -191,7 +223,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 기대 결과:
 - Calendar.app 원본 필드가 바뀌고 local notes/tasks와 context_id는 유지된다.
 - 원본 notes와 local notes가 서로 덮어쓰지 않는다.
-- Calendar.app에서 편집기를 연 뒤 원본을 먼저 바꾸면 KaosCal 저장은 stale 오류로 중단된다.
+- Calendar.app에서 편집기를 연 뒤 원본을 먼저 바꾸면 BriefCal 저장은 stale 오류로 중단된다.
 - 제목만 바꿨을 때 structured location 등 editor 밖 metadata를 불필요하게 지우지 않는다.
 - linked 일정의 성공한 원본 변경은 receipt rebind와 함께 change log에 기록되고, 실패·취소·no-op에는 기록되지 않는다.
 
@@ -209,19 +241,19 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - linked delete의 첫 alert, review와 Back은 provider/local write 0회다. final destructive Confirm만 EventKit delete를 호출한다.
 - nonrecurring은 `single`, recurring은 명시적 `thisEvent`만 가능하며 linked `futureEvents`, attendee/invitation과 read-only 원본은 provider 전에 차단된다.
 - successful receipt 뒤 context는 cancelled, link는 orphaned이고 같은 context_id·notes/tasks·saved link snapshot이 남는다. unavailable `cancelled` log의 before/after는 같은 saved-link payload, originalNotes는 nil/unavailable, Undo는 없다.
-- Task Center와 recovery sheet는 상태쌍에 더해 current-link-generation KaosCal deletion log가 있을 때만 `Original deleted · Local Brief kept`를 표시한다. 이후 `(created_at, rowid)`상 더 늦은 relink는 과거 deletion provenance를 무효화하고 Relink/local Brief delete 진입점은 유지한다.
+- Task Center와 recovery sheet는 상태쌍에 더해 current-link-generation BriefCal deletion log가 있을 때만 `Original deleted · Local Brief kept`를 표시한다. 이후 `(created_at, rowid)`상 더 늦은 relink는 과거 deletion provenance를 무효화하고 Relink/local Brief delete 진입점은 유지한다.
 - provider 성공 뒤 local CAS/log 실패를 주입하면 local transaction 전체와 false log가 rollback되고 editor/review가 닫힌다. 원본은 이미 삭제됐을 수 있으므로 동일 Delete를 재시도하거나 자동 복원하지 않고 local data 보존을 알린다.
 - local Brief가 없는 지원 일정의 기존 이동·삭제 경로는 그대로 유지된다.
 
 현재 live 증거:
 
-- run `20260712-025027-KST`, Asia/Seoul; exact signed Release `/private/tmp/KaosCalPhase7CFinalRelease/Build/Products/Release/KaosCal.app`, CDHash `6b1da198f969cb033946fdb72b2b2e46392310f2`
-- `KAOSCAL-P7C-LIVE-20260712-025027-KST-SINGLE`, 2026-07-12 15:00–16:00 KST, attendee·recurrence 없음. Notes 1건과 Before/During/After task 각 1건은 앱 재실행 뒤에도 유지
+- run `20260712-025027-KST`, Asia/Seoul; exact signed Release `/private/tmp/BriefCalPhase7CFinalRelease/Build/Products/Release/BriefCal.app`, CDHash `6b1da198f969cb033946fdb72b2b2e46392310f2`
+- `BRIEFCAL-P7C-LIVE-20260712-025027-KST-SINGLE`, 2026-07-12 15:00–16:00 KST, attendee·recurrence 없음. Notes 1건과 Before/During/After task 각 1건은 앱 재실행 뒤에도 유지
 - first alert와 final review가 `Scope: Single event`와 local Notes/task 수를 표시. Back 뒤 provider/local write 없음, Outlook exact-marker count 1 유지
 - final delete 정확히 1회 뒤 Task Center의 `Original deleted · Local Brief kept`, Notes, task 3개, no Undo, Relink/Delete Local Brief 진입점 확인
 - Outlook exact-marker 즉시·지연 count 0, Calendar.app exact title 검색 `결과 없음`
 - sandbox DB `query_only` 확인에서 integrity/FK/migration 통과, context/link 1/1과 `cancelled`/`orphaned`, Notes와 section별 task 1개, 정확히 1개의 `cancelled`/`single`/`unavailable` log, available Undo 0, matching payload·current deletion provenance, 전후 동일한 보존 combined hash 확인. 실제 hash와 본문은 기록하지 않음
-- recurring marker `KAOSCAL-P7C-LIVE-20260712-025027-KST-RECUR`는 서버에서 `seriesMaster`와 2026-07-12~14 daily occurrence 3개를 확인하고 전체 cleanup했다. UI 진입 전 session lock으로 `thisEvent` mutation은 **not tested**이며 제품 failure가 아님
+- recurring marker `BRIEFCAL-P7C-LIVE-20260712-025027-KST-RECUR`는 서버에서 `seriesMaster`와 2026-07-12~14 daily occurrence 3개를 확인하고 전체 cleanup했다. UI 진입 전 session lock으로 `thisEvent` mutation은 **not tested**이며 제품 failure가 아님
 - 최종 서버 residue single 0, recurring 0. retained single local Brief는 session lock 때문에 UI-only cleanup 대기이며 다음 수동 세션에서 삭제 후 원본 비재생성을 확인해야 함
 
 ### 7. 읽기 전용 일정
@@ -233,7 +265,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 기대 결과:
 - 원본 일정 편집 버튼이 비활성화된다.
 - 왜 수정할 수 없는지 설명한다.
-- KaosCal local Event Brief는 편집 가능해야 한다.
+- BriefCal local Event Brief는 편집 가능해야 한다.
 
 ### 7-c. Multi-calendar clarity와 saved Calendar Set
 
@@ -308,7 +340,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 절차:
 1. Event Brief가 있는 일정을 Calendar.app에서 삭제한다.
-2. KaosCal로 돌아와 해당 Brief를 연다.
+2. BriefCal로 돌아와 해당 Brief를 연다.
 3. 전용 lookup의 첫 `notFound` 뒤 상태를 확인한다.
 4. `Check Again`을 누르기 전 일반 Reload와 범위 이동만 수행한다.
 5. 명시적으로 `Check Again`을 눌러 두 번째 `notFound`를 만든다.
@@ -327,7 +359,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 절차:
 1. Event Brief notes/tasks, personal task, change history, explicit calendar role·usage와 saved Set/membership/selection이 있는 healthy current-schema file DB에서 수동 export를 만든다.
-2. ZIP root가 store-only `kaoscal.sqlite`, `manifest.json` 정확히 두 entry인지 확인하고 manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 각각 시험한다.
+2. ZIP root가 store-only `briefcal.sqlite`, `manifest.json` 정확히 두 entry인지 확인하고 manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 각각 시험한다.
 3. manifest의 archive format version이 schema version과 분리돼 있고 app/export metadata, v1~v9 migration 목록, DB byte count와 SHA-256이 snapshot과 일치하는지 확인한다. 기기 이름이 없는지도 확인한다. SHA-256은 제작자 인증이 아님을 문구로 확인한다.
 4. active DB 내용을 구분할 수 있게 바꾼 뒤 export ZIP import를 선택하고 replacement confirmation을 취소해 no-op을 확인한다.
 5. 다시 승인해 import 전 `Backups` automatic ZIP 생성, validated hot restore와 projection reload를 확인한다.
@@ -341,9 +373,9 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 - import cancellation과 모든 preflight 실패는 active DB, WAL/SHM과 EventKit provider write count를 바꾸지 않는다.
 - valid import는 Event Brief/tasks/personal tasks/change log/role·usage/saved Set·membership·selection을 복구하고 import 직전 DB의 automatic ZIP 경로를 결과에 표시한다.
 - restore 또는 사후 schema/integrity/FK failure는 사전 snapshot으로 rollback하고 partial active DB를 성공으로 표시하지 않는다.
-- reset은 automatic backup이 먼저 성공한 경우에만 실행되며 provider/reference row, `event_change_log`, event task/link/context, personal task, calendar role·usage, saved Set·membership·selection을 포함한 KaosCal user row를 비운다. schema와 GRDB migration history는 유지한다.
+- reset은 automatic backup이 먼저 성공한 경우에만 실행되며 provider/reference row, `event_change_log`, event task/link/context, personal task, calendar role·usage, saved Set·membership·selection을 포함한 BriefCal user row를 비운다. schema와 GRDB migration history는 유지한다.
 - export/import/reset 어느 경로도 Calendar/Exchange 원본 일정이나 EventKit provider write count를 바꾸지 않는다.
-- 현재 UI는 linked title/time/location/identifier와 original-notes change snapshot이 plaintext ZIP에 포함될 수 있고 complete calendar record/account credential/Exchange password는 전용 export 대상이 아니라고 설명한다. KaosCal이 credential/token과 attendee 전체 목록을 전용 필드로 저장하지 않는다는 점, 사용자 notes/tasks는 검사·redact하지 않아 본문 민감정보가 포함될 수 있다는 점도 Settings copy와 backup 정책에 구현됐다. run `20260712-1616-KST`에서 Settings 전체 scroll과 실제 Export/Import panel 문구를 확인했다.
+- 현재 UI는 linked title/time/location/identifier와 original-notes change snapshot이 plaintext ZIP에 포함될 수 있고 complete calendar record/account credential/Exchange password는 전용 export 대상이 아니라고 설명한다. BriefCal이 credential/token과 attendee 전체 목록을 전용 필드로 저장하지 않는다는 점, 사용자 notes/tasks는 검사·redact하지 않아 본문 민감정보가 포함될 수 있다는 점도 Settings copy와 backup 정책에 구현됐다. run `20260712-1616-KST`에서 Settings 전체 scroll과 실제 Export/Import panel 문구를 확인했다.
 - `Backups`의 recovery ZIP은 자동 삭제·prune되지 않는다.
 - 정상 store를 열지 못하는 failed-bootstrap corrupt DB 상태에는 Settings import를 성공 경로로 표시하지 않는다. 이 recovery UI는 Phase 10이다.
 
@@ -356,9 +388,17 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 4. 종일 일정이 10개 이상인 날짜에서 all-day lane을 세로로 scroll한다.
 5. 이전/다음, Today, 날짜 header를 사용해 loaded range 안팎으로 이동한다.
 6. 동일한 이벤트를 선택한다.
+7. Agenda에서 시작 주의 범위를 확인하고 초기 목록 끝까지 아래로 scroll해 다음 주가
+   자연스럽게 이어지는지 본다. 빈 주와 각 화면의 일정 우클릭 메뉴도 확인한다.
 
 기대 결과:
 - 네 화면에서 제목, 시간 또는 날짜 범위, source, 읽기 전용 상태가 일관된다.
+- Agenda는 선택 날짜의 주에서 시작하고 주마다 옅지만 읽을 수 있는 정확한 날짜 범위를
+  표시한다. 목록 끝에 닿으면 다음 주가 이어지며 toolbar 이전/다음은 시작점을 7일씩 옮긴다.
+- 일정이 없는 주는 `No events` 같은 상태 문구나 과도한 높이 없이 짧은 빈 공간으로만
+  보이고, 그 뒤 일정이 있는 주까지 계속 scroll할 수 있다.
+- 모든 일정 우클릭 메뉴에 Details, 원본 편집, 마지막 변경 Undo, 요약 복사가 같은 순서로
+  보이며 실행 불가능한 편집/Undo는 숨지 않고 disabled 상태다.
 - 종일 일정은 Day/Week의 all-day lane, Month의 주별 segment와 Agenda의 날짜 범위로
   명확히 표시된다.
 - 자정에 끝나는 일정은 다음 날에 중복되지 않고, 자정을 넘는 시간 일정은 날짜별 segment로 이어진다.
@@ -403,8 +443,10 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 
 기대 결과:
 
-- grid는 locale의 첫 요일부터 시작하는 완전한 주이며 해당 월에 필요한 최소 4주~최대
-  6주만 사용한다. 인접 월, 오늘과 focused date는 색상 하나에만 의존하지 않고 구분된다.
+- grid는 locale의 첫 요일부터 시작하는 완전한 주이며 focused month의 첫 주부터 연속된다.
+  요일 header는 고정되고, 아래 끝에 닿으면 다음 8주와 필요한 event 범위를 추가한다.
+- 각 월 1일에는 3pt 세로 경계와 locale 월명이 함께 보인다. 월 경계, 오늘과 focused date는
+  색상 하나에만 의존하지 않고 구분된다.
 - timed 단일 일정은 시작 시간과 제목, all-day 일정은 제목을 표시한다. multi-day는
   주 경계에서 이어지는 segment로 나뉘며 자정 배타 종료는 다음 날을 차지하지 않는다.
 - lane과 `+N` count는 event 입력 순서와 무관하게 결정적이다. popover에는 해당 날짜에서
@@ -444,7 +486,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 4. `이번 일정`을 선택해 impact preview의 before/after, detach 가능성, 유지될 local 항목을 확인한 뒤 한 번은 Cancel하고 한 번은 Confirm한다.
 5. 별도 fixture에서 `이번 이후`를 선택하고 series 영향과 affected context 수를 확인한다.
 6. detached occurrence에서 `이번 이후`를 시도한다.
-7. 여러 rule 또는 KaosCal이 표현할 수 없는 복잡한 server recurrence를 연다.
+7. 여러 rule 또는 BriefCal이 표현할 수 없는 복잡한 server recurrence를 연다.
 8. `이번 일정`에서 recurrence rule을 바꾸려 하고, unlinked basic series의 `이번 이후`에서 같은 변경을 시도한다.
 
 기대 결과:
@@ -465,7 +507,7 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
 2. fixture에 non-sensitive Event Brief notes와 Before/During/After task를 각각 하나 이상 저장한다.
 3. target calendar를 `일정`으로 바꾸고 impact confirmation을 연다.
 4. 기존/새 calendar·시간, 유지할 local notes/task 요약과 최근 change history를 확인한 뒤 Cancel한다.
-5. 다시 열어 Confirm하고 Calendar.app·KaosCal·Task Center를 확인한다.
+5. 다시 열어 Confirm하고 Calendar.app·BriefCal·Task Center를 확인한다.
 6. 같은 fixture에 외부 변경을 만든 뒤 남아 있는 Undo 또는 후속 write를 시도한다.
 
 기대 결과:
@@ -541,22 +583,22 @@ KaosCal QA의 핵심은 예쁜 캘린더가 뜨는지보다 "사용자의 일정
     `KAOS-GTASK-<UTC timestamp>-<random>` marker를 사용해 다음 gate를 모두 수행한다.
     - 사전 준비 완료(2026-07-23): Tasks API, External/Testing audience, test user, Desktop OAuth
       client와 Debug/Release 공개 client ID 주입. 루트 `.env`의
-      `KAOSCAL_GOOGLE_TASKS_CLIENT_SECRET`도 주입하고 `.env`가 Git ignored인지 확인한다. secret
+      `BRIEFCAL_GOOGLE_TASKS_CLIENT_SECRET`도 주입하고 `.env`가 Git ignored인지 확인한다. secret
       원문은 terminal·build log·QA 기록에 출력하지 않는다. 실제 계정 판정은 아래 절차 완료
       전까지 pending이다.
     - Settings에서 Connect 후 계정·목록 discovery와 즉시 task refresh를 확인한다.
-    - KaosCal에서 만든 task의 제목·notes·날짜를 Google에서 확인한다. KST와 DST 날짜 fixture가
+    - BriefCal에서 만든 task의 제목·notes·날짜를 Google에서 확인한다. KST와 DST 날짜 fixture가
       하루 이동하지 않아야 한다.
-    - Google에서 제목 수정·완료·삭제한 뒤 KaosCal refresh 결과를 확인한다. 삭제는 local task를
+    - Google에서 제목 수정·완료·삭제한 뒤 BriefCal refresh 결과를 확인한다. 삭제는 local task를
       지우지 않고 missing/Needs attention으로 남아야 한다.
-    - KaosCal에서 수정·기한 제거·완료·미완료를 수행하고 Google round-trip을 확인한다. 기한
+    - BriefCal에서 수정·기한 제거·완료·미완료를 수행하고 Google round-trip을 확인한다. 기한
       제거 PATCH가 거부되면 자동 우회하지 않고 이 gate를 실패로 기록한다.
     - 상세 drawer의 미저장 draft를 연 채 Google에서 같은 task를 수정해 conflict와 draft 보존,
       `Reload Latest`/`Cancel` 경계를 확인한다.
     - 앱 재실행과 access-token refresh 뒤 연결이 유지되는지 확인한다. Google 권한 페이지에서
       grant를 철회한 뒤에는 local task를 보존하고 authorization-required/missing으로 전환해야
       한다.
-    - 재연결 후 marker fixture를 정확히 삭제하고 전용 Google 목록과 KaosCal 양쪽의 테스트
+    - 재연결 후 marker fixture를 정확히 삭제하고 전용 Google 목록과 BriefCal 양쪽의 테스트
       residue가 0인지 재조회한다. token, authorization code, email, client secret은 QA 기록에
       남기지 않는다.
 22. local Event/Personal task에 priority·중요 표시·반복 간격·예상 시간을 설정하고 timer를
@@ -689,7 +731,7 @@ Full Month MVP에 추가해 통과한 자동 계약:
   `+3 more`, 셀·막대 잘림 없음
 - 최종 전체 **312 executed / 311 passed / 1 intentional `ManualEventKitQATests` skip /
   0 failures**; result bundle
-  `/private/tmp/KaosCalMonthDerived/Logs/Test/Test-KaosCal-2026.08.02_19-55-49-+0900.xcresult`
+  `/private/tmp/BriefCalMonthDerived/Logs/Test/Test-BriefCal-2026.08.02_19-55-49-+0900.xcresult`
 
 Phase 3에서 구현·통과한 항목:
 
@@ -781,8 +823,8 @@ Phase 7A lifecycle·focus 자동/Release gate:
 
 - active occurrence의 zoned/all-day/floating 유효 종료, 반복 occurrence별 독립 lifecycle, cancelled/orphaned와 non-active link 보존, Today/Upcoming/After Review/Completed projection 검증
 - exact display ID 우선과 same-calendar + instant/civil occurrence anchor 반복 fallback, 비반복 strong-ID fallback 검증
-- 전체 **145 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase7AFull.xcresult`
-- build-only Release `/private/tmp/KaosCalPhase7ARelease/Build/Products/Release/KaosCal.app`, CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
+- 전체 **145 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/BriefCalPhase7AFull.xcresult`
+- build-only Release `/private/tmp/BriefCalPhase7ARelease/Build/Products/Release/BriefCal.app`, CDHash `abfb685b03f1ff919f83a955e5b819e3c6b57df6`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
 - exact Release의 1360×840 onscreen 창 bootstrap과 종료 후 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
 - 이 gate에서는 EventKit/Exchange write를 실행하지 않았으며, Screen Recording 권한 부재로 픽셀 캡처는 시각 레이아웃 pass 근거로 사용하지 않음
 
@@ -795,10 +837,10 @@ Phase 7B missing/orphan/relink 자동 gate:
 - orphan 자동 재활성화 금지, explicit keep/relink/local delete transaction, stale expected-link CAS, 최종 provider exact 검증, 식별자 없는 후보 차단, unique/log-insert 실패 rollback을 검증
 - 재연결 뒤 기존 notes/tasks와 context ID가 보존되고 Event Brief를 즉시 다시 불러오며, local 삭제의 provider create/update/delete 호출이 모두 0임을 검증
 - Task Center의 모든 local Brief 목록에서 notes-only active와 missing/orphan 상태에 접근하고, background strong recovery 뒤 stale recovery sheet가 닫힘을 자동 검증. recovery sheet의 긴 local notes는 line limit을 제거하고 text selection을 유지했음을 코드 검토
-- 전체 **175 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; Debug result bundle `/private/tmp/KaosCalPhase7BFinal-20260712-0155.xcresult`
-- build-only Release `/private/tmp/KaosCalPhase7BFinalRelease/Build/Products/Release/KaosCal.app`, CDHash `f3b30718434641dbbd2dbec90f82581342d47506`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
+- 전체 **175 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; Debug result bundle `/private/tmp/BriefCalPhase7BFinal-20260712-0155.xcresult`
+- build-only Release `/private/tmp/BriefCalPhase7BFinalRelease/Build/Products/Release/BriefCal.app`, CDHash `f3b30718434641dbbd2dbec90f82581342d47506`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
 - exact Release의 1482×931 onscreen 창 bootstrap과 정상 종료 뒤 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
-- 실제 Exchange 외부 삭제·동기화 지연, 후보 재연결과 recovery sheet의 전체 시각 상호작용은 수동 gate로 남는다. 이 Phase 7B checkpoint 당시 KaosCal 내 linked original delete는 Phase 7C까지 비활성화했다.
+- 실제 Exchange 외부 삭제·동기화 지연, 후보 재연결과 recovery sheet의 전체 시각 상호작용은 수동 gate로 남는다. 이 Phase 7B checkpoint 당시 BriefCal 내 linked original delete는 Phase 7C까지 비활성화했다.
 - 살아 있는 recurring series의 one-off 삭제와 범위 밖 detached move는 bounded EventKit lookup으로 구분할 수 없어 automatic orphan 수동 gate의 통과 범위에서 제외하고 manual exact relink만 확인
 
 Phase 7C linked original delete fake-provider/local DB 자동 gate:
@@ -810,8 +852,8 @@ Phase 7C linked original delete fake-provider/local DB 자동 gate:
 - deleted-original projection은 `cancelled + orphaned`만으로 만들지 않고 current-link-generation unavailable `cancelled` log를 요구함을 검증. 뒤따르는 relink는 `(created_at, rowid)` 순서로 과거 provenance를 무효화하며 동일 timestamp rowid tie-break와 relink 뒤 외부 cancelled/orphaned 비표시를 포함
 - final expected-link CAS 또는 log insert 실패의 local 전체 rollback, successful provider 뒤 editor/review 종료·refresh·no-retry partial-success message와 false log 부재를 검증
 - deleted-original Task Center/recovery projection을 일반 orphan과 구분하고 Relink/local Brief delete 진입점을 유지함을 검증
-- Phase 7C 신규 회귀 총 14개를 포함한 전체 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase7CFinal-20260712-022700.xcresult`
-- build-only Release `/private/tmp/KaosCalPhase7CFinalRelease/Build/Products/Release/KaosCal.app`, CDHash `6b1da198f969cb033946fdb72b2b2e46392310f2`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
+- Phase 7C 신규 회귀 총 14개를 포함한 전체 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/BriefCalPhase7CFinal-20260712-022700.xcresult`
+- build-only Release `/private/tmp/BriefCalPhase7CFinalRelease/Build/Products/Release/BriefCal.app`, CDHash `6b1da198f969cb033946fdb72b2b2e46392310f2`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
 - production DB open을 차단한 exact binary 스모크는 5초 이상 생존하고 종료 뒤 process 0. 전후 direct/sandbox DB mtime·size·SHA-256과 WAL/SHM 부재 불변. computer-use runtime 부재로 onscreen 시각 검증은 미실행
 - 이 자동 checkpoint 당시에는 EventKit/Exchange fixture delete, Calendar.app/Outlook 반영, process crash 재현이 **not tested**였다. 후속 비반복 live 결과는 바로 아래 별도 gate에 기록하며 process crash는 계속 미검증이다.
 - v1 `cancelled`/`orphaned`, v2 `cancelled` change type·기존 scope/undo를 재사용해 schema migration을 추가하지 않았다.
@@ -823,7 +865,7 @@ Phase 7C linked original delete live Exchange gate:
 - nonrecurring linked fixture의 restart persistence, review·Back no-write, final delete 1회, Task Center deleted-original projection과 Notes/task 보존 **pass**
 - Outlook immediate/delayed exact-marker 0과 Calendar.app exact title `결과 없음` **pass**
 - sandbox DB read-only integrity/FK/migration, retained context/link, lifecycle/status, Notes·section task counts, exact unavailable cancellation log, no available Undo, matching payload·current provenance와 보존 hash equality **pass**; 실제 hash·본문 미기록
-- automatic evidence는 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**와 `/private/tmp/KaosCalPhase7CFinal-20260712-022700.xcresult` 그대로 유지
+- automatic evidence는 **189 tests executed, 188 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**와 `/private/tmp/BriefCalPhase7CFinal-20260712-022700.xcresult` 그대로 유지
 - recurring server fixture는 `seriesMaster`와 daily occurrence 3개 생성·전체 cleanup, residue 0 **pass**. session auto-lock 이전에 UI에 진입하지 못해 recurring `thisEvent` mutation은 **not tested**, 제품 failure 아님
 - 서버 최종 residue single 0, recurring 0. retained single local Brief의 `Delete Local Brief`와 원본 비재생성 확인은 **manual pending**
 
@@ -833,8 +875,8 @@ Phase 8 Multi-Calendar Clarity 자동·Release gate(당시 All/role runtime filt
 - 당시 virtual Set filtering, selection 밖 전환 전 notes flush, Task Center/duplicate 후보의 All 전환과 calendar identifier 기반 role projection을 검증
 - invitation·attendee·subscription·birthdays·provider read-only typed precedence와 같은 reason을 쓰는 AppState 원본 write preflight, provider write 0회를 검증
 - normalized title, timed 15분 경계, all-day civil range, cross-calendar/strong-occurrence 제외, deterministic candidate index를 검증. index는 fetch 때 한 번 만들고 card lookup은 O(1)
-- 최종 전체 **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase8FinalTests-20260712-1415.xcresult`
-- signed Release `/private/tmp/KaosCalPhase8FinalRelease/Build/Products/Release/KaosCal.app`, CDHash `6c595445dadfb60588410329222557d00865c222`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
+- 최종 전체 **199 tests executed, 198 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/BriefCalPhase8FinalTests-20260712-1415.xcresult`
+- signed Release `/private/tmp/BriefCalPhase8FinalRelease/Build/Products/Release/BriefCal.app`, CDHash `6c595445dadfb60588410329222557d00865c222`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**; get-task-allow와 XCTest 비포함
 - 전체 test 전후 direct/sandbox 운영 DB의 mtime·size·SHA-256과 WAL/SHM 부재 불변. exact Release 정상 bootstrap에서는 사전 backup 뒤 sandbox DB만 v2→v3로 migration하고 integrity `ok`, FK violation 0, 새 table 0행과 기존 다섯 table count·SHA3 불변, 종료 뒤 process 0을 확인
 - macOS session lock 때문에 Sidebar/Inspector/고밀도 card/VoiceOver 실화면은 **not tested**. shared read-only Viewer가 없어 provider read-only reason live gate도 **manual pending**이며 자동 결과로 대체하지 않음
 
@@ -847,13 +889,13 @@ Saved Calendar Set v9 gate:
 - 집중 ContextStore/LocalDataBackupService는 **84 executed / 84 succeeded / 0 skipped /
   0 failed**, 전체 suite는 **248 executed / 247 succeeded / 1 intentional manual-only skip /
   0 failed**이며 두 action status 모두 `succeeded`다. result bundle은 각각
-  `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-34-47-+0900.xcresult`,
-  `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-36-07-+0900.xcresult`다.
+  `/tmp/BriefCalCalendarSetsDataTests/Logs/Test/Test-BriefCal-2026.07.15_18-34-47-+0900.xcresult`,
+  `/tmp/BriefCalCalendarSetsDataTests/Logs/Test/Test-BriefCal-2026.07.15_18-36-07-+0900.xcresult`다.
 - 이 자동·offscreen checkpoint 뒤 AppState review 수정 3건이 적용됐다. 수정 후 build와
   UI/post-write를 포함한 focused **73 tests / 0 failures**는 통과했으며 result bundle은
-  `/tmp/KaosCalCalendarSets/Logs/Test/Test-KaosCal-2026.07.15_18-53-22-+0900.xcresult`다.
+  `/tmp/BriefCalCalendarSets/Logs/Test/Test-BriefCal-2026.07.15_18-53-22-+0900.xcresult`다.
   최신 최종 전체는 **257 executed / 256 passed / 1 intentional manual-only skip / 0 failures**이며
-  result bundle은 `/tmp/KaosCalTasksFilters-Final-R2-20260716.xcresult`다.
+  result bundle은 `/tmp/BriefCalTasksFilters-Final-R2-20260716.xcresult`다.
 - 실제 Exchange saved Set CRUD/rebind와 Settings/Sidebar 실창·keyboard·VoiceOver는 계속
   manual pending이다. 이전 237-test checkpoint는 v9 통과 근거로 사용하지 않는다.
 
@@ -865,8 +907,8 @@ Phase 9 Local Data 자동·Release gate:
 - file-backed healthy DB로 620×620 Settings bitmap 생성과 fitting size를 확인했다. 이 자동 결과 자체는 실제 panel·scroll·typed reset을 대신하지 않으며, 별도 live run `20260712-1616-KST`에서 해당 상호작용을 확인했다.
 - manifest exact-key/type/version/hash 변조, 손상 SQLite가 integrity/FK 검사까지 도달하는 fixture, automatic-backup 생성 실패, core restore/post-validation 실패 뒤 실제 rollback, failed draft·열린 interaction·concurrent operation 차단과 repeated deterministic encode는 구현 계약과 별도 QA 항목이다. 전용 fixture가 추가되기 전에는 자동 통과로 기록하지 않는다.
 - plaintext·무서명·수동 retention, source machine name 부재, 계정 credential 전용 저장 부재와 사용자 notes/tasks 무검열 포함 계약은 문서/code review와 run `20260712-1616-KST`의 실제 Settings/file-panel copy 확인 범위다.
-- 최종 전체 **213 tests executed, 212 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalPhase9FinalTests-20260712-1535.xcresult`.
-- signed Release `/private/tmp/KaosCalPhase9FinalRelease-20260712-1535/Build/Products/Release/KaosCal.app`, CDHash `4f6eb184110ca317a440c5d640cf0670e4c42753`, strict codesign·hardened runtime·sandbox·Calendar·user-selected read/write entitlement **pass**; get-task-allow와 XCTest 비포함.
+- 최종 전체 **213 tests executed, 212 passed, 1 intentional ManualEventKitQATests skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/BriefCalPhase9FinalTests-20260712-1535.xcresult`.
+- signed Release `/private/tmp/BriefCalPhase9FinalRelease-20260712-1535/Build/Products/Release/BriefCal.app`, CDHash `4f6eb184110ca317a440c5d640cf0670e4c42753`, strict codesign·hardened runtime·sandbox·Calendar·user-selected read/write entitlement **pass**; get-task-allow와 XCTest 비포함.
 - exact Release는 1512×949 visible window를 만들었고 직접 종료했다. direct DB `1783704658|126976`, SHA-256 `69b4a9c7d61782c005cd461df6716ac4fd6215a014e4807f21fd5d6988fdfa1d`와 sandbox DB `1783832834|139264`, SHA-256 `7cd91d35ceaa7f04a43c00e88cf1c99d7d8f778ebeffa8c55af0f9f269251d23`가 test·bootstrap 전후 불변이며 integrity `ok`, FK violation 0, WAL/SHM/journal 부재와 최종 process 0을 확인했다.
 - 후속 live run `20260712-1616-KST`에서 exact Release의 620×652 Settings 전체 scroll, 880×448 Export/Import panel, 470×256 reset sheet와 `RESET` 입력 뒤 Delete 활성화를 **pass**했다. 모든 panel과 sheet는 취소했으며 실제 export/import/reset과 EventKit/Exchange write는 실행하지 않았다.
 - production DB open/migration 실패 상태의 bootstrap recovery는 이 gate에 포함하지 않고 Phase 10으로 유지한다.
@@ -892,8 +934,8 @@ Phase 10 Paid Beta Polish 자동·수동 gate:
 - Developer ID/notary/staple/package/clean-user 설치, approved EULA와 support/privacy/security
   contact가 없으면 자동·offscreen 통과와 무관하게 외부 beta를 차단
 - 현재 자동 checkpoint: **220 executed / 219 passed / 1 intentional manual-only skip /
-  0 failures / 0 unexpected**, `/private/tmp/KaosCalPhase10Tests.xcresult`
-- 현재 ad-hoc Release: `/private/tmp/KaosCalPhase10Release/Build/Products/Release/KaosCal.app`,
+  0 failures / 0 unexpected**, `/private/tmp/BriefCalPhase10Tests.xcresult`
+- 현재 ad-hoc Release: `/private/tmp/BriefCalPhase10Release/Build/Products/Release/BriefCal.app`,
   CDHash `4d7c1b5ad6dde65666f101cae00bdcb9d5b878ed`; Developer ID/notarized artifact가 아님
 
 Mini month 자동/Release gate:
@@ -902,8 +944,8 @@ Mini month 자동/Release gate:
 - Sunday/Monday-first, 윤년·연도 경계, New York DST 시작/종료, LA/Tokyo absolute-date 차이와 42개 고유 civil identifier 검증
 - 같은 범위·먼 범위 날짜 선택의 selection/fetch 경계와 provider create/update/delete 0회 검증
 - `MiniMonthView`를 Sidebar 최소 폭 210×240, German locale, Monday-first로 직접 offscreen render해 6행·인접 월·focused/today 상태와 잘림 없음 확인. 전체 `NavigationSplitView` offscreen 결과는 sidebar가 렌더되지 않아 근거에서 제외
-- 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; post-review result bundle `/private/tmp/KaosCalMiniMonthPostReview.xcresult`
-- build-only Release `/private/tmp/KaosCalMiniMonthRelease/Build/Products/Release/KaosCal.app`, CDHash `92e16853c099db014b3f3f2d370d0b57ba44bc90`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
+- 전체 **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; post-review result bundle `/private/tmp/BriefCalMiniMonthPostReview.xcresult`
+- build-only Release `/private/tmp/BriefCalMiniMonthRelease/Build/Products/Release/BriefCal.app`, CDHash `92e16853c099db014b3f3f2d370d0b57ba44bc90`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
 - exact Release의 1482×931 onscreen 창 bootstrap과 종료 후 process 0 확인. 전체 test와 bootstrap 전후 direct/sandbox production DB mtime·size·SHA-256 및 WAL/SHM 부재 불변
 - 이 gate에서는 EventKit/Exchange write를 실행하지 않았으며, live Exchange 증거는 run `20260711-1626-B7D2`와 분리
 
@@ -916,8 +958,8 @@ App icon asset/Release gate:
 - Finder/Dock light·dark wallpaper와 clean-machine beta에서 system mask, contrast, 캐시 갱신을 수동 확인. layered/dark/tinted Icon Composer variant는 현재 gate 밖
 - AppIcon 추가가 EventKit/Context DB를 쓰지 않고 기존 전체 154-test gate를 바꾸지 않는지 확인
 - 최초 opaque build는 자동·서명 gate 통과와 별개로 macOS 14/15 risk 때문에 candidate에서 제외
-- transparent correction 최종 자동 결과: **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/KaosCalAppIconCompatFinal.xcresult`
-- 최종 build-only Release `/private/tmp/KaosCalIconCompatRelease/Build/Products/Release/KaosCal.app`, CDHash `bc2ddd83c9d7f5e1bfd62241b0e02e63b23308b6`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
+- transparent correction 최종 자동 결과: **154 tests, 1 intentional opt-in skip, 0 failures, 0 unexpected**; result bundle `/private/tmp/BriefCalAppIconCompatFinal.xcresult`
+- 최종 build-only Release `/private/tmp/BriefCalIconCompatRelease/Build/Products/Release/BriefCal.app`, CDHash `bc2ddd83c9d7f5e1bfd62241b0e02e63b23308b6`, strict codesign·hardened runtime·sandbox·Calendar entitlement **pass**
 - `AppIcon.icns` 역추출 16/32/128/256px alpha, corner 0/center 255, Info.plist icon keys, Assets.car와 XCTest 비포함 확인
 - exact Release의 1512×949 onscreen 창, NSWorkspace valid icon, 종료 후 process 0 확인. 테스트·bootstrap 전후 direct/sandbox production DB와 WAL/SHM 상태 불변
 
@@ -928,9 +970,9 @@ Signed automatic update 자동/Release gate:
 - 구성 없는 build는 Sparkle controller를 시작하지 않고 `Check for Updates…`를 비활성화한다.
   Calendar/Event Brief/task/local DB의 시작과 사용은 그대로 유지한다.
 - 전체 자동 결과: **297 executed / 296 passed / 1 intentional manual-only skip / 0 failures**;
-  `/private/tmp/KaosCalAutomaticUpdatesFinalTests.xcresult`.
+  `/private/tmp/BriefCalAutomaticUpdatesFinalTests.xcresult`.
 - synthetic HTTPS/public-key build-setting을 넣은 universal ad-hoc Release:
-  `/private/tmp/KaosCalAutomaticUpdatesRelease/Build/Products/Release/KaosCal.app`, CDHash
+  `/private/tmp/BriefCalAutomaticUpdatesRelease/Build/Products/Release/BriefCal.app`, CDHash
   `28dabda20f68e7894b09db2e3957922c4fda867d`. strict deep code-sign, hardened runtime,
   `x86_64`/`arm64`, Sparkle 2.9.2 link와 framework/Autoupdate/Updater.app/Downloader.xpc/
   Installer.xpc payload, exact `-spks`/`-spki` entitlement, automatic/signed-feed plist와 XCTest

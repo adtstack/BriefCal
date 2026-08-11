@@ -3,22 +3,22 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-  echo "Usage: bash scripts/verify_local_test_app.sh /path/to/KaosCal.app" >&2
+  echo "Usage: bash scripts/verify_local_test_app.sh /path/to/BriefCal.app" >&2
   exit 64
 fi
 
 APP="$1"
 INFO="$APP/Contents/Info.plist"
-EXECUTABLE="$APP/Contents/MacOS/KaosCal"
+EXECUTABLE="$APP/Contents/MacOS/BriefCal"
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
 
 test -d "$APP"
 test -f "$INFO"
 test -x "$EXECUTABLE"
 test -d "$SPARKLE"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.kaoscal"
+test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.briefcal"
 test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")" = "14.0"
-test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "YES"
+test "$(/usr/libexec/PlistBuddy -c 'Print :BriefCalLocalTestBuild' "$INFO")" = "YES"
 test -z "$(find "$APP" \( -name '*.xctest' -o -name '*XCTest*' \) -print -quit)"
 
 codesign --verify --deep --strict --verbose=2 "$APP"
@@ -30,7 +30,7 @@ if grep -Eq 'flags=.*runtime' <<<"$SIGNATURE_INFO"; then
   exit 1
 fi
 
-VERIFY_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/KaosCalLocalTest.XXXXXX")"
+VERIFY_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/BriefCalLocalTest.XXXXXX")"
 ENTITLEMENTS="$VERIFY_ROOT/entitlements.plist"
 SMOKE_LOG="$VERIFY_ROOT/launch.log"
 APP_PID=""
@@ -53,7 +53,7 @@ if /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$ENTIT
   exit 1
 fi
 
-env KAOSCAL_UI_TEST_SCENARIO=baseline \
+env BRIEFCAL_UI_TEST_SCENARIO=baseline \
   "$EXECUTABLE" \
   --ui-testing \
   -ApplePersistenceIgnoreState YES \
@@ -67,7 +67,7 @@ for _ in {1..12}; do
     STATUS=$?
     set -e
     APP_PID=""
-    echo "KaosCal exited before the launch smoke interval completed (status $STATUS)." >&2
+    echo "BriefCal exited before the launch smoke interval completed (status $STATUS)." >&2
     sed -n '1,160p' "$SMOKE_LOG" >&2
     exit 1
   fi
@@ -82,7 +82,7 @@ set -e
 APP_PID=""
 
 if [[ $STATUS -ne 0 && $STATUS -ne 143 ]]; then
-  echo "KaosCal launch smoke ended unexpectedly (status $STATUS)." >&2
+  echo "BriefCal launch smoke ended unexpectedly (status $STATUS)." >&2
   sed -n '1,160p' "$SMOKE_LOG" >&2
   exit 1
 fi

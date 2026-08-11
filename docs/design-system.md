@@ -2,10 +2,10 @@
 
 ## 디자인 방향
 
-KaosCal의 톤은 Calm Pro Calendar다.
+BriefCal의 톤은 Calm Pro Calendar다.
 바쁜 사용자가 하루의 일정을 빠르게 읽고, 어떤 일정에 어떤 맥락이 붙어 있는지 바로 판단할 수 있어야 한다.
 
-BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. 그러나 KaosCal은 BusyCal의 색, 아이콘, 화면 구성, 브랜드 요소를 복제하지 않는다.
+BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. 그러나 BriefCal은 BusyCal의 색, 아이콘, 화면 구성, 브랜드 요소를 복제하지 않는다.
 
 ## 제품 느낌
 
@@ -33,7 +33,7 @@ BusyCal의 정보 밀도, 빠른 탐색, 3-pane 작업 흐름은 참고한다. �
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐
-│ KaosCal      ◀ Today ▶      Wed, Jul 1      Day Week Month Agenda │
+│ BriefCal      ◀ Today ▶      Wed, Jul 1      Day Week Month Agenda │
 ├──────────────┬──────────────────────────────────────┬──────────────┤
 │ Mini Month   │                                      │ Event Brief  │
 │              │          Week Calendar               │              │
@@ -58,6 +58,11 @@ Sidebar:
 
 Calendar Area:
 - Day/Week/Agenda는 모두 v1 필수
+- Agenda는 선택한 날짜의 주를 시작점으로 삼는 연속 주간 목록이다. 주마다 옅은 날짜 범위를
+  표시하고 아래로 scroll하면 다음 주를 이어서 불러온다. 빈 주는 `No events` 문구나 큰
+  placeholder 없이 짧은 빈 공간으로만 구분한다.
+- toolbar의 이전·다음과 mini month 날짜 선택은 Agenda의 시작 주를 다시 맞춘다. Agenda가
+  모든 과거·미래를 한 번에 불러오는 전체 검색 화면이라는 표현은 사용하지 않는다.
 - Day/Week에는 종일 일정용 all-day lane
 - Month는 v1 당시 후순위였다. 현행 C1 Full Month MVP는 일정 내용을 보여 주는 별도 본문
   화면으로 구현한다.
@@ -68,7 +73,7 @@ Calendar Area:
 Event Brief Panel:
 - 선택 일정의 title/time/source
 - Before/During/After
-- KaosCal notes
+- BriefCal notes
 - change history 요약은 Phase 6 impact review에서 우선 표시하고, 상시 전체 history panel은 후속 polish로 둠
 - read-only 설명
 
@@ -92,6 +97,9 @@ Task Center:
 - 제목은 한두 줄까지 허용
 - 시간과 calendar role을 작은 metadata로 표시
 - read-only 또는 possible duplicate는 화면 밀도에 맞는 icon/text·help·VoiceOver로 표시하고 색상만으로 전달하지 않는다.
+- Day/Week/Month/Agenda의 모든 일정 표현은 같은 우클릭 메뉴를 제공한다. Details와 copy는
+  항상 노출하고, 원본 편집과 마지막 변경 Undo처럼 해당 일정에서 실행할 수 없는 항목은
+  제거하지 않고 macOS 기본 disabled 상태로 표시한다.
 
 ### Phase 2 실제 적용값
 
@@ -123,9 +131,11 @@ Task Center:
 
 ### Full Month MVP 적용값
 
-- 현재 calendar의 locale, first weekday와 time zone을 따르는 7열 grid를 사용한다. 해당 월을
-  덮는 최소 4주에서 최대 6주의 완전한 주만 만들고 인접 월 날짜는 낮은 강조로 구분한다.
-- 날짜 header와 일정 lane을 분리한다. 오늘, keyboard focus 날짜, 인접 월을 색상 하나에만
+- 현재 calendar의 locale, first weekday와 time zone을 따르는 7열 grid를 사용한다. focused
+  month의 첫 주부터 12주를 준비하고 아래 끝에 닿으면 Agenda와 같이 8주씩 이어 붙인다.
+- 요일 header는 고정하고 주 grid만 세로 scroll한다. 각 월 1일의 leading edge에는 3pt accent
+  세로선을 두고, 같은 셀 배경에는 locale에 맞는 축약 월명(한국어에서는 `7월`)을 표시한다.
+- 날짜 header와 일정 lane을 분리한다. 오늘, keyboard focus 날짜와 월 시작을 색상 하나에만
   의존하지 않고 형태·텍스트·VoiceOver 값으로 구분한다.
 - 한 날짜의 timed 일정은 시작 시간과 제목, all-day 일정은 제목을 우선 표시한다. 작은
   폭에서 source·role 같은 보조 정보는 생략하되 event의 접근성 label과 Inspector에는 남긴다.
@@ -141,6 +151,8 @@ Task Center:
   duplicate 판단과 availability blocking은 줄이지 않는다.
 - 월 이동 중 이미 표시한 event가 있으면 grid를 유지하고 작은 loading indicator를
   overlay한다. 새 fetch가 실패하거나 취소됐다고 기존 일정이 없는 것으로 표시하지 않는다.
+- scroll로 확장한 구간이 현재 loaded interval 밖이면 필요한 전체 범위를 다시 읽고, 그
+  구간에서 선택한 일정은 추가 조회 중에도 유지한다.
 - 첫 버전은 event drag 이동·resize, Quarter/Year, 전체 일정 검색, 날짜별 Day Summary와
   Quick Add/template을 제공하지 않는다.
 
@@ -241,7 +253,7 @@ Source badge는 EventKit 계정 유형, 실제 calendar/source, 사용자가 정
 - `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other`
 - subscribed/birthdays는 row가 없을 때 `Subscription`, 나머지 calendar는 용도를 추측하지 않고 `Other`
 - 현재 source list에 calendar가 없고 exact explicit override도 없으면 이전 event/task의 account type snapshot으로 역할을 추측하지 않고 `Other`
-- Sidebar role menu는 KaosCal local grouping만 바꾸며 Calendar.app의 이름·색·권한을 변경하지 않음
+- Sidebar role menu는 BriefCal local grouping만 바꾸며 Calendar.app의 이름·색·권한을 변경하지 않음
 
 화면별 계층:
 - Sidebar: calendar title 바로 아래 `Role · Source/Account · Editable|Read-only`, lock help에 상세 이유
@@ -288,11 +300,11 @@ Settings의 `Local Data` 화면은 backup, restore, storage, privacy와 destruct
 - `What Is Included`는 Event Brief/task/role/calendar usage/saved Set·membership·selection/change history뿐 아니라 linked
   title/time/location/identifier와 original-notes change snapshot이 포함될 수 있음을
   밝힌다. 현재 UI는 complete calendar event record, account credential과 Exchange
-  password를 전용 export 대상으로 삼지 않는다고 표시한다. KaosCal이 credential/token
+  password를 전용 export 대상으로 삼지 않는다고 표시한다. BriefCal이 credential/token
   전용 필드나 attendee 전체 목록을 저장하지 않는다는 계약과 별개로, 사용자
   notes/tasks 본문은 redact하지 않으므로 그 안의 민감정보가 포함될 수 있다는 정확한
   경계는 같은 화면의 plaintext 경고와 backup 문서에서 보완한다.
-- ZIP은 KaosCal이 암호화하지 않는 plaintext이며 사용자가 선택한 cloud folder에도
+- ZIP은 BriefCal이 암호화하지 않는 plaintext이며 사용자가 선택한 cloud folder에도
   그대로 저장된다는 경고를 action과 같은 화면에 둔다.
 - `Reset Local Data…`는 red destructive hierarchy를 사용한다. 별도 sheet에서 정확히
   `RESET`을 입력해야 `Delete Local Data`가 활성화되고, 자동 recovery backup과
@@ -362,7 +374,7 @@ impact confirmation에 표시할 것:
 - linked impact review에는 최근 변경을 시간 역순의 간결한 history로 표시한다. 현재 preview는 change type과 시각을 우선하며, move before/after와 recurrence scope를 상시 탐색하는 전체 history panel은 후속 polish다.
 - history는 EventKit 원본을 자동 복원하는 control이 아니다. 영속 log의 `available` 표시만으로 Undo button을 재생성하지 않는다.
 - Undo는 같은 실행 session에서 직전에 성공한 linked 비반복 `single` calendar/time 변경 한 건에만 잠시 제공한다.
-- 다른 성공한 KaosCal write, 권한 철회, 앱 재실행 뒤에는 Undo를 숨긴다. 일반 EventKit refresh 뒤에는 자체 save 알림과 외부 변경을 구분할 수 없어 button이 남을 수 있지만, 실행 시 fresh stale check가 실패하면 원본과 local DB를 바꾸지 않고 이유를 설명한다.
+- 다른 성공한 BriefCal write, 권한 철회, 앱 재실행 뒤에는 Undo를 숨긴다. 일반 EventKit refresh 뒤에는 자체 save 알림과 외부 변경을 구분할 수 없어 button이 남을 수 있지만, 실행 시 fresh stale check가 실패하면 원본과 local DB를 바꾸지 않고 이유를 설명한다.
 - inspector의 `Undo Last Event Change`는 같은 strong event가 선택됐을 때만 나타나는 명시적 one-shot command다. 실행 중 control을 비활성화해 중복을 막고, provider fresh check를 통과해 성공하면 기존 history를 지우지 않고 `Restored` 항목을 추가한다.
 - 반복 scope, detached occurrence, delete에는 Undo를 표시하지 않는다.
 
@@ -377,7 +389,7 @@ impact confirmation에 표시할 것:
 
 ## 초기 브랜드 방향
 
-- 앱 아이콘: calendar grid·겹친 schedule blocks·apricot check를 결합한 KaosCal mark
+- 앱 아이콘: calendar grid·겹친 schedule blocks·apricot check를 결합한 BriefCal mark
 - UI 기본 색: system background 위에 ink navy, muted slate, calendar accent만 사용
 - 강조 색: calendar source color는 narrow rail과 badge에 제한
 - 다크 모드: 같은 정보 계층을 유지하고 과한 neon/glass 효과를 피함

@@ -13,7 +13,7 @@ Event Brief 메모와 작업은 Exchange 원본 일정과 수명이 다르다. E
 ## 결정
 
 - GRDB.swift `7.10.0`을 Swift Package Manager exact version으로 고정한다.
-- 앱 시작 시 Application Support의 `KaosCal/kaoscal.sqlite`를 열고 `v1_context_store` migration을 적용한다. migration/open 실패 시 in-memory DB로 대체하지 않고 기존 파일을 보존한 채 앱 사용을 중단하고 복구 안내를 표시한다.
+- 앱 시작 시 Application Support의 `BriefCal/briefcal.sqlite`를 열고 `v1_context_store` migration을 적용한다. migration/open 실패 시 in-memory DB로 대체하지 않고 기존 파일을 보존한 채 앱 사용을 중단하고 복구 안내를 표시한다.
 - v1 migration에는 현재 필요한 네 테이블만 둔다: `event_contexts`, `event_links`, `event_tasks`, `personal_tasks`. change log는 Phase 6의 additive v2, calendar role은 Phase 8의 additive v3로 추가했다. Phase 9 settings/backup metadata는 DB table이 아니라 ZIP manifest이므로 migration을 추가하지 않는다.
 - `event_contexts`와 `event_links`는 `context_id UNIQUE`인 1:1 관계다. context 삭제 시 link와 event task는 foreign-key cascade로 삭제한다. 원본 EventKit 이벤트는 이 삭제에 포함하지 않는다.
 - 일정 선택이나 빈 메모는 row를 만들지 않는다. 첫 번째 비어 있지 않은 메모 또는 event task 저장 시 context와 link를 한 transaction에서 지연 생성한다.
@@ -26,7 +26,7 @@ Event Brief 메모와 작업은 Exchange 원본 일정과 수명이 다르다. E
 - 모든 `Date` column은 GRDB의 `.deferredToDate`를 명시해 UTC `YYYY-MM-DD HH:MM:SS.SSS` TEXT로 저장한다. 일반 GRDB `Date` binding과 같은 표현을 사용한다.
 - relative event-task due는 `before_start`, `at_start`, `at_end`, `after_end` anchor와 0 이상 2,628,000분 이하 offset으로 저장한다. due가 없으면 Before/During은 일정 시작, After는 일정 종료를 파생 due로 사용한다. all-day/floating due는 조회 시 표시 calendar에서 local components를 재구성하고 fixed due만 절대 시점으로 취급한다.
 - Task Center query는 event task와 personal task를 한 consistent read에서 합친다. `today`는 미완료이면서 내일 시작 전 또는 due가 없는 항목으로 overdue를 포함하고, `upcoming`은 내일 이후, `completed`는 완료 항목이다. personal task는 EventKit이나 Exchange에 동기화하지 않는다.
-- KaosCal 메모·작업은 SQLite에만 쓰며 `EKEvent.notes`에는 쓰지 않는다.
+- BriefCal 메모·작업은 SQLite에만 쓰며 `EKEvent.notes`에는 쓰지 않는다.
 
 ## 결과
 

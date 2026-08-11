@@ -26,11 +26,11 @@ def main() -> int:
     targets = [
         target
         for target in report.get("targets", [])
-        if target.get("name") == "KaosCal.app"
+        if target.get("name") == "BriefCal.app"
     ]
     if len(targets) != 1:
         print(
-            f"expected exactly one KaosCal.app coverage target; found {len(targets)}",
+            f"expected exactly one BriefCal.app coverage target; found {len(targets)}",
             file=sys.stderr,
         )
         return 2
@@ -40,7 +40,7 @@ def main() -> int:
     executable = int(target.get("executableLines", 0))
     coverage = float(target.get("lineCoverage", 0))
     print(
-        f"KaosCal.app line coverage: {coverage:.2%} "
+        f"BriefCal.app line coverage: {coverage:.2%} "
         f"({covered}/{executable}); required: {minimum:.2%}"
     )
     if coverage + 1e-12 < minimum:

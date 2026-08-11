@@ -6,7 +6,7 @@
 
 ## 배경
 
-KaosCal은 EventKit의 calendar title, source, account type, color와 writable 상태를
+BriefCal은 EventKit의 calendar title, source, account type, color와 writable 상태를
 표시하지만, 여러 계정을 함께 사용할 때 사용자가 정한 Work/Personal 같은 의미는
 EventKit에 없다. 같은 일정이 여러 캘린더에 복제돼도 원본 식별자만으로 자동
 병합하거나 삭제할 수 없고, EventKit은 공유 Exchange 캘린더가 읽기 전용인 구체

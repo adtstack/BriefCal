@@ -1,11 +1,16 @@
 # Current Status
 
-> 기준 시각: 2026-08-03, Asia/Seoul
+> 기준 시각: 2026-08-07, Asia/Seoul
 >
 > 용도: 현재 진행 상태의 요약. 범위·판정·실행 증거의 원문은 아래 근거 문서를 따른다.
 
 ## 요약
 
+- **제품 식별자 기준선:** 제품이 아직 배포되지 않았으므로 공개 이름뿐 아니라 Xcode
+  project/scheme/target/module, bundle·test identifier, 앱 실행 파일과 artifact, local DB·backup,
+  Keychain·EventKit·Sparkle namespace, build/QA 변수와 URL scheme을 모두 `BriefCal`/
+  `briefcal`로 통일했다. 기준은
+  [ADR-021](adr/ADR-021-briefcal-pre-release-identity-baseline.md)을 따른다.
 - **현재 위치:** v1 기능 개발은 종료·동결했다. v2 T0~T5, calendar visibility/availability,
   saved Calendar Set v9, provider recovery v10과 mini month event dot을 구현했다. 2026-07-20에는
   오른쪽 `Tasks`의 네 provider capability-aware CRUD, Task Center planning v11, provider task와
@@ -22,16 +27,16 @@
 - **후속 구현 순서:** [상용 기능 로드맵](commercial-feature-roadmap.md)의 C0~C4를 따른다.
   C0는 현재 T0~T5/v10 live·Release 증거다. C1 가운데 Full Month는 구현·자동/offscreen
   검증 완료·live 대기이고, 알림·일정 검색·Quick Add/template·회의 링크 Join은 구현 대기다.
-  C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, KaosCal
+  C2/C3도 이 Mac에서 실행·저장하는 기능만 진행한다. AI, BriefCal
   계정/backend/cloud sync, telemetry, scheduling server와 모바일·웹 companion은
-  [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 C4 영구 제외다.
-- **최신 완료 판정 자동 결과:** 322 tests executed, 321 passed, 1 intentional
-  `ManualEventKitQATests` skip, 0 failures. Result bundle:
-  `/private/tmp/KaosCalSigningFixUnit.xcresult`. `KaosCal.app` line coverage는
-  **53.61% (29,698/55,395)**로 50% floor를 통과했다. 정적 분석, production-shaped Release
-  compile, EventKit async 경계의 strict concurrency build와 UI target의 ad-hoc signed
-  `build-for-testing`도 통과했다. 별도 universal Local Test Release의 strict signature와 실제
-  launch smoke도 통과했다.
+  [ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md)에 따라 C4 영구 제외다.
+- **최신 완료 판정 자동 결과:** 제품 식별자 재설정 뒤 329 tests executed, 328 passed,
+  1 intentional `ManualEventKitQATests` skip, 0 failures. Result bundle:
+  `/private/tmp/BriefCalIdentityTestsFinal.xcresult`. universal Local Test Release
+  `/private/tmp/BriefCalIdentityReleaseDerivedData/Build/Products/Release/BriefCal.app`은
+  `com.adtstack.briefcal`, 단일 `briefcal://`, arm64/x86_64, strict signature·entitlement,
+  XCTest 부재와 실제 launch smoke를 통과했다. Release app executable의 폐기 식별자 검색도
+  0건이다.
 - **중간 체크포인트:** Apple CRUD 268-test, move/bulk/Undo 271-test와 calendar/planning 집중
   test, Google OAuth/Tasks 집중 test가 각각 통과했으며 최종 판정은 위 322-test 결과를 따른다.
 - **새 구현 / live 대기:** 네 provider 직접 CRUD, Apple 목록/account 이동과 Todoist
@@ -45,12 +50,12 @@
   연결 재실행은 대기 중이다. Microsoft To Do는 ID token `oid`와 Graph `/me.id`를 중복
   상호 검증하지 않고, 실제 To Do API access token으로 조회한 opaque Graph `/me.id`를 형식
   변환 없이 tenant와 함께 계정 키의 정본으로 사용한다.
-- **Full Month / 자동·offscreen 검증 완료·live 대기:** 4~6주 본문 Month, 시간+제목, all-day/timed
-  multi-day의 주별 segment, `+N more`와 날짜별 popover, Calendar Set/Enabled filter,
+- **Full Month / 자동·offscreen 검증 완료·live 대기:** 연속 주간 scroll, 매월 1일의 3pt 경계와
+  locale 월명, 시간+제목, all-day/timed multi-day의 주별 segment, `+N more`와 날짜별 popover, Calendar Set/Enabled filter,
   event→Inspector와 날짜 focus→Day, keyboard/VoiceOver 의미를 구현했다. 상단
   `Day / Week / Month / Agenda` 전환기와 `⌘1`~`⌘5`도 같은 workspace 순서로 연결했다.
   drag 이동·resize, Quarter/Year, 전체 일정 검색, Day Summary와 Quick Add/template은
-  이번 범위가 아니다. 560×520의 6주·고밀도 offscreen bitmap과 전체 회귀는 통과했고,
+  이번 범위가 아니다. 560×520의 초기 6주 viewport·고밀도 offscreen bitmap과 전체 회귀는 통과했고,
   실제 창의 keyboard·VoiceOver·appearance와 Exchange fixture 근거는 대기다.
 - **자동업데이트 / 발행 대기:** Sparkle 2.9.2 수신기, automatic check/install,
   `Check for Updates…`, signed-feed/pre-extraction 검증과 sandbox helper entitlement를
@@ -66,7 +71,7 @@
 | --- | --- | --- | --- |
 | 0 · Repo bootstrap | 완료 | build/test, ad-hoc signing, window 생성 | 없음 |
 | 1 · EventKit read-only | 실계정 부분 통과 | full access와 `KAOS-TEST`·`일정`의 Exchange/writable 표시 | 권한 거부·복구 UI, shared read-only, live all-day/recurrence 표시, Calendar.app 변경 반영 |
-| 2 · Calendar layout | Day/Week/Agenda·mini month·Full Month 자동/offscreen 완료, live 대기 | Day/Week/Agenda 공통 범위, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count, 4~6주 Month·주별 multi-day segment·overflow·상단 view 전환 | `CAL-007`/`UI-005`와 `COM-003` 실창·VoiceOver, Month 고밀도·popover·keyboard, 실제 scroll·선택·inspector와 live all-day/recurrence 배치 |
+| 2 · Calendar layout | Day/Week/Agenda·mini month·Full Month 자동/offscreen 완료, live 대기 | Day/Week와 Agenda 주 section의 공통 시간 의미, 선택 주부터 lazy 확장되는 Agenda, timed/all-day 배치, mini month 42일 요약·event dot·접근성 count, 월 경계가 있는 연속 주간 Month·주별 multi-day segment·overflow·상단 view 전환 | `CAL-007`/`UI-005`와 `COM-003` 실창·VoiceOver, Month 고밀도·popover·keyboard, 실제 scroll·선택·inspector와 live all-day/recurrence 배치 |
 | 3 · Local context DB | 구현 기준 완료 | v1 DB, repository, identity, 재열기·동시 저장 자동 회귀 | 실제 UI 재실행 유지, identifier churn·detached recurrence |
 | 4 · Event Brief / Task Center | 구현·provider 안전성 보강 포함 최신 전체 자동 검증 완료·live 대기 | local notes, Before/During/After, personal/event CRUD, durable provider recovery, 네 provider 직접 CRUD·일괄 완료, Google Cloud External/Testing Desktop client·dynamic loopback·scope/date-only due·revoke local preservation, Git 밖 Desktop credential build injection, Microsoft tenant UUID + opaque Graph account identity, Apple list/account 및 Todoist project/section move, Todoist recent completed projection, local planning v11, exact date/group/saved view/search, Event Brief link·상대 기한, task calendar block·Set filter, 반복 완료 원자성·provider mutation 직렬화 | Google `.env` 실제 값 주입 뒤 실계정 consent·CRUD·revoke/reconnect/residue 0, 실제 4-provider create/update/complete/delete·Apple/Todoist move/Undo·calendar drag/relink·재실행·retry limit·cleanup, 창 focus/menu/검색, 긴 source 문구·VoiceOver |
 | 5 · Real event editing | 비반복 live CRUD 부분 통과 | attendee 없는 writable 단일 일정 create→restart/refetch→update→delete와 서버 residue 0 | Calendar.app 시각 round-trip, all-day, floating/zoned time, identifier churn |
@@ -83,14 +88,14 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 ### 2026-08-03 runnable Local Test 서명·launch checkpoint
 
-- 발견: `/private/tmp/KaosCalQualityHardening-1be4aa5/Build/Products/Release/KaosCal.app`을
+- 발견: `/private/tmp/BriefCalQualityHardening-1be4aa5/Build/Products/Release/BriefCal.app`을
   Finder에서 열자 dyld가 `@rpath/Sparkle.framework`를 찾은 뒤 code-signature Team identity
   불일치로 거부했다. crash report의 namespace는 `DYLD`, indicator는 `Library missing`이지만
   실제 파일 부재가 아니라 ad-hoc+hardened runtime library validation 실패였다. strict deep
   `codesign`만으로 실제 동적 로딩 성공을 입증할 수 없다는 품질 공백이다.
-- 수정: production-shaped Release는 `KaosCalLocalTestBuild=NO`와 hardened runtime build setting을
+- 수정: production-shaped Release는 `BriefCalLocalTestBuild=NO`와 hardened runtime build setting을
   유지하되 Developer ID 없이는 패키징하지 않는다. Finder에서 여는 ad-hoc 산출물은 명시적인
-  marker `YES`, `KAOSCAL_LOCAL_TEST_BUILD` compiler condition과 hardened runtime 비활성화를 함께
+  marker `YES`, `BRIEFCAL_LOCAL_TEST_BUILD` compiler condition과 hardened runtime 비활성화를 함께
   사용한다. 실제 배포는 같은 Developer ID Team으로 app/nested code를 서명하고 marker `NO`와
   hardened runtime을 유지해야 한다.
 - 자동 gate: `scripts/build_local_test_app.sh`와 `verify_local_test_app.sh`가 universal build,
@@ -99,14 +104,14 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
   앱을 3초 실행해 Sparkle dyld load와 bootstrap 생존을 확인한다. CI zip과 tag DMG도 같은
   launch smoke를 통과해야 한다.
 - 실행 결과: universal app
-  `/private/tmp/KaosCalRunnableLocalTest/Build/Products/Release/KaosCal.app`은 marker `YES`,
+  `/private/tmp/BriefCalRunnableLocalTest/Build/Products/Release/BriefCal.app`은 marker `YES`,
   ad-hoc signature, hardened runtime 부재를 확인했다. 직접 app 2회, ZIP 압축 해제본과 읽기 전용
-  DMG mount 내부 app이 각각 launch smoke를 통과했고 새 KaosCal crash report는 없었다. 검증 DMG는
-  `/private/tmp/KaosCalSigningFix-local.dmg`, SHA-256은
+  DMG mount 내부 app이 각각 launch smoke를 통과했고 새 BriefCal crash report는 없었다. 검증 DMG는
+  `/private/tmp/BriefCalSigningFix-local.dmg`, SHA-256은
   `704d13f15a995cb8fc3a19d7702e74e109c1feb64377ef20f1b57564ca7e8d47`이다. 일반 실행에는
   `--ui-testing`이 없어 실제 Calendar/local DB 경로로 시작한다.
 - 회귀: 전체 **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
-  0 failures**, result bundle `/private/tmp/KaosCalSigningFixUnit.xcresult`. app line coverage
+  0 failures**, result bundle `/private/tmp/BriefCalSigningFixUnit.xcresult`. app line coverage
   **53.61% (29,698/55,395)**, 정적 분석, production-shaped universal Release compile과 UI
   `build-for-testing`이 통과했다.
 - 경계: Local Test는 Developer ID/notarized 배포물이나 updater source가 아니다. 실제 XCUITest
@@ -116,14 +121,14 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 - unit 결과: 전체 **322 executed / 321 passed / 1 intentional `ManualEventKitQATests` skip /
   0 failures**. 후속 signing fix까지 포함한 최신 result bundle은
-  `/private/tmp/KaosCalSigningFixUnit.xcresult`다.
-  `KaosCal.app` line coverage는 **53.61% (29,698/55,395)**로 50% floor를 통과했다.
+  `/private/tmp/BriefCalSigningFixUnit.xcresult`다.
+  `BriefCal.app` line coverage는 **53.61% (29,698/55,395)**로 50% floor를 통과했다.
 - EventKit read 경계: `listCalendars`, `fetchEvents`, `lookupEvent`를 async 계약으로 바꾸고
   long-lived `EKEventStore`의 모든 read를 전용 serial executor에서 실행한다. raw `EKEvent`와
   `EKCalendar`는 executor 안에서 `Sendable` 값 snapshot으로 변환한 뒤에만 AppState로 돌아온다.
   write도 같은 executor에 직렬화해 read/write store 접근 순서를 보존했다. strict concurrency
   complete build는 통과했지만 다른 provider 파일의 기존 warning까지 해결한 것으로 보지 않는다.
-- UI automation: `KaosCalUITests` target과 Debug-only `--ui-testing` bootstrap을 추가했다.
+- UI automation: `BriefCalUITests` target과 Debug-only `--ui-testing` bootstrap을 추가했다.
   in-memory DB와 고정 calendar fixture로 Day/Week/Month/Agenda/Tasks 이동, Agenda event→Inspector/
   Event Brief→new editor, transient refresh 실패 뒤 stale data+warning/Retry 보존의 세 시나리오를
   작성했다. 실제 Calendar, Keychain, provider 계정과 운영 DB는 사용하지 않는다.
@@ -141,8 +146,8 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 ### 2026-08-03 안전·원자성·품질 보강 checkpoint
 
 - 결과: 전체 **319 executed / 318 passed / 1 intentional `ManualEventKitQATests` skip /
-  0 failures**. Result bundle은 `/private/tmp/KaosCalQualityFinal2.xcresult`다.
-  `KaosCal.app` line coverage는 **53.63% (29,559/55,121)**로 50% floor를 통과했고
+  0 failures**. Result bundle은 `/private/tmp/BriefCalQualityFinal2.xcresult`다.
+  `BriefCal.app` line coverage는 **53.63% (29,559/55,121)**로 50% floor를 통과했고
   `xcodebuild analyze`, workflow YAML 구문 검사와 `git diff --check`도 통과했다.
 - provider/OAuth 안전성: Microsoft Graph continuation을 exact HTTPS origin과 `/v1.0` 경로로
   제한하고 pagination 상한·반복 cursor 차단을 추가했다. Microsoft To Do deep link도 공식
@@ -168,7 +173,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 - 결과: **구현·자동/offscreen 검증 완료 / live 대기**. 전체 **312 executed / 311 passed /
   1 intentional `ManualEventKitQATests` skip / 0 failures**이며 result bundle은
-  `/private/tmp/KaosCalMonthDerived/Logs/Test/Test-KaosCal-2026.08.02_19-55-49-+0900.xcresult`다.
+  `/private/tmp/BriefCalMonthDerived/Logs/Test/Test-BriefCal-2026.08.02_19-55-49-+0900.xcresult`다.
 - 구현 범위: 4~6주 Month grid, 시간+제목, all-day/timed multi-day 주별 segment,
   자정 배타 종료, deterministic lane, `+N more`/popover, Calendar Set/Enabled,
   event→Inspector, 날짜 focus→Day, 상단 view picker, `⌘1`~`⌘5`, keyboard/VoiceOver semantics.
@@ -184,16 +189,16 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 결과: **297 executed / 296 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
 - result bundle:
-  `/private/tmp/KaosCalAutomaticUpdatesFinalTests.xcresult`
+  `/private/tmp/BriefCalAutomaticUpdatesFinalTests.xcresult`
 - Sparkle `2.9.2` exact revision `6276ba2b404829d139c45ff98427cf90e2efc59b`를 pin하고,
   HTTPS feed와 32-byte base64 공개 키 구성의 valid/missing/insecure 계약 3건을 추가했다.
   구성 없는 build는 앱을 정상 실행하되 updater와 update menu action을 비활성화한다.
 - synthetic public configuration을 주입한 universal ad-hoc Release:
-  `/private/tmp/KaosCalAutomaticUpdatesRelease/Build/Products/Release/KaosCal.app`, CDHash
+  `/private/tmp/BriefCalAutomaticUpdatesRelease/Build/Products/Release/BriefCal.app`, CDHash
   `28dabda20f68e7894b09db2e3957922c4fda867d`.
 - `x86_64`/`arm64`, hardened runtime, strict deep code-sign과 Sparkle framework,
   Autoupdate, Updater.app, Downloader.xpc, Installer.xpc 포함을 확인했다. app entitlement의
-  mach service는 `com.adtstack.kaoscal-spks`와 `com.adtstack.kaoscal-spki`이고 XCTest는 없다.
+  mach service는 `com.adtstack.briefcal-spks`와 `com.adtstack.briefcal-spki`이고 XCTest는 없다.
   Info.plist의 automatic check/install, signed-feed와 pre-extraction verification도 `true`이고
   Sparkle system profiling은 plist/runtime에서 비활성화했다.
 - 이 artifact의 feed와 공개 키는 치환 검증용 synthetic 값이며 실제 update를 발행하지
@@ -210,13 +215,13 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 결과: **293 executed / 292 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
 - result bundle:
-  `/tmp/KaosCalMicrosoftOpaqueCleanFull/Logs/Test/Test-KaosCal-2026.07.24_09-51-42-+0900.xcresult`
+  `/tmp/BriefCalMicrosoftOpaqueCleanFull/Logs/Test/Test-BriefCal-2026.07.24_09-51-42-+0900.xcresult`
 - Microsoft ID token `oid`와 Graph `/me.id`의 앱 내부 상호 검증을 제거했다. token의 UUID
   `tid`와 실제 To Do access token으로 조회한 opaque Graph `/me.id`를 계정 키에 사용한다.
   Graph ID는 UUID로 가정하거나 대소문자를 변환하지 않는다. 서로 다른 token `oid`와 opaque
   Graph ID를 받은 정상 연결, 빈 Graph ID의 credential 미저장 회귀가 통과했다.
 - universal ad-hoc Release:
-  `/tmp/KaosCalMicrosoftOpaqueRelease-20260724/Build/Products/Release/KaosCal.app`, CDHash
+  `/tmp/BriefCalMicrosoftOpaqueRelease-20260724/Build/Products/Release/BriefCal.app`, CDHash
   `6d8f5c18877b47c656f4558a8a87b1ba2ae064c7`.
 - `x86_64`/`arm64`, hardened runtime, strict code-sign, app sandbox·Calendar·Reminders·파일 선택·
   network client/server entitlement, XCTest 미포함과 기존 inconsistent/invalid Graph identity
@@ -227,12 +232,12 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 결과: **293 executed / 292 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
 - result bundle:
-  `/tmp/KaosCalFinalGate/Logs/Test/Test-KaosCal-2026.07.23_17-51-14-+0900.xcresult`
+  `/tmp/BriefCalFinalGate/Logs/Test/Test-BriefCal-2026.07.23_17-51-14-+0900.xcresult`
 - Microsoft ID token `oid`와 Graph `/me.id`를 문자열 표기가 아닌 UUID 값으로 비교한다. 같은
   GUID의 대소문자 차이는 허용하고 실제 다른 GUID는 credential 저장 전에 거부하는 회귀가
   통과했다.
 - universal ad-hoc Release:
-  `/tmp/KaosCalFinalUniversalRelease-20260723/Build/Products/Release/KaosCal.app`, CDHash
+  `/tmp/BriefCalFinalUniversalRelease-20260723/Build/Products/Release/BriefCal.app`, CDHash
   `9d5300b0b2f6195dafeb109231d5448017a00493`.
 - `x86_64`/`arm64`, hardened runtime, strict code-sign, app sandbox·Calendar·Reminders·파일 선택·
   network client/server entitlement, 실제 로컬 OAuth build setting 주입과 XCTest 비포함을
@@ -242,7 +247,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 - 결과: **292 executed / 291 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
-- result bundle: `/tmp/KaosCalGoogleSecretFullTests.xcresult`
+- result bundle: `/tmp/BriefCalGoogleSecretFullTests.xcresult`
 - 범위: Git-ignored 루트 `.env`의 optional xcconfig 주입, Google token/refresh request의 조건부
   form-encoded `client_secret`, dynamic redirect 교체 뒤 credential 보존, 값 없는 build의
   `Not configured` 경계를 포함한다.
@@ -250,15 +255,15 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
   기록하지 않았다.
 - 이후 Git-ignored 실제 로컬 `.env`로 clean Debug build를 생성하고 app 안의 client ID,
   loopback redirect와 credential의 비어 있지 않음을 원문 출력 없이 확인했다. strict code-sign도
-  통과했다. app: `/tmp/KaosCalGoogleLiveSecretBuild-20260723/Build/Products/Debug/KaosCal.app`
+  통과했다. app: `/tmp/BriefCalGoogleLiveSecretBuild-20260723/Build/Products/Debug/BriefCal.app`
 
 ### 2026-07-23 Google Cloud 구성·pre-push 자동 gate
 
 - 결과: **292 executed / 291 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
-- result bundle: `/tmp/KaosCalGooglePrePushFinal.xcresult`
+- result bundle: `/tmp/BriefCalGooglePrePushFinal.xcresult`
 - 실계정 테스트용 local ad-hoc Debug app:
-  `/tmp/KaosCalGoogleLiveTestApp/Build/Products/Debug/KaosCal.app`
+  `/tmp/BriefCalGoogleLiveTestApp/Build/Products/Debug/BriefCal.app`
 - 별도 app build와 strict code-sign 검증이 통과했고, app `Info.plist`에서 공개 Google Desktop
   client ID와 `http://127.0.0.1` redirect base 확장을 확인했다. client secret/token 패턴은
   저장소에서 검출되지 않았다.
@@ -270,7 +275,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 결과: **292 executed / 291 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
 - result bundle:
-  `/tmp/KaosCalGooglePlanBaseline/Logs/Test/Test-KaosCal-2026.07.21_18-29-25-+0900.xcresult`
+  `/tmp/BriefCalGooglePlanBaseline/Logs/Test/Test-BriefCal-2026.07.21_18-29-25-+0900.xcresult`
 - 범위: Google Desktop OAuth의 임의 loopback 포트와 authorization/token redirect 일치,
   callback state/path·거부·timeout·중복 완료, 필수 `openid`/Tasks scope 확인 전 credential
   미저장, UTC/KST/America/New_York civil-date due, 명시적 due `null`, list/task pagination,
@@ -279,9 +284,9 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
   포함한다. 현재
   Tasks drawer와 Microsoft OAuth 사용자 변경을 포함한 전체 회귀도 함께 통과했다.
 - artifact: local ad-hoc Debug
-  `/tmp/KaosCalGooglePlanBaseline/Build/Products/Debug/KaosCal.app`
+  `/tmp/BriefCalGooglePlanBaseline/Build/Products/Debug/BriefCal.app`
 - Google Cloud 준비 완료: Tasks API 활성화, External/Testing audience, test user 등록,
-  Desktop OAuth client 생성과 공개 `KAOSCAL_GOOGLE_TASKS_CLIENT_ID` 주입을 완료했다.
+  Desktop OAuth client 생성과 공개 `BRIEFCAL_GOOGLE_TASKS_CLIENT_ID` 주입을 완료했다.
 - 남은 live gate: 실제 consent, CRUD·권한 철회·재연결과 residue 0은 아직 실행하지 않았다.
   Google Calendar 직접 API는 추가하지 않았다.
 
@@ -290,9 +295,9 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 결과: **280 executed / 279 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
 - result bundle:
-  `/tmp/KaosCalUnifiedTasksCompleteBuild/Logs/Test/Test-KaosCal-2026.07.20_14-16-19-+0900.xcresult`
+  `/tmp/BriefCalUnifiedTasksCompleteBuild/Logs/Test/Test-BriefCal-2026.07.20_14-16-19-+0900.xcresult`
 - artifact: local ad-hoc Debug
-  `/tmp/KaosCalUnifiedTasksCompleteBuild/Build/Products/Debug/KaosCal.app`
+  `/tmp/BriefCalUnifiedTasksCompleteBuild/Build/Products/Debug/BriefCal.app`
 - 범위: Apple Reminders·Google Tasks·Todoist·Microsoft To Do 공통 조회/생성/완료/편집/삭제,
   Apple 목록·계정 이동, Todoist project/section 이동과 일괄 이동·최근 90일 완료 projection,
   priority/Microsoft reminder capability와 version-aware Undo, v11 local planning,
@@ -307,13 +312,13 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 - 결과: **271 executed / 270 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
-- result bundle: `/tmp/KaosCalTasksInteractionBuild/Logs/Test/Test-KaosCal-2026.07.20_12-32-46-+0900.xcresult`
+- result bundle: `/tmp/BriefCalTasksInteractionBuild/Logs/Test/Test-BriefCal-2026.07.20_12-32-46-+0900.xcresult`
 - 범위: explicit remote task ID/version, Apple-only exact account/list/task write route, 생성,
   완료·미완료, 제목·전체 notes·기한 수정/제거, 목록·계정 간 이동, 삭제, 단일·일괄
   완료/이동의 version-aware session Undo, conflict, read-only, 권한 철회, metadata 실패,
   외부 삭제, 이동 binding 보존, 삭제 Undo의 새 remote ID 재연결, 기존 provider 재연결과
   300/360pt Tasks offscreen 회귀를 포함한다.
-- artifact: unsigned Debug `/tmp/KaosCalTasksInteractionBuild/Build/Products/Debug/KaosCal.app`
+- artifact: unsigned Debug `/tmp/BriefCalTasksInteractionBuild/Build/Products/Debug/BriefCal.app`
 - 한계: 실제 iCloud/On My Mac Reminders와 signed app, TCC 철회·복구, 외부 동시 수정,
   move/Undo cleanup, keyboard·VoiceOver 실창 검증은 남아 있다. Microsoft mutation과 task의
   Calendar 연결·시간 배치는 이 checkpoint 뒤 위 통합 결과에서 구현·자동 검증됐다.
@@ -335,7 +340,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 - 결과: **257 executed / 256 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
-- result bundle: `/tmp/KaosCalTasksFilters-Final-R2-20260716.xcresult`
+- result bundle: `/tmp/BriefCalTasksFilters-Final-R2-20260716.xcresult`
 - 범위: provider·account·list 복합 식별자, 빈 list를 포함한 Apple Reminders/Microsoft To Do
   선택지, 같은 provider/account 경계의 raw ID 충돌 방지, list·Open/Completed/All·제목/
   설명 검색·due/title 정렬 조합, 재실행 preference 복원, 일시적 metadata fallback, 삭제된
@@ -347,7 +352,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 - 결과: **254 executed / 253 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
-- result bundle: `/tmp/KaosCalRemindersConnection-Final-20260716.xcresult`
+- result bundle: `/tmp/BriefCalRemindersConnection-Final-20260716.xcresult`
 - 범위: 오른쪽 `Tasks`의 전체 높이, 첫 진입 시 Apple Reminders 권한 요청, 거부 시
   System Settings 복구, 연결 상태의 상시 표시와 권한 승인 후 실제 provider list/task
   projection을 포함한 전체 회귀다. 이름 `Tasks`는 유지했다.
@@ -358,7 +363,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 - 결과: **253 executed / 252 passed / 1 intentional manual-only skip / 0 failures**,
   `TEST SUCCEEDED`
-- result bundle: `/tmp/KaosCalProviderMiniMonth-Final-R3-20260715.xcresult`
+- result bundle: `/tmp/BriefCalProviderMiniMonth-Final-R3-20260715.xcresult`
 - 범위: Task Center provider/account/list projection, missing/conflict/disconnected 상태 전환과
   명시적 remote/local recovery, mini month 별도 42-civil-day snapshot, 본문 snapshot 보존,
   DST·자정·timed multi-day·all-day 배타 종료, global Enabled·선택 Set·blocking 독립,
@@ -369,7 +374,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 ### 2026-07-15 saved Calendar Set review 수정 후 최종 전체 결과
 
 - 결과: **250 executed / 249 passed / 1 intentional manual-only skip / 0 failures**
-- result bundle: `/tmp/KaosCalCalendarSets-Final-20260715.xcresult`
+- result bundle: `/tmp/BriefCalCalendarSets-Final-20260715.xcresult`
 - 범위: saved Set 데이터·AppState·Settings/offscreen 회귀와 review의 normal visibility 조건부
   reveal, post-write focus reveal, authoritative missing-state guard를 포함한 최종 작업 트리
   전체 suite다.
@@ -380,7 +385,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 - build 성공, focused suites **73 tests / 0 failures**
 - result bundle:
-  `/tmp/KaosCalCalendarSets/Logs/Test/Test-KaosCal-2026.07.15_18-53-22-+0900.xcresult`
+  `/tmp/BriefCalCalendarSets/Logs/Test/Test-BriefCal-2026.07.15_18-53-22-+0900.xcresult`
 - 범위에는 새 UI와 post-write focus 회귀가 포함된다. 이후 위 250-test 최종 전체 결과로
   승격됐다.
 
@@ -389,10 +394,10 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 결과: **248 executed / 247 succeeded / 1 intentional manual-only skip / 0 failed**,
   action status `succeeded`
 - result bundle:
-  `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-36-07-+0900.xcresult`
+  `/tmp/BriefCalCalendarSetsDataTests/Logs/Test/Test-BriefCal-2026.07.15_18-36-07-+0900.xcresult`
 - 집중 데이터 결과: ContextStore/LocalDataBackupService **84 executed / 84 succeeded /
   0 skipped / 0 failed**, action status `succeeded`; result bundle
-  `/tmp/KaosCalCalendarSetsDataTests/Logs/Test/Test-KaosCal-2026.07.15_18-34-47-+0900.xcresult`
+  `/tmp/BriefCalCalendarSetsDataTests/Logs/Test/Test-BriefCal-2026.07.15_18-34-47-+0900.xcresult`
 - 범위: `v9_saved_calendar_sets`, Set CRUD·정렬·exact membership·missing 보존/명시적
   rebind·selection persistence/삭제 fallback, global Enabled·blocking 독립, overlapping/
   mixed-role/empty Set, duplicate temporary reveal, backup/reset과 Settings offscreen 회귀를
@@ -407,7 +412,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 ### 2026-07-15 calendar usage 자동 결과(saved Set v9 이전)
 
 - 결과: **237 executed / 236 passed / 1 intentional manual-only skip / 0 failures / 0 unexpected**, `TEST SUCCEEDED`
-- result bundle: `/tmp/KaosCalCalendarUsageFullTests-20260715-1445.xcresult`
+- result bundle: `/tmp/BriefCalCalendarUsageFullTests-20260715-1445.xcresult`
 - 범위: 기존 전체 회귀, v2 task provider/reference migration·contract, calendar visibility와
   availability blocking의 독립 설정·sparse persistence·free/cancelled/declined 제외,
   Settings offscreen bitmap과 backup/reset 회귀를 포함한다.
@@ -422,13 +427,13 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 - 문서: 현행 동작과 인수 기준은 [제품·시스템 스펙](specification.md)에 요구사항 ID로
   정리했다. 이 checkpoint는 아래 과거 exact Release/live 증거를 최신 build로 승격하지 않는다.
 - offscreen test resource lifetime 정리 뒤
-  `/tmp/KaosCalCalendarUsageUIFinal-20260715-1450.xcresult`에서 해당 UI test 1/1을
+  `/tmp/BriefCalCalendarUsageUIFinal-20260715-1450.xcresult`에서 해당 UI test 1/1을
   경고 없이 재통과했다. production code는 위 전체 suite와 같다.
 
 ### Phase 10 자동 결과
 
 - 결과: **220 executed / 219 passed / 1 intentional manual-only skip / 0 failures / 0 unexpected**
-- result bundle: `/private/tmp/KaosCalPhase10Tests.xcresult`
+- result bundle: `/private/tmp/BriefCalPhase10Tests.xcresult`
 - 범위: 기존 전체 회귀에 bootstrap invalid-archive no-touch, DB+WAL/SHM/journal 격리와
   restore, replacement 검증 실패 뒤 원본 전체 rollback, onboarding/recovery offscreen
   bitmap을 추가했다.
@@ -437,7 +442,7 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 
 ### Phase 10 Release
 
-- artifact: `/private/tmp/KaosCalPhase10Release/Build/Products/Release/KaosCal.app`
+- artifact: `/private/tmp/BriefCalPhase10Release/Build/Products/Release/BriefCal.app`
 - CDHash: `4d7c1b5ad6dde65666f101cae00bdcb9d5b878ed`
 - 확인: ad-hoc signing, hardened runtime, strict codesign, sandbox·Calendar·user-selected
   read/write entitlement, version `0.1.0` build `1`, `get-task-allow`·XCTest 부재
@@ -451,15 +456,15 @@ review 전 248-test와 237-test calendar-usage checkpoint는 각각 별도 실�
 ### Phase 9 자동 결과
 
 - 결과: **213 executed / 212 passed / 1 intentional manual-only skip / 0 failures / 0 unexpected**
-- result bundle: `/private/tmp/KaosCalPhase9FinalTests-20260712-1535.xcresult`
-- 문서·release review 재실행: `/private/tmp/KaosCalReviewTests.xcresult`, 같은 213 executed /
+- result bundle: `/private/tmp/BriefCalPhase9FinalTests-20260712-1535.xcresult`
+- 문서·release review 재실행: `/private/tmp/BriefCalReviewTests.xcresult`, 같은 213 executed /
   212 passed / 1 intentional skip / 0 failures / 0 unexpected, `TEST SUCCEEDED`
 - 범위: strict backup archive/schema/destination, import/reset recovery, rollback-failure quarantine, Settings offscreen render, fake provider의 EventKit write 0회
 - 한계: fake provider와 test DB 결과는 실제 Calendar.app·Exchange 또는 실제 Settings panel 상호작용을 대신하지 않는다.
 
 ### Phase 9 Release
 
-- artifact: `/private/tmp/KaosCalPhase9FinalRelease-20260712-1535/Build/Products/Release/KaosCal.app`
+- artifact: `/private/tmp/BriefCalPhase9FinalRelease-20260712-1535/Build/Products/Release/BriefCal.app`
 - CDHash: `4f6eb184110ca317a440c5d640cf0670e4c42753`
 - 확인: ad-hoc signing, hardened runtime, strict codesign, sandbox·Calendar·user-selected read/write entitlement, `get-task-allow`·XCTest 부재
 - runtime: exact Release가 1512×949 visible window를 만들고 종료됨
@@ -498,7 +503,7 @@ Phase 10의 외부 입력과 미검증 항목은 [Phase 10 Blockers](phase10-blo
 
 실행 결과를 판정할 때는 다음 순서를 사용한다.
 
-1. exact signed artifact와 run ID가 있는 live 결과: EventKit, KaosCal UI, Calendar.app/서버, local DB, cleanup을 각각 기록한 증거
+1. exact signed artifact와 run ID가 있는 live 결과: EventKit, BriefCal UI, Calendar.app/서버, local DB, cleanup을 각각 기록한 증거
 2. exact Release audit: codesign·entitlement·runtime·운영 DB 불변 증거
 3. result bundle이 있는 자동 테스트: fake provider/test DB 범위
 4. offscreen·fixture render

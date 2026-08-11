@@ -1,4 +1,4 @@
-# KaosCal 제품·시스템 스펙
+# BriefCal 제품·시스템 스펙
 
 > 상태: Living Specification
 > 기준일: 2026-08-02, Asia/Seoul
@@ -9,7 +9,7 @@
 
 ## 1. 문서의 역할
 
-이 문서는 KaosCal이 **무엇을 해야 하는지**와 그 동작을 **어떻게 인수할지**를 한곳에
+이 문서는 BriefCal이 **무엇을 해야 하는지**와 그 동작을 **어떻게 인수할지**를 한곳에
 정리한 현행 스펙이다. 제품 배경과 결정 이유를 모두 복제하지 않고 기존 정본을 연결한다.
 
 - 이 문서: 사용자 동작, 시스템 불변식, 요구사항 ID, 인수 기준
@@ -18,8 +18,8 @@
 - [Current Status](current-status.md): 최신 자동·live·Release 증거와 열린 gate
 - [상용 기능 로드맵](commercial-feature-roadmap.md): 현재 기능 격차, C0~C4 순서와
   후속 `COM-*` 인수 기준
-- [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md): 이 Mac 단일 실행·저장,
-  AI와 KaosCal Cloud 영구 제외, 허용되는 provider 직접 동기화 경계
+- [ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md): 이 Mac 단일 실행·저장,
+  AI와 BriefCal Cloud 영구 제외, 허용되는 provider 직접 동기화 경계
 - [ADR-020](adr/ADR-020-signed-automatic-updates.md): direct-download build의 서명된
   자동업데이트와 dormant 개발 빌드 경계
 - [QA Checklist](qa-checklist.md): 수동 시나리오와 상세 판정 절차
@@ -61,7 +61,7 @@
 
 ### 2.1 제품 정의
 
-KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주고 편집하면서, 각 일정의
+BriefCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주고 편집하면서, 각 일정의
 준비·진행·후속 작업과 메모·참고 링크를 이 Mac에 오래 보존하는 macOS-only 실행 허브다.
 
 ### 2.2 핵심 사용자 결과
@@ -72,32 +72,32 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 4. 일정 작업과 개인 작업을 Task Center에서 함께 보되 출처와 정본을 구분한다.
 5. 캘린더별 표시 여부와 가용시간 차단 여부를 서로 독립적으로 정한다.
 6. 외부 task provider를 연결하지 않거나 연결이 실패해도 local-only 흐름을 유지한다.
-7. KaosCal 로컬 데이터는 사용자가 명시적으로 export/import/reset할 수 있다.
+7. BriefCal 로컬 데이터는 사용자가 명시적으로 export/import/reset할 수 있다.
 
 ### 2.3 제품 원칙
 
 - 사용자를 대신해 일정을 자동 결정·재배치·수락·삭제하지 않는다.
 - 확인할 수 없는 identity, recurrence, 삭제 상태를 추측해 쓰지 않는다.
-- Calendar 원본과 KaosCal 로컬 맥락의 소유권을 분리한다.
+- Calendar 원본과 BriefCal 로컬 맥락의 소유권을 분리한다.
 - read-only 원본에도 local Event Brief는 편집할 수 있게 한다.
 - 출처, 역할, 권한, 연결 및 sync 상태를 숨기지 않는다.
 - 서버·계정·구독 없이도 local-only 핵심 흐름이 동작해야 한다.
-- KaosCal 기능과 KaosCal 소유 데이터는 이 Mac에서만 실행·저장하며 AI, KaosCal 계정,
+- BriefCal 기능과 BriefCal 소유 데이터는 이 Mac에서만 실행·저장하며 AI, BriefCal 계정,
   backend, cloud sync, telemetry와 remote automation을 도입하지 않는다.
 - Calendar sync는 EventKit, task sync는 사용자가 선택한 provider와 이 Mac의 직접 연결로
-  수행하며 KaosCal 중계 서버를 경유하지 않는다.
+  수행하며 BriefCal 중계 서버를 경유하지 않는다.
 - 배포 update는 사용자 본문을 전송하지 않는 정적 HTTPS signed feed만 사용할 수 있고,
   구성·검증 실패가 local-only 핵심 흐름을 막아서는 안 된다.
 
 ## 3. 시스템 경계와 데이터 소유권
 
-| 데이터 | 정본 | KaosCal 책임 |
+| 데이터 | 정본 | BriefCal 책임 |
 | --- | --- | --- |
 | 일정 제목·시간·장소·참석자·원본 notes | macOS EventKit의 Calendar event | 값 snapshot, 안전한 지원 범위의 read/write, 변경 후 재조회 |
-| Before/During/After, KaosCal notes, lifecycle | KaosCal SQLite | 생성·보존·복구·backup |
-| Personal task | KaosCal SQLite | local-only CRUD와 Task Center projection |
+| Before/During/After, BriefCal notes, lifecycle | BriefCal SQLite | 생성·보존·복구·backup |
+| Personal task | BriefCal SQLite | local-only CRUD와 Task Center projection |
 | 외부 task 제목·due·완료 | 선택한 task provider | 최소 local projection, binding, sync 상태와 충돌 설명 |
-| calendar role·표시·blocking 정책 | KaosCal SQLite | EventKit 원본을 바꾸지 않는 sparse preference |
+| calendar role·표시·blocking 정책 | BriefCal SQLite | EventKit 원본을 바꾸지 않는 sparse preference |
 | 외부 reference | 외부 URL 대상 | URL·표시 제목·상태만 최소 저장 |
 | OAuth credential | macOS Keychain | 연결·갱신·해제; SQLite/ZIP/log에 복제 금지 |
 
@@ -111,8 +111,8 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | ID | 상태 | 요구사항과 인수 기준 |
 | --- | --- | --- |
 | `SYS-001` | 기준선 | macOS 14 이상 네이티브 앱으로 빌드·실행해야 한다. SwiftUI UI, EventKit calendar 경계, GRDB/SQLite local store를 사용한다. |
-| `SYS-002` | 기준선 | KaosCal 기능과 KaosCal 소유 데이터는 이 Mac에서만 실행·저장해야 한다. AI SDK/API, KaosCal account/backend/cloud database, telemetry, remote config와 cross-device local-data sync를 추가해서는 안 된다. |
-| `SYS-003` | 구현 / live 대기 | Calendar는 EventKit, 연결한 event task는 이 Mac과 사용자가 고른 provider 사이에서 직접 동기화해야 한다. KaosCal relay를 사용하면 안 되고 OAuth token은 Keychain에만 저장하며 provider가 없어도 local-only 흐름을 유지해야 한다. |
+| `SYS-002` | 기준선 | BriefCal 기능과 BriefCal 소유 데이터는 이 Mac에서만 실행·저장해야 한다. AI SDK/API, BriefCal account/backend/cloud database, telemetry, remote config와 cross-device local-data sync를 추가해서는 안 된다. |
+| `SYS-003` | 구현 / live 대기 | Calendar는 EventKit, 연결한 event task는 이 Mac과 사용자가 고른 provider 사이에서 직접 동기화해야 한다. BriefCal relay를 사용하면 안 되고 OAuth token은 Keychain에만 저장하며 provider가 없어도 local-only 흐름을 유지해야 한다. |
 | `SYS-004` | 구현 / live 대기 | direct-download build는 유효한 HTTPS `SUFeedURL`과 32-byte Ed25519 공개 키가 모두 있을 때만 Sparkle updater를 시작해야 한다. 구성된 빌드는 자동 확인·설치와 수동 확인을 제공하고 signed appcast/archive 및 Developer ID/notarized app만 받아야 한다. 구성 없음, offline, feed 또는 서명 오류는 Calendar/Event Brief/task/local DB 동작을 막거나 데이터를 변경해서는 안 된다. 현재 ad-hoc GitHub prerelease는 update feed에 포함하면 안 되며 실제 이전-build upgrade는 별도 live gate다. |
 | `CAL-001` | 기준선 | Calendar 권한을 `notDetermined`, `fullAccess`, `denied`, `restricted`, `writeOnly`, `unknown`으로 구분해야 한다. full access가 아니면 event fetch를 시작해서는 안 된다. |
 | `CAL-002` | 기준선 | 첫 요청, 거부, 철회, 알 수 없는 미래 상태를 안전한 UI로 보여 줘야 한다. 권한 철회 시 메모리의 calendar/event/selection을 비워 이전 원본 정보가 남지 않아야 한다. |
@@ -173,7 +173,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | ID | 상태 | 요구사항과 인수 기준 |
 | --- | --- | --- |
 | `CTX-001` | 기준선 | event 선택만으로 DB row를 만들면 안 된다. 첫 non-empty local notes 또는 event task 저장 시 context와 link를 한 transaction에서 만들어야 한다. |
-| `CTX-002` | 기준선 | KaosCal notes는 EventKit notes와 분리해 SQLite에 저장하고 debounce 중 navigation·mutation 전 flush해야 한다. 실패 시 원본 editor를 열기 전에 사용자에게 알려야 한다. |
+| `CTX-002` | 기준선 | BriefCal notes는 EventKit notes와 분리해 SQLite에 저장하고 debounce 중 navigation·mutation 전 flush해야 한다. 실패 시 원본 editor를 열기 전에 사용자에게 알려야 한다. |
 | `CTX-003` | 기준선 | Event task는 Before/During/After, ordering, completion, none/relative/fixed due를 지원해야 한다. 한 context의 task mutation이 다른 context row를 바꾸면 안 된다. |
 | `CTX-004` | 기준선 | Event Brief에는 원본 source/role/write restriction, local notes/tasks, 변경 이력과 복구 상태를 구분해 보여 줘야 한다. |
 | `TASK-001` | 기준선 | Personal task는 event 없이 생성·이름 변경·due 변경·완료·삭제할 수 있어야 하며 local-only여야 한다. |
@@ -197,7 +197,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `LCY-003` | 기준선 | Keep as orphan, 검증된 Relink, Delete local Brief를 서로 다른 명령으로 제공해야 한다. Relink는 final provider verification과 expected-link CAS를 통과한 뒤 atomic rebind해야 한다. |
 | `LCY-004` | 기준선 | missing/orphaned local Brief 삭제는 SQLite context만 cascade 삭제하고 EventKit delete를 호출해서는 안 된다. |
 | `LCY-005` | 기준선 | linked original delete는 saved-link·notes·tasks impact review와 별도 final Confirm 뒤에만 실행해야 한다. 성공 뒤 local Brief/tasks는 보존하고 context cancelled + link orphaned + unavailable cancellation log로 finalize해야 한다. |
-| `LCY-006` | 기준선 | `deleted original` 표시는 현재 link 세대의 KaosCal deletion provenance가 있을 때만 보여야 한다. 더 최신 relink는 과거 deletion provenance를 무효화해야 한다. |
+| `LCY-006` | 기준선 | `deleted original` 표시는 현재 link 세대의 BriefCal deletion provenance가 있을 때만 보여야 한다. 더 최신 relink는 과거 deletion provenance를 무효화해야 한다. |
 
 ### 4.7 외부 task provider
 
@@ -233,11 +233,11 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `DATA-002` | 기준선 | migration은 additive이며 이미 적용된 migration을 수정하면 안 된다. 현행 ledger는 `v1_context_store`부터 `v11_local_task_planning`까지 순서대로 적용한다. |
 | `DATA-003` | 기준선 | EventKit ID 하나를 영구 identity로 간주하면 안 된다. strong IDs, calendar, recurrence/occurrence anchor, 시간 의미와 snapshot을 사용하고 weak/fingerprint 후보는 사용자 승인 전 자동 연결하면 안 된다. |
 | `DATA-004` | 기준선 | role·calendar usage preference와 saved Set membership은 exact calendar identifier에만 적용한다. identifier churn 뒤 같은 title이라는 이유로 자동 이식하면 안 되며 saved membership rebind는 사용자의 명시적 선택과 stale-ID 검증을 요구해야 한다. |
-| `BAK-001` | 기준선 | export는 store-only classic ZIP에 `kaoscal.sqlite`와 `manifest.json` 두 entry만 만들고 migration ledger, schema, byte count, SHA-256과 크기 상한을 검증 가능하게 기록해야 한다. |
+| `BAK-001` | 기준선 | export는 store-only classic ZIP에 `briefcal.sqlite`와 `manifest.json` 두 entry만 만들고 migration ledger, schema, byte count, SHA-256과 크기 상한을 검증 가능하게 기록해야 한다. |
 | `BAK-002` | 기준선 | ZIP은 plaintext이며 서명·암호화 backup으로 표현하면 안 된다. credential/token, 전체 EventKit store와 외부 원문은 넣지 않되 사용자 notes/tasks와 linked snapshot에는 민감정보가 있을 수 있음을 알려야 한다. |
 | `BAK-003` | 기준선 | import는 실행 중인 앱과 application ID·schema·migration이 정확히 같은 trusted backup만 허용해야 한다. preflight 전 active DB를 바꾸면 안 되고 record merge·schema upgrade/downgrade를 제공하면 안 된다. |
 | `BAK-004` | 기준선 | import/reset은 먼저 recovery ZIP을 만든 뒤 같은 live writer에서 restore 또는 local-data reset을 수행해야 한다. 모든 경로는 EventKit write를 호출하면 안 된다. |
-| `BAK-005` | 기준선 | reset은 KaosCal user-data table을 비우되 schema와 GRDB migration history를 유지해야 한다. provider metadata/cursor/binding/reference, role/usage와 saved Set/membership/selection도 현재 schema의 reset 대상에 포함한다. Keychain credential 삭제는 별도 Disconnect 확인 경계다. |
+| `BAK-005` | 기준선 | reset은 BriefCal user-data table을 비우되 schema와 GRDB migration history를 유지해야 한다. provider metadata/cursor/binding/reference, role/usage와 saved Set/membership/selection도 현재 schema의 reset 대상에 포함한다. Keychain credential 삭제는 별도 Disconnect 확인 경계다. |
 | `BAK-006` | 기준선 | bootstrap DB open/migration 실패 시 strict same-schema backup을 먼저 검증하고, 기존 SQLite family를 Recovery에 격리한 뒤 설치해야 한다. 설치 검증 실패 시 원본 family 전체 rollback을 시도해야 한다. |
 | `BAK-007` | 기준선 | rollback 자체가 실패하면 해당 session의 mutation과 refresh를 quarantine하고 부분 복구를 성공으로 표시하면 안 된다. |
 
@@ -246,9 +246,10 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | ID | 상태 | 요구사항과 인수 기준 |
 | --- | --- | --- |
 | `SET-001` | 기준선 | 첫 실행은 이 Mac에만 저장되는 local-only 데이터 경계, Calendar full access와 선택 provider 직접 동기화 이유를 설명하고 사용자의 명시적 Continue 뒤 완료 상태를 저장해야 한다. |
-| `SET-002` | 기준선 | Settings는 Calendars, Calendar Sets, Task Providers, Local Data의 책임을 분리해 제공해야 한다. destructive reset은 정확한 `RESET` 입력과 별도 확인 없이는 활성화하면 안 된다. |
+| `SET-002` | 기준선 | Settings는 General, Calendars, Calendar Sets, Task Providers, Local Data의 책임을 분리해 제공해야 한다. destructive reset은 정확한 `RESET` 입력과 별도 확인 없이는 활성화하면 안 된다. |
 | `SET-003` | 기준선 | permission recovery, empty state, operation error와 partial success는 사용자가 다음 안전한 행동을 알 수 있는 문구를 제공해야 한다. |
 | `SET-004` | 구현 / live 대기 | Settings의 calendar usage, Calendar Sets와 provider account/list UI는 긴 account/calendar/provider/Set 이름, keyboard, scroll과 VoiceOver에서 의미를 잃지 않아야 한다. membership은 Included/Not included, disabled와 unavailable 상태를 색만으로 전달하면 안 되며 자동·offscreen 결과만으로 실제 접근성 통과를 선언하면 안 된다. |
+| `SET-005` | 구현 / 자동·offscreen 검증 완료 | General에서 주 시작 요일을 Sunday 또는 Monday로 선택하고 재실행 뒤에도 유지해야 한다. 변경 시 focused civil day를 바꾸지 않고 Sidebar mini month, Week, Month와 Agenda의 주 경계 및 mini month summary coverage를 즉시 다시 계산해야 한다. |
 
 ### 4.11 상용 기능 후속 요구사항
 
@@ -260,7 +261,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | --- | --- | --- | --- |
 | `COM-001` | C1 | 설계 승인 / 구현 대기 | 일정·local task notification을 명시적으로 설정·해제하고 due와 reminder 의미를 분리하며, 권한 거부·변경·완료·삭제·재실행 뒤 중복 예약을 만들지 않아야 한다. |
 | `COM-002` | C1 | 설계 승인 / 구현 대기 | 제목·장소·calendar/source·날짜 범위로 bounded EventKit 검색을 제공하고 검색 범위를 공개하며 exact occurrence와 temporary reveal로 이동해야 한다. |
-| `COM-003` | C1 | 구현·자동/offscreen 검증 완료 / live 대기 | 일정 제목과 시간 정보를 보여 주는 본문 Month view가 locale·주 시작·4~6주의 완전한 주, all-day/timed multi-day의 주별 segment, 배타 종료, `+N` overflow와 날짜별 popover, `global Enabled ∩ 선택 Calendar Set`을 보존해야 한다. event 선택은 기존 Inspector로 이어지고 날짜 동작은 해당 Day로 이동해야 하며, 상단 Day/Week/Month/Agenda 전환기와 `⌘1`~`⌘5`, 방향키 focus와 VoiceOver 의미를 제공해야 한다. 첫 버전에는 일정 drag 이동·resize, Quarter/Year, 전체 검색, Day Summary와 Quick Add/template을 포함하지 않는다. |
+| `COM-003` | C1 | 구현·자동/offscreen 검증 완료 / live 대기 | 일정 제목과 시간 정보를 보여 주는 본문 Month view가 locale·주 시작을 따르는 연속 civil week scroll, 매월 1일의 굵은 경계와 locale 월명, lazy range 확장, all-day/timed multi-day의 주별 segment, 배타 종료, `+N` overflow와 날짜별 popover, `global Enabled ∩ 선택 Calendar Set`을 보존해야 한다. event 선택은 기존 Inspector로 이어지고 날짜 동작은 해당 Day로 이동해야 하며, 상단 Day/Week/Month/Agenda 전환기와 `⌘1`~`⌘5`, 방향키 focus와 VoiceOver 의미를 제공해야 한다. 첫 버전에는 일정 drag 이동·resize, Quarter/Year, 전체 검색, Day Summary와 Quick Add/template을 포함하지 않는다. |
 | `COM-004` | C1 | 설계 승인 / 구현 대기 | keyboard Quick Add와 이 Mac에 저장하는 deterministic template을 제공하되 AI·자연어 추론·원격 생성 기능을 추가하면 안 된다. |
 | `COM-005` | C1 | 설계 승인 / 구현 대기 | EventKit snapshot에서 안전한 HTTPS 회의 링크 후보를 감지해 사용자가 선택·열 수 있게 하되 notes/URL 원문을 새 local 정본으로 복제하면 안 된다. |
 | `COM-006` | C2 | 구현 / live 대기 | 명시적 drag는 현재 Calendar Set의 writable calendar에 15분 단위·기본 1시간 block과 During task를 만들고 exact provider task를 연결해야 한다. 자동 재배치·완료 전파는 하지 않으며 부분 성공을 조용한 task 삭제로 보정하면 안 된다. |
@@ -270,7 +271,7 @@ KaosCal은 macOS Calendar에 연결된 일정의 시간과 출처를 보여 주�
 | `COM-010` | C2 | 로드맵 승인 / 설계 대기 | EventKit이 제공하는 URL·attachment metadata·organizer·응답 상태를 안전하게 표시하고 지원하지 않는 write는 Calendar.app exact-event 왕복으로 설명해야 한다. |
 | `COM-011` | C2 | 구현 / live 대기 | local task의 예상/실제 duration·반복·priority·중요 표시·checklist는 local planning overlay로 보존하고 provider 의미 손실 가능성이 있으면 write하지 않거나 명시적 capability 제한을 보여 줘야 한다. |
 | `COM-012` | C3 | 로드맵 승인 / 설계 대기 | 저장된 reference metadata의 local search·정렬·grouping만 검토하며 remote preview, background crawler, 본문 저장과 양방향 notes sync를 포함하지 않는다. |
-| `COM-013` | C3 | 로드맵 승인 / ADR 대기 | 선택한 과거 KaosCal archive importer는 격리 staging DB에서만 migration하고 preflight 실패 시 active DB와 원본 archive를 보존해야 한다. |
+| `COM-013` | C3 | 로드맵 승인 / ADR 대기 | 선택한 과거 BriefCal archive importer는 격리 staging DB에서만 migration하고 preflight 실패 시 active DB와 원본 archive를 보존해야 한다. |
 | `COM-014` | C3 | 재평가 대기 | Quarter/Year와 현재 EventKit snapshot 기반 local summary는 C1 Month·검색 결과 뒤 평가하되 telemetry, remote analytics, weather API와 AI summary를 도입하지 않는다. |
 
 ## 5. 핵심 상태 전이
@@ -357,7 +358,7 @@ linked
 ## 8. 명시적 제외 범위
 
 - AI/LLM/ML 기반 생성·요약·분류·추천·검색·자동 스케줄링·자동 재배치·수락·삭제
-- KaosCal 계정·backend·cloud database·sync relay·remote config·telemetry와
+- BriefCal 계정·backend·cloud database·sync relay·remote config·telemetry와
   Event Brief/Task/Calendar Set cloud/device sync
 - 모바일·웹 companion, 팀 협업, 공유 프로젝트와 Kanban
 - RSVP, 참석자·주최자 관리와 attendee meeting 원본 편집
@@ -371,7 +372,7 @@ linked
 - 외부 notes 본문 양방향 sync와 reference의 task 자동 변환
 - backup record merge, scheduled backup, automatic retention/pruning
 - 미래 schema downgrade, 임의 SQLite 복구, record merge와 backup 없는 destructive bootstrap
-  reset. 선택한 과거 KaosCal archive migration은 `COM-013`의 별도 staging importer로만 검토한다.
+  reset. 선택한 과거 BriefCal archive migration은 `COM-013`의 별도 staging importer로만 검토한다.
 - Developer ID/notarization/stapling을 통과하지 않은 build의 외부 배포 완료 선언
 
 ## 9. 인수와 증거 규칙
@@ -403,11 +404,12 @@ linked
 
 | 요구사항 | 설계·결정 | 주요 구현 | 자동 검증 |
 | --- | --- | --- | --- |
-| `SYS-001`–`SYS-003`, `CAL-001`–`CAL-006` | [Architecture](architecture.md), [EventKit Decisions](eventkit-decisions.md), [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md) | `KaosCalApp`, `AppState`, `CalendarProvider`, `EventKitProvider`, task provider client/Keychain 경계 | `CalendarAccessTests`, `AppStateTests`, provider/local-only contract tests |
+| `SYS-001`–`SYS-003`, `CAL-001`–`CAL-006` | [Architecture](architecture.md), [EventKit Decisions](eventkit-decisions.md), [ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md) | `BriefCalApp`, `AppState`, `CalendarProvider`, `EventKitProvider`, task provider client/Keychain 경계 | `CalendarAccessTests`, `AppStateTests`, provider/local-only contract tests |
 | `SYS-004`, `REL-002` | [ADR-020](adr/ADR-020-signed-automatic-updates.md), [Release Runbook](release-runbook.md) | `UpdateController`, Info.plist updater policy, sandbox entitlements, Sparkle 2 | `UpdateConfigurationTests`, app payload/signature audit, previous-build upgrade smoke |
 | `UI-001`–`UI-004`, `TIME-*` | [ADR-003](adr/ADR-003-all-day-time-zone-and-recurrence.md), [ADR-007](adr/ADR-007-calendar-layout-and-display-time.md) | `CalendarTimelineView`, `CalendarEventLayout`, `CalendarEventDateFormatting` | `CalendarEventLayoutTests`, `CalendarEventEditingTests` |
 | `CAL-007`, `UI-005` | [ADR-002](adr/ADR-002-calendar-and-task-experience.md) | `MiniMonthGrid`, `MiniMonthView`, `AppState`, `CalendarEventDateFormatting` | `AppStateTests`, `CalendarEventLayoutTests`, mini month live QA |
 | `COM-003` | [상용 기능 로드맵](commercial-feature-roadmap.md), [Design System](design-system.md), [Architecture](architecture.md) | `MonthGrid`, `MonthEventLayout`, `MonthCalendarView`, `AppState`, calendar view picker와 navigation commands | `AppStateTests`, `CalendarEventLayoutTests`, Full Month live QA |
+| `SET-005` | [User Guide](user-guide.md), [Design System](design-system.md) | `SettingsRootView`, `AppState`, `CalendarWeekStart`, calendar grids와 timelines | `AppStateTests` week-boundary/persistence 및 Settings offscreen render |
 | `CFG-001`–`CFG-005` | [ADR-014](adr/ADR-014-multi-calendar-clarity.md) | `CalendarClarity`, `CalendarRoleRepository`, `AppState` | `CalendarClarityTests`, `AppStateTests` |
 | `CFG-006`–`CFG-011` | [ADR-017](adr/ADR-017-calendar-visibility-and-availability.md) | `CalendarClarity`, `CalendarRoleRepository`, Settings/Sidebar, `AppState` | `CalendarClarityTests`, `AppStateTests`, backup tests |
 | `EVT-*` | [ADR-010](adr/ADR-010-original-event-write-safety.md), [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md) | `CalendarEventEditing`, `EventKitProvider`, `EventEditorView`, `AppState` | `CalendarEventEditingTests`, `AppStateTests` |
@@ -417,7 +419,7 @@ linked
 | `PRV-*` | [v2 실행계획](v2-execution-plan.md), [T0–T4](v2/README.md), [ADR-016](adr/ADR-016-direct-calendar-api-deferral.md) | task provider models/repository/adapters/OAuth session, Settings | `ContextStoreTests`, `AppStateTests` |
 | `REF-*` | [T5](v2/phase-t5-notes-reference.md) | `ContextReferenceRepository`, Event Brief | `ContextStoreTests` |
 | `DATA-*`, `BAK-*` | [Data Model](data-model.md), [ADR-015](adr/ADR-015-backup-import-reset-safety.md), [Backup and Restore](backup-restore.md) | migrations, `ContextStore`, `LocalDataBackupService`, Settings | `ContextStoreTests`, `LocalDataBackupServiceTests`, `AppStateTests` |
-| 나머지 `COM-*` | [상용 기능 로드맵](commercial-feature-roadmap.md), [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md), 구현 전 필요한 후속 ADR | 상태별 구현 대기 | 요구사항별 자동·offscreen·live gate를 구현 변경과 함께 추가 |
+| 나머지 `COM-*` | [상용 기능 로드맵](commercial-feature-roadmap.md), [ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md), 구현 전 필요한 후속 ADR | 상태별 구현 대기 | 요구사항별 자동·offscreen·live gate를 구현 변경과 함께 추가 |
 
 ## 11. 스펙주도 변경 절차
 

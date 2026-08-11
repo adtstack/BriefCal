@@ -7,9 +7,9 @@
 
 ## 1. 목표
 
-v2는 KaosCal을 “일정에 붙은 local task 앱”에서 “일정 중심 실행 허브”로 확장한다.
+v2는 BriefCal을 “일정에 붙은 local task 앱”에서 “일정 중심 실행 허브”로 확장한다.
 캘린더는 언제 하는지를, 외부 task provider는 무엇을 해야 하는지의 정본을 가진다.
-KaosCal은 이 둘을 Before/During/After 의미와 안전한 연결 상태로 묶는다.
+BriefCal은 이 둘을 Before/During/After 의미와 안전한 연결 상태로 묶는다.
 
 v2의 성공은 지원 provider 수가 아니라 다음 세 가지로 판정한다.
 
@@ -39,7 +39,7 @@ T5도 양방향 notes sync를 기본값으로 승격하지 않는다.
 
 - Calendar event의 제목·시간·장소·참석자는 Calendar provider가 정본이다.
 - 외부 task의 제목·본문·due·완료는 해당 task provider가 정본이다.
-- Before/During/After, occurrence 관계, 연결 상태, fallback 정책은 KaosCal이 정본이다.
+- Before/During/After, occurrence 관계, 연결 상태, fallback 정책은 BriefCal이 정본이다.
 - 원격 데이터는 필요한 최소 캐시만 유지하며 캐시 삭제 후 재동기화가 가능해야 한다.
 
 ### 3.2 제안 additive 모델
@@ -98,7 +98,7 @@ task별 local-only로 전환할 수 있다. calendar destination 변경은 기�
 - disconnect 시 token revoke를 시도하고, 연결 metadata/cache 삭제 여부를 사용자에게
   명확히 묻는다.
 - provider 권한, 계정, list/project, 마지막 sync 시각과 오류를 Settings에서 확인한다.
-- KaosCal notes 전체를 외부 task에 자동 복사하지 않는다.
+- BriefCal notes 전체를 외부 task에 자동 복사하지 않는다.
 - 로그에는 계정 이메일, raw remote ID, task 본문을 남기지 않는다.
 
 ## 5. 단계별 공통 완료 기준

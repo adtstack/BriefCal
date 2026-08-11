@@ -1,6 +1,6 @@
-# Contributing to KaosCal
+# Contributing to BriefCal
 
-KaosCal은 macOS Calendar/EventKit의 원본 일정과 로컬 Event Brief 데이터를 엄격히
+BriefCal은 macOS Calendar/EventKit의 원본 일정과 로컬 Event Brief 데이터를 엄격히
 분리한다. 변경은 이 안전 경계를 유지하고, 구현·자동 검증·수동 증거를 서로 대체하지
 않아야 한다.
 
@@ -9,9 +9,9 @@ KaosCal은 macOS Calendar/EventKit의 원본 일정과 로컬 Event Brief 데이
 - macOS 14 이상
 - 전체 Xcode. 현재 checkpoint 재현 환경은 Xcode 26.6 / Build 17F113이다. 다른 Xcode
   version은 별도 검증 없이 같은 결과를 보장하지 않는다.
-- repository root의 `KaosCal.xcodeproj`와 shared `KaosCal` scheme
+- repository root의 `BriefCal.xcodeproj`와 shared `BriefCal` scheme
 - SwiftPM pin을 기록한
-  `KaosCal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
+  `BriefCal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved`
 - 실제 EventKit 검증이 필요할 때만 macOS Internet Accounts에 구성된 전용 test
   calendar. Exchange credential, password, MFA, OAuth token은 앱·환경변수·저장소에
   넣지 않는다.
@@ -21,7 +21,7 @@ KaosCal은 macOS Calendar/EventKit의 원본 일정과 로컬 Event Brief 데이
 ```sh
 xcode-select -p
 xcodebuild -version
-xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -list
+xcodebuild -project BriefCal.xcodeproj -scheme BriefCal -list
 ```
 
 처음 clone한 환경에서 package가 local cache에 없으면 pinned revision만 resolve한다.
@@ -29,8 +29,8 @@ xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -list
 ```sh
 xcodebuild \
   -resolvePackageDependencies \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackageUpdates
 ```
@@ -45,11 +45,11 @@ xcodebuild \
 
 ```sh
 xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -configuration Debug \
   -destination 'platform=macOS' \
-  -derivedDataPath /private/tmp/KaosCalDerivedData \
+  -derivedDataPath /private/tmp/BriefCalDerivedData \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackageUpdates \
   CODE_SIGNING_ALLOWED=NO \
@@ -60,11 +60,11 @@ xcodebuild \
 
 ```sh
 xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -configuration Release \
   -destination 'platform=macOS' \
-  -derivedDataPath /private/tmp/KaosCalAdHocRelease \
+  -derivedDataPath /private/tmp/BriefCalAdHocRelease \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackageUpdates \
   CODE_SIGN_IDENTITY=- \
@@ -73,11 +73,11 @@ xcodebuild \
   build
 
 codesign --verify --deep --strict --verbose=2 \
-  /private/tmp/KaosCalAdHocRelease/Build/Products/Release/KaosCal.app
+  /private/tmp/BriefCalAdHocRelease/Build/Products/Release/BriefCal.app
 codesign -d --verbose=4 \
-  /private/tmp/KaosCalAdHocRelease/Build/Products/Release/KaosCal.app
+  /private/tmp/BriefCalAdHocRelease/Build/Products/Release/BriefCal.app
 codesign -d --entitlements - \
-  /private/tmp/KaosCalAdHocRelease/Build/Products/Release/KaosCal.app
+  /private/tmp/BriefCalAdHocRelease/Build/Products/Release/BriefCal.app
 ```
 
 ad-hoc app은 private/public beta 배포물이 아니다. Developer ID와 notarization 절차는
@@ -95,11 +95,11 @@ manual EventKit opt-in 경계를 유지하며, CI 성공을 live Exchange나 cle
 
 ```sh
 xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -configuration Debug \
   -destination 'platform=macOS' \
-  -derivedDataPath /private/tmp/KaosCalDerivedData \
+  -derivedDataPath /private/tmp/BriefCalDerivedData \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackageUpdates \
   CODE_SIGNING_ALLOWED=NO \
@@ -115,15 +115,15 @@ Status에 함께 기록한다.
 
 ```sh
 xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -configuration Debug \
   -destination 'platform=macOS' \
-  -derivedDataPath /private/tmp/KaosCalFocusedTests \
+  -derivedDataPath /private/tmp/BriefCalFocusedTests \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackageUpdates \
   CODE_SIGNING_ALLOWED=NO \
-  -only-testing:KaosCalTests/LocalDataBackupServiceTests \
+  -only-testing:BriefCalTests/LocalDataBackupServiceTests \
   test
 ```
 
@@ -140,11 +140,11 @@ EventKit 수동 검증은 자동 test 통과와 별개이며 명시적으로 opt
    signature/CDHash가 달라지지 않는다.
 
 ```sh
-export EVENTKIT_DERIVED_DATA=/private/tmp/KaosCalEventKitQA
+export EVENTKIT_DERIVED_DATA=/private/tmp/BriefCalEventKitQA
 
 xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "$EVENTKIT_DERIVED_DATA" \
@@ -154,7 +154,7 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=YES \
   build-for-testing
 
-export EVENTKIT_TEST_HOST="$EVENTKIT_DERIVED_DATA/Build/Products/Debug/KaosCal.app"
+export EVENTKIT_TEST_HOST="$EVENTKIT_DERIVED_DATA/Build/Products/Debug/BriefCal.app"
 codesign --verify --deep --strict --verbose=2 "$EVENTKIT_TEST_HOST"
 codesign -d --verbose=4 "$EVENTKIT_TEST_HOST"
 open "$EVENTKIT_TEST_HOST"
@@ -166,20 +166,20 @@ open "$EVENTKIT_TEST_HOST"
    실행한다.
 
 ```sh
-export KAOSCAL_EVENTKIT_QA_MODE=inspect
-export KAOSCAL_EVENTKIT_SOURCE=''
-export KAOSCAL_EVENTKIT_DESTINATION=''
-export KAOSCAL_EVENTKIT_QA_RUN_ID=''
-export KAOSCAL_EVENTKIT_QA_OUTPUT=''
+export BRIEFCAL_EVENTKIT_QA_MODE=inspect
+export BRIEFCAL_EVENTKIT_SOURCE=''
+export BRIEFCAL_EVENTKIT_DESTINATION=''
+export BRIEFCAL_EVENTKIT_QA_RUN_ID=''
+export BRIEFCAL_EVENTKIT_QA_OUTPUT=''
 
-: "${KAOSCAL_EVENTKIT_SOURCE:?Set a dedicated source calendar name}"
-: "${KAOSCAL_EVENTKIT_DESTINATION:?Set a distinct dedicated destination calendar name}"
-: "${KAOSCAL_EVENTKIT_QA_RUN_ID:?Set a unique non-sensitive run ID}"
-: "${KAOSCAL_EVENTKIT_QA_OUTPUT:?Set an output JSON path under /private/tmp}"
+: "${BRIEFCAL_EVENTKIT_SOURCE:?Set a dedicated source calendar name}"
+: "${BRIEFCAL_EVENTKIT_DESTINATION:?Set a distinct dedicated destination calendar name}"
+: "${BRIEFCAL_EVENTKIT_QA_RUN_ID:?Set a unique non-sensitive run ID}"
+: "${BRIEFCAL_EVENTKIT_QA_OUTPUT:?Set an output JSON path under /private/tmp}"
 
 xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "$EVENTKIT_DERIVED_DATA" \
@@ -187,7 +187,7 @@ xcodebuild \
   -skipPackageUpdates \
   CODE_SIGN_IDENTITY=- \
   CODE_SIGNING_REQUIRED=YES \
-  -only-testing:KaosCalTests/ManualEventKitQATests/testManualExchangeGate \
+  -only-testing:BriefCalTests/ManualEventKitQATests/testManualExchangeGate \
   test-without-building
 ```
 
@@ -272,7 +272,7 @@ MFA를 환경변수로 넣어 해결하지 않는다.
 
 ### 기본 suite에서 ManualEventKitQATests가 skip된다
 
-정상이다. `KAOSCAL_EVENTKIT_QA_MODE=inspect` 또는 source/destination 이름이 없으면
+정상이다. `BRIEFCAL_EVENTKIT_QA_MODE=inspect` 또는 source/destination 이름이 없으면
 의도적으로 skip한다. run ID와 output path는 test가 임시 기본값을 만들 수 있지만,
 수동 증거를 재현할 때는 위처럼 명시한다. 일반 회귀를 통과시키기 위해 이 변수를 전역
 shell profile이나 scheme에 영구 저장하지 않는다.
@@ -280,7 +280,7 @@ shell profile이나 scheme에 영구 저장하지 않는다.
 ### Local Data import/reset이 거부된다
 
 검사를 우회하지 않는다. 현재 app identifier/schema/migration과 정확히 같은 신뢰 가능한
-KaosCal backup만 import할 수 있다. app이 DB open 전에 실패하면 기존 DB와 sidecar를
+BriefCal backup만 import할 수 있다. app이 DB open 전에 실패하면 기존 DB와 sidecar를
 보존한다. 앱 시작 전에 DB open이 실패한 경우에는 Settings의 bootstrap recovery에서 검증된
 동일-schema backup을 선택한다. live writer가 열린 뒤에는 이 복구 경로를 사용할 수 없다.
 

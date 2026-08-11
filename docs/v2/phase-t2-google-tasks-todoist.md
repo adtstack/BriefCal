@@ -6,7 +6,7 @@
 ## 목표
 
 OAuth 기반 provider 두 종류를 같은 계정·Keychain·동기화 경계로 연결하되, provider의
-고유 기능을 KaosCal에 복제하지 않는다. T2는 Google Tasks와 Todoist를 하나의 거대한
+고유 기능을 BriefCal에 복제하지 않는다. T2는 Google Tasks와 Todoist를 하나의 거대한
 통합으로 출시하지 않고 **T2-Google**과 **T2-Todoist** 두 독립 gate로 운영한다.
 
 ## 공통 OAuth 계층
@@ -61,7 +61,7 @@ OAuth 기반 provider 두 종류를 같은 계정·Keychain·동기화 경계로
   Keychain에 저장한다. 일부 scope가 빠지면 account metadata를 만들지 않고 재연결 가능한
   오류를 남긴다. OAuth account는 Google `sub`, Todoist user ID로 식별하며 email을 account
   key로 쓰지 않는다.
-- disconnect는 KaosCal Keychain credential 및 local provider metadata/destination/binding을
+- disconnect는 BriefCal Keychain credential 및 local provider metadata/destination/binding을
   삭제하고 local event task는 유지한다. public desktop client는 provider별 server-side revoke
   endpoint를 안전하게 일반화할 수 없으므로, provider consent page revoke는 별도 사용자
   안내/live gate로 남긴다.
@@ -79,8 +79,8 @@ secret을 입력하지 않는다.
 
 | Provider | Client configuration | Redirect key | 등록 방식 |
 | --- | --- | --- | --- |
-| Google Tasks | `KaosCalGoogleTasksClientID`; `KaosCalGoogleTasksClientSecret` ← `.env`/CI | `KaosCalGoogleTasksRedirectURI` = `http://127.0.0.1` | Google Cloud의 Desktop OAuth client + dynamic loopback port |
-| Todoist | `KaosCalTodoistClientID` | `KaosCalTodoistRedirectURI` | PKCE public client; `Client ID Metadata Document` URL과 HTTPS redirect를 Todoist에 등록 |
+| Google Tasks | `BriefCalGoogleTasksClientID`; `BriefCalGoogleTasksClientSecret` ← `.env`/CI | `BriefCalGoogleTasksRedirectURI` = `http://127.0.0.1` | Google Cloud의 Desktop OAuth client + dynamic loopback port |
+| Todoist | `BriefCalTodoistClientID` | `BriefCalTodoistRedirectURI` | PKCE public client; `Client ID Metadata Document` URL과 HTTPS redirect를 Todoist에 등록 |
 
 Todoist의 production redirect는 HTTPS metadata callback이므로, standalone app의 HTTP
 loopback handler와 동일시하지 않는다. 배포용 HTTPS callback/return-to-app 흐름이 제공되기

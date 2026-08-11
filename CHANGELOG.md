@@ -1,10 +1,16 @@
 # Changelog
 
-KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. 날짜가 없는 항목은 아직
+BriefCal의 사용자에게 보이는 변경과 release 경계를 기록한다. 날짜가 없는 항목은 아직
 배포되지 않은 상태이며, 실제 release artifact와 검증 결과는
 [Release Runbook](docs/release-runbook.md)에 따라 별도로 기록한다.
 
 ## [0.1.0] - Unreleased
+
+### Changed
+
+- 공개 제품명과 Xcode project/scheme/target, app executable 및 배포 artifact 이름을
+  `BriefCal`로 통일했다. bundle ID, 로컬 DB·backup, Keychain, 빌드 변수와 task link도
+  미출시 기준의 `BriefCal` 식별자로 재설정했다.
 
 ### Added
 
@@ -63,7 +69,7 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
 
 ### Security and safety
 
-- EventKit 원본 일정과 KaosCal local Event Brief/task를 분리하고 invitation/attendee,
+- EventKit 원본 일정과 BriefCal local Event Brief/task를 분리하고 invitation/attendee,
   read-only, weak identity와 지원하지 않는 recurrence write를 보수적으로 차단한다.
 - Backup import는 application identifier, migration ledger, schema, byte/hash, SQLite
   integrity와 foreign key를 검사하며 EventKit write를 수행하지 않는다.
@@ -84,14 +90,14 @@ KaosCal의 사용자에게 보이는 변경과 release 경계를 기록한다. �
   독립 live gate가 남아 있다. 현재 판정은 [Current Status](docs/current-status.md), 사용자
   영향과 우회는 [Known Issues](docs/known-issues.md)를 따른다.
 - 참석자가 있는 meeting과 invitation의 RSVP·참석자·원본 제목/시간/삭제 변경, 복잡한
-  recurrence와 detached occurrence의 future write는 KaosCal v1에서 제공하지 않는다.
+  recurrence와 detached occurrence의 future write는 BriefCal v1에서 제공하지 않는다.
   전체 지원/제외 범위는 [V1 Scope](docs/v1-scope.md)에 있다.
-- KaosCal은 Microsoft Graph/EWS나 자체 sync engine을 사용하지 않고 macOS Calendar에
+- BriefCal은 Microsoft Graph/EWS나 자체 sync engine을 사용하지 않고 macOS Calendar에
   구성된 EventKit source만 사용한다. 온프레미스 Exchange 지원은 약속하지 않는다.
 - Backup은 암호화·서명되지 않은 plaintext이고 record merge, scheduled backup,
   automatic retention/pruning이 없다. 실행 중 build와 exact current schema/migration이
   같은 신뢰 가능한 backup만 import한다.
-- 손상 live DB 때문에 app bootstrap이 실패하면 현재 schema와 정확히 맞는 KaosCal
+- 손상 live DB 때문에 app bootstrap이 실패하면 현재 schema와 정확히 맞는 BriefCal
   backup만 선택할 수 있다. 임의 SQLite, schema migration/downgrade, record merge와
   backup 없는 destructive reset은 지원하지 않는다. 실제 signed Release 손상 DB 복구는
   아직 manual pending이며 자세한 경계는 [Backup and Restore](docs/backup-restore.md)에 있다.

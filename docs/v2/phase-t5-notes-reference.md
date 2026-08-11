@@ -20,7 +20,7 @@ task provider와 참고자료(notes/reference)를 같은 entity로 합치지 않
 
 - 외부 notes 전체를 SQLite와 ZIP에 자동 복사
 - notes를 task로 자동 변환하거나 완료 상태를 추측
-- provider의 문서·프로젝트·권한 모델을 KaosCal 안에 복제
+- provider의 문서·프로젝트·권한 모델을 BriefCal 안에 복제
 - 사용자가 확인하지 않은 외부 본문을 Calendar event notes에 쓰기
 
 ## 연결 모델

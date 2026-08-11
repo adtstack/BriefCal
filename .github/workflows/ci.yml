@@ -36,16 +36,16 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Debug \
             -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalTestsDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/KaosCalTests.xcresult" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalTestsDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/BriefCalTests.xcresult" \
             -enableCodeCoverage YES \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
-            -skip-testing:KaosCalUITests \
+            -skip-testing:BriefCalUITests \
             CODE_SIGNING_ALLOWED=NO \
             test
 
@@ -55,26 +55,26 @@ jobs:
           xcrun xccov view \
             --report \
             --json \
-            "$RUNNER_TEMP/KaosCalTests.xcresult" \
-            > "$RUNNER_TEMP/KaosCalCoverage.json"
+            "$RUNNER_TEMP/BriefCalTests.xcresult" \
+            > "$RUNNER_TEMP/BriefCalCoverage.json"
           /usr/bin/python3 scripts/check_coverage.py \
-            "$RUNNER_TEMP/KaosCalCoverage.json" \
+            "$RUNNER_TEMP/BriefCalCoverage.json" \
             0.50
 
       - name: Run isolated UI automation
         run: |
           set -euo pipefail
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Debug \
             -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalUITestsDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/KaosCalUITests.xcresult" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalUITestsDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/BriefCalUITests.xcresult" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             -parallel-testing-enabled NO \
-            -only-testing:KaosCalUITests \
+            -only-testing:BriefCalUITests \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=YES \
             test
@@ -83,11 +83,11 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Debug \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalAnalyzeDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalAnalyzeDerivedData" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             CODE_SIGNING_ALLOWED=NO \
@@ -97,29 +97,29 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Release \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalProductionReleaseDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalProductionReleaseDerivedData" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             CODE_SIGNING_ALLOWED=NO \
             build
-          INFO="$RUNNER_TEMP/KaosCalProductionReleaseDerivedData/Build/Products/Release/KaosCal.app/Contents/Info.plist"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "NO"
+          INFO="$RUNNER_TEMP/BriefCalProductionReleaseDerivedData/Build/Products/Release/BriefCal.app/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :BriefCalLocalTestBuild' "$INFO")" = "NO"
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Release \
             -showBuildSettings \
-            > "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
-          grep -Eq '^ *ENABLE_HARDENED_RUNTIME = YES$' "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
-          grep -Eq '^ *KAOSCAL_LOCAL_TEST_BUILD = NO$' "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
+            > "$RUNNER_TEMP/BriefCalProductionBuildSettings.txt"
+          grep -Eq '^ *ENABLE_HARDENED_RUNTIME = YES$' "$RUNNER_TEMP/BriefCalProductionBuildSettings.txt"
+          grep -Eq '^ *BRIEFCAL_LOCAL_TEST_BUILD = NO$' "$RUNNER_TEMP/BriefCalProductionBuildSettings.txt"
 
       - name: Build and launch-smoke local-test Release app
         env:
-          KAOSCAL_LOCAL_DERIVED_DATA: ${{ runner.temp }}/KaosCalReleaseDerivedData
+          BRIEFCAL_LOCAL_DERIVED_DATA: ${{ runner.temp }}/BriefCalReleaseDerivedData
         run: |
           set -euo pipefail
           bash scripts/build_local_test_app.sh
@@ -127,13 +127,13 @@ jobs:
       - name: Verify local-test Release app
         run: |
           set -euo pipefail
-          APP="$RUNNER_TEMP/KaosCalReleaseDerivedData/Build/Products/Release/KaosCal.app"
+          APP="$RUNNER_TEMP/BriefCalReleaseDerivedData/Build/Products/Release/BriefCal.app"
           test -d "$APP"
           INFO="$APP/Contents/Info.plist"
           codesign --verify --deep --strict --verbose=2 "$APP"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.kaoscal"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.briefcal"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")" = "14.0"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "YES"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :BriefCalLocalTestBuild' "$INFO")" = "YES"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$INFO")" = ""
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO")" = ""
           test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$INFO")" = "true"
@@ -147,22 +147,22 @@ jobs:
       - name: Package CI artifact
         run: |
           set -euo pipefail
-          APP="$RUNNER_TEMP/KaosCalReleaseDerivedData/Build/Products/Release/KaosCal.app"
-          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/KaosCal-${GITHUB_SHA}.zip"
+          APP="$RUNNER_TEMP/BriefCalReleaseDerivedData/Build/Products/Release/BriefCal.app"
+          ditto -c -k --keepParent "$APP" "$RUNNER_TEMP/BriefCal-${GITHUB_SHA}.zip"
 
       - name: Verify packaged CI artifact
         run: |
           set -euo pipefail
-          UNPACKED="$RUNNER_TEMP/KaosCalZipSmoke"
+          UNPACKED="$RUNNER_TEMP/BriefCalZipSmoke"
           mkdir -p "$UNPACKED"
-          ditto -x -k "$RUNNER_TEMP/KaosCal-${GITHUB_SHA}.zip" "$UNPACKED"
-          bash scripts/verify_local_test_app.sh "$UNPACKED/KaosCal.app"
+          ditto -x -k "$RUNNER_TEMP/BriefCal-${GITHUB_SHA}.zip" "$UNPACKED"
+          bash scripts/verify_local_test_app.sh "$UNPACKED/BriefCal.app"
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v6
         with:
-          name: KaosCal-${{ github.sha }}-local-test-macOS
-          path: ${{ runner.temp }}/KaosCal-${{ github.sha }}.zip
+          name: BriefCal-${{ github.sha }}-local-test-macOS
+          path: ${{ runner.temp }}/BriefCal-${{ github.sha }}.zip
           if-no-files-found: error
           retention-days: 7
 
@@ -170,10 +170,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: KaosCal-${{ github.run_id }}-test-results
+          name: BriefCal-${{ github.run_id }}-test-results
           path: |
-            ${{ runner.temp }}/KaosCalTests.xcresult
-            ${{ runner.temp }}/KaosCalUITests.xcresult
+            ${{ runner.temp }}/BriefCalTests.xcresult
+            ${{ runner.temp }}/BriefCalUITests.xcresult
           if-no-files-found: ignore
           retention-days: 14
 
@@ -198,13 +198,13 @@ jobs:
           set -euo pipefail
           test "$(sw_vers -productVersion | cut -d. -f1)" = "14"
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Debug \
             -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalSonomaDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalSonomaDerivedData" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
-            -skip-testing:KaosCalUITests \
+            -skip-testing:BriefCalUITests \
             CODE_SIGNING_ALLOWED=NO \
             test

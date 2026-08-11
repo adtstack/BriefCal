@@ -1,6 +1,6 @@
 # Release Runbook
 
-이 문서는 KaosCal을 Mac App Store 밖에서 배포할 때 사용할 release 절차다. 명령은
+이 문서는 BriefCal을 Mac App Store 밖에서 배포할 때 사용할 release 절차다. 명령은
 저장소 root에서 실행한다. Apple Team, 인증서 이름, notary profile, 배포 URL 같은 값은
 저장소에 아직 결정되어 있지 않으므로 환경변수로만 받는다. 자격 증명과 private key는
 저장소, shell script, build log, release note에 기록하지 않는다.
@@ -14,7 +14,7 @@
 이 runbook을 처음 작성한 Phase 9 checkpoint에서 확인된 것은 다음 범위까지다. 최신 판정은
 [Current Status](current-status.md)를 우선하며 이 목록을 현재 상태 요약으로 사용하지 않는다.
 
-- macOS 14.0 minimum, bundle identifier `com.adtstack.kaoscal`, 현재 project version
+- macOS 14.0 minimum, bundle identifier `com.adtstack.briefcal`, 현재 project version
   `0.1.0` / build `1`
 - pinned SwiftPM dependency를 사용한 Debug test와 Release build
 - Sparkle 도입 전 ad-hoc signed Release의 hardened runtime, strict code-signature,
@@ -33,7 +33,7 @@
 - 최종 ZIP 또는 DMG 형식과 실제 배포 위치
 - quarantine이 유지되는 실제 다운로드 경로의 clean-user smoke
 - [PRIVACY.md](../PRIVACY.md)와 [SECURITY.md](../SECURITY.md)의 미정 법적 주체·연락처,
-  [beta license placeholder](../BETA-LICENSE.md)를 대체할 KaosCal license/EULA와 rollback
+  [beta license placeholder](../BETA-LICENSE.md)를 대체할 BriefCal license/EULA와 rollback
   공지 경로 확정
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)의 최종 dependency/license 재검증과
   배포물 포함
@@ -49,7 +49,7 @@ package checkout이나 임의 최신 도구를 release 중 자동 다운로드�
 
 ```sh
 export SPARKLE_TOOLS=''
-export SPARKLE_KEY_ACCOUNT='com.adtstack.kaoscal'
+export SPARKLE_KEY_ACCOUNT='com.adtstack.briefcal'
 
 : "${SPARKLE_TOOLS:?Set the verified Sparkle 2.9.2 bin directory}"
 test -x "$SPARKLE_TOOLS/generate_keys"
@@ -80,7 +80,7 @@ export UPDATE_FEED_URL=''
 export UPDATE_DOWNLOAD_BASE_URL=''
 export SPARKLE_PUBLIC_ED_KEY=''
 export SPARKLE_TOOLS=''
-export SPARKLE_KEY_ACCOUNT='com.adtstack.kaoscal'
+export SPARKLE_KEY_ACCOUNT='com.adtstack.briefcal'
 
 : "${VERSION:?Set VERSION to the approved marketing version}"
 : "${BUILD:?Set BUILD to a unique monotonically increasing build number}"
@@ -92,9 +92,9 @@ export SPARKLE_KEY_ACCOUNT='com.adtstack.kaoscal'
 : "${SPARKLE_PUBLIC_ED_KEY:?Set the public key printed by generate_keys}"
 : "${SPARKLE_TOOLS:?Set the verified Sparkle 2.9.2 bin directory}"
 
-export RELEASE_ROOT="/private/tmp/KaosCal-release-${VERSION}-${BUILD}-$(date +%Y%m%d-%H%M%S)"
+export RELEASE_ROOT="/private/tmp/BriefCal-release-${VERSION}-${BUILD}-$(date +%Y%m%d-%H%M%S)"
 export DERIVED_DATA="$RELEASE_ROOT/DerivedData"
-export ARCHIVE_PATH="$RELEASE_ROOT/KaosCal.xcarchive"
+export ARCHIVE_PATH="$RELEASE_ROOT/BriefCal.xcarchive"
 export EXPORT_PATH="$RELEASE_ROOT/export"
 export DIST_PATH="$RELEASE_ROOT/dist"
 mkdir -p "$DIST_PATH"
@@ -116,7 +116,7 @@ security find-identity -v -p codesigning
 - `BUILD`은 이전 배포보다 큰 고유 정수다.
 - `DEVELOPER_ID_APPLICATION`은 위 identity 목록의 정확한 `Developer ID Application`
   항목이다. `Apple Development`, `Mac Development`, ad-hoc identity가 아니다.
-- [Package.resolved](../KaosCal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved)가
+- [Package.resolved](../BriefCal.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved)가
   review된 상태이며 package update가 섞이지 않았다.
 - [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md)의 release gate를 다시 수행했다.
 - `UPDATE_FEED_URL`과 `UPDATE_DOWNLOAD_BASE_URL`은 HTTPS이고 공개 키는 현재
@@ -134,15 +134,15 @@ test 하나가 opt-in skip되는 것은 의도된 동작이며, 다른 skip이�
 
 ```sh
 xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -configuration Debug \
   -destination 'platform=macOS' \
   -derivedDataPath "$DERIVED_DATA" \
-  -resultBundlePath "$RELEASE_ROOT/KaosCalTests.xcresult" \
+  -resultBundlePath "$RELEASE_ROOT/BriefCalTests.xcresult" \
   -onlyUsePackageVersionsFromResolvedFile \
   -skipPackageUpdates \
-  -skip-testing:KaosCalUITests \
+  -skip-testing:BriefCalUITests \
   CODE_SIGNING_ALLOWED=NO \
   test
 ```
@@ -154,14 +154,14 @@ runtime library validation과 결합하면 dyld가 Sparkle을 거부한다. 따�
 release 후보의 hardened-runtime 증거로 사용하지 않는다.
 
 ```sh
-export KAOSCAL_LOCAL_DERIVED_DATA="$RELEASE_ROOT/LocalTestDerivedData"
-export KAOSCAL_MARKETING_VERSION="$VERSION"
-export KAOSCAL_CURRENT_PROJECT_VERSION="$BUILD"
+export BRIEFCAL_LOCAL_DERIVED_DATA="$RELEASE_ROOT/LocalTestDerivedData"
+export BRIEFCAL_MARKETING_VERSION="$VERSION"
+export BRIEFCAL_CURRENT_PROJECT_VERSION="$BUILD"
 
 bash scripts/build_local_test_app.sh
 ```
 
-스크립트는 `KaosCalLocalTestBuild=YES`, hardened runtime 부재, 현재 entitlement,
+스크립트는 `BriefCalLocalTestBuild=YES`, hardened runtime 부재, 현재 entitlement,
 `get-task-allow`·XCTest 부재, host architecture와 strict deep signature를 확인한다. 이어 실제
 Calendar·Keychain·운영 DB 대신 in-memory fixture로 app을 실행해 3초 이상 생존하는지 확인한다.
 이 smoke가 실패하면 app을 packaging하거나 전달하지 않는다. ad-hoc 검증의 성공을 아래
@@ -174,8 +174,8 @@ Developer ID 단계의 성공으로 기록하지 않는다.
 
 ```sh
 xcodebuild \
-  -project KaosCal.xcodeproj \
-  -scheme KaosCal \
+  -project BriefCal.xcodeproj \
+  -scheme BriefCal \
   -configuration Release \
   -destination 'generic/platform=macOS' \
   -derivedDataPath "$DERIVED_DATA" \
@@ -187,11 +187,11 @@ xcodebuild \
   CODE_SIGN_IDENTITY="$DEVELOPER_ID_APPLICATION" \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   ENABLE_HARDENED_RUNTIME=YES \
-  KAOSCAL_LOCAL_TEST_BUILD=NO \
+  BRIEFCAL_LOCAL_TEST_BUILD=NO \
   MARKETING_VERSION="$VERSION" \
   CURRENT_PROJECT_VERSION="$BUILD" \
-  KAOSCAL_UPDATE_FEED_URL="$UPDATE_FEED_URL" \
-  KAOSCAL_SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" \
+  BRIEFCAL_UPDATE_FEED_URL="$UPDATE_FEED_URL" \
+  BRIEFCAL_SPARKLE_PUBLIC_ED_KEY="$SPARKLE_PUBLIC_ED_KEY" \
   archive
 ```
 
@@ -214,7 +214,7 @@ xcodebuild \
   -exportPath "$EXPORT_PATH" \
   -exportOptionsPlist "$EXPORT_OPTIONS"
 
-export APP_PATH="$EXPORT_PATH/KaosCal.app"
+export APP_PATH="$EXPORT_PATH/BriefCal.app"
 test -d "$APP_PATH"
 ```
 
@@ -234,13 +234,13 @@ spctl --assess --type execute --verbose=4 "$APP_PATH"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c 'Print :BriefCalLocalTestBuild' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP_PATH/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c 'Print :SUEnableSystemProfiling' "$APP_PATH/Contents/Info.plist"
 
 find "$APP_PATH" -name '*.xctest' -o -name '*XCTest*'
-otool -L "$APP_PATH/Contents/MacOS/KaosCal"
+otool -L "$APP_PATH/Contents/MacOS/BriefCal"
 test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework"
 test -x "$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
 test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
@@ -252,16 +252,16 @@ test -d "$APP_PATH/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/
 
 - signature chain의 leaf가 지정한 `Developer ID Application`이고 secure timestamp와
   runtime flag가 보인다.
-- `KaosCalLocalTestBuild`는 `NO`이며 local-test compiler condition이나 fixture bootstrap이
+- `BriefCalLocalTestBuild`는 `NO`이며 local-test compiler condition이나 fixture bootstrap이
   배포 app에 포함되지 않는다.
-- bundle/version/build/minimum이 각각 승인된 값, `com.adtstack.kaoscal`, macOS 14.0과
+- bundle/version/build/minimum이 각각 승인된 값, `com.adtstack.briefcal`, macOS 14.0과
   일치한다.
 - `SUFeedURL`과 `SUPublicEDKey`가 승인된 공개 입력과 정확히 일치하고 automatic check/install,
   signed-feed와 pre-extraction verification 값이 모두 `true`이며 system profiling은
   `false`다.
 - entitlement는 app sandbox, Calendar access, user-selected read/write만 의도대로
-  포함하며 updater mach lookup 예외는 `com.adtstack.kaoscal-spks`와
-  `com.adtstack.kaoscal-spki`뿐이고 `get-task-allow`는 없다.
+  포함하며 updater mach lookup 예외는 `com.adtstack.briefcal-spks`와
+  `com.adtstack.briefcal-spki`뿐이고 `get-task-allow`는 없다.
 - XCTest bundle/link가 배포 app에 없다.
 - Sparkle framework, Autoupdate, Updater.app, Downloader.xpc와 Installer.xpc가 모두 있고
   전체 app의 strict deep signature 검증이 통과한다.
@@ -284,7 +284,7 @@ xcrun notarytool history --keychain-profile "$NOTARY_PROFILE"
 
 ```sh
 set -euo pipefail
-export NOTARY_UPLOAD="$RELEASE_ROOT/KaosCal-${VERSION}-${BUILD}-notary.zip"
+export NOTARY_UPLOAD="$RELEASE_ROOT/BriefCal-${VERSION}-${BUILD}-notary.zip"
 export NOTARY_SUBMIT_JSON="$RELEASE_ROOT/notary-submit.json"
 ditto -c -k --keepParent "$APP_PATH" "$NOTARY_UPLOAD"
 
@@ -321,11 +321,11 @@ release record에 남긴다.
 stapled app을 새 ZIP으로 만든다. notarization upload용 ZIP을 그대로 배포하지 않는다.
 
 ```sh
-export FINAL_ZIP="$DIST_PATH/KaosCal-${VERSION}.zip"
+export FINAL_ZIP="$DIST_PATH/BriefCal-${VERSION}.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$FINAL_ZIP"
 ditto -x -k "$FINAL_ZIP" "$RELEASE_ROOT/zip-smoke"
-codesign --verify --deep --strict --verbose=2 "$RELEASE_ROOT/zip-smoke/KaosCal.app"
-xcrun stapler validate -v "$RELEASE_ROOT/zip-smoke/KaosCal.app"
+codesign --verify --deep --strict --verbose=2 "$RELEASE_ROOT/zip-smoke/BriefCal.app"
+xcrun stapler validate -v "$RELEASE_ROOT/zip-smoke/BriefCal.app"
 ```
 
 ### DMG
@@ -334,12 +334,12 @@ DMG를 선택하면 stapled app으로 image를 만든 다음 DMG 자체도 submi
 
 ```sh
 export DMG_ROOT="$RELEASE_ROOT/dmg-root"
-export FINAL_DMG="$DIST_PATH/KaosCal-${VERSION}.dmg"
+export FINAL_DMG="$DIST_PATH/BriefCal-${VERSION}.dmg"
 mkdir -p "$DMG_ROOT"
-ditto "$APP_PATH" "$DMG_ROOT/KaosCal.app"
+ditto "$APP_PATH" "$DMG_ROOT/BriefCal.app"
 ln -s /Applications "$DMG_ROOT/Applications"
 hdiutil create \
-  -volname "KaosCal ${VERSION}" \
+  -volname "BriefCal ${VERSION}" \
   -srcfolder "$DMG_ROOT" \
   -format UDZO \
   "$FINAL_DMG"
@@ -420,7 +420,7 @@ GitHub token을 앱이나 feed URL에 넣지 않는다. 공개 정적 HTTPS endp
 
 ## 7. Clean-user smoke
 
-최종 artifact를 아직 KaosCal을 실행하지 않은 별도 **표준(non-admin) macOS 사용자**에서
+최종 artifact를 아직 BriefCal을 실행하지 않은 별도 **표준(non-admin) macOS 사용자**에서
 검증한다. 최소 지원인 macOS 14와 현재 지원 macOS를 모두 확보하지 못했다면 그 사실을
 release blocker 또는 명시적 미검증으로 기록한다.
 
@@ -428,7 +428,7 @@ release blocker 또는 명시적 미검증으로 기록한다.
    app을 복사한 결과로 대체하지 않는다. 실제 다운로드의 quarantine/Gatekeeper 흐름을
    보존한다.
 2. 배포 페이지의 SHA-256과 다운로드 파일의 `shasum -a 256` 결과를 비교한다.
-3. Finder에서 열고 Gatekeeper 경고를 우회하지 않은 채 KaosCal을 실행한다.
+3. Finder에서 열고 Gatekeeper 경고를 우회하지 않은 채 BriefCal을 실행한다.
 4. 첫 창, app icon, version/build와 Settings의 Local Data 화면을 확인한다.
 5. Calendar 권한을 한 번 거부해 복구 안내를 확인하고, System Settings를 통해 해당 exact
    app에 Full Calendar Access를 허용한다. write-only를 full access로 간주하지 않는다.
@@ -491,7 +491,7 @@ candidate의 version/build를 발견하고, download·Ed25519/Developer ID 검�
 
 1. 문제 artifact의 다운로드를 즉시 중단하되 파일, checksum, notary log와 source commit은
    조사용으로 보존한다.
-2. 사용자에게 KaosCal container, `Backups`, SQLite/WAL/SHM을 삭제하거나 수동 교체하지
+2. 사용자에게 BriefCal container, `Backups`, SQLite/WAL/SHM을 삭제하거나 수동 교체하지
    말라고 알린다. 앱이 열리고 DB가 healthy하면 추가 조치 전에 Settings에서 현재 local
    backup을 export한다.
 3. 가능하면 같은 또는 더 높은 schema를 읽는 forward-fix build를 새 build number로

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>BriefCal</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.briefcal.task-link</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>briefcal</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
+	<key>BriefCalMicrosoftToDoClientID</key>
+	<string>0ec3584c-d466-4e8c-b193-f78d8165fe2a</string>
+	<key>BriefCalMicrosoftToDoRedirectURI</key>
+	<string>http://localhost:43891/oauth/callback</string>
+	<key>BriefCalGoogleTasksClientID</key>
+	<string>$(BRIEFCAL_GOOGLE_TASKS_CLIENT_ID)</string>
+	<key>BriefCalGoogleTasksClientSecret</key>
+	<string>$(BRIEFCAL_GOOGLE_TASKS_CLIENT_SECRET)</string>
+	<key>BriefCalGoogleTasksRedirectURI</key>
+	<string>http://127.0.0.1</string>
+	<key>BriefCalLocalTestBuild</key>
+	<string>$(BRIEFCAL_LOCAL_TEST_BUILD)</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>BriefCal needs calendar access to display events in Day, Week, Month, and Agenda and to save changes you approve.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>BriefCal needs reminders access to link Before, During, and After tasks from selected calendars with Apple Reminders.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
+	<key>SUEnableSystemProfiling</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>$(BRIEFCAL_UPDATE_FEED_URL)</string>
+	<key>SUPublicEDKey</key>
+	<string>$(BRIEFCAL_SPARKLE_PUBLIC_ED_KEY)</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2026 BriefCal. All rights reserved.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>

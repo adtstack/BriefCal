@@ -5,7 +5,7 @@
 
 ## 배경
 
-KaosCal은 Exchange를 우선 검증해야 하지만, Microsoft OAuth·Graph·EWS를 자체 구현하면 인증과 동기화가 제품 중심을 대체한다.
+BriefCal은 Exchange를 우선 검증해야 하지만, Microsoft OAuth·Graph·EWS를 자체 구현하면 인증과 동기화가 제품 중심을 대체한다.
 
 ## 결정
 

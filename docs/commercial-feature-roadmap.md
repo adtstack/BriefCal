@@ -3,16 +3,16 @@
 > 상태: Active Product Specification
 > 기준일: 2026-08-02, Asia/Seoul
 > 적용 범위: v2 T0~T5, `v11_local_task_planning`과 Full Month MVP 이후의 후속 제품 작업
-> 목적: 상용 캘린더와 비교해 부족한 기능을 숨기지 않고, KaosCal의 local-only 원칙을
+> 목적: 상용 캘린더와 비교해 부족한 기능을 숨기지 않고, BriefCal의 local-only 원칙을
 > 지키는 구현 순서와 인수 기준을 고정한다.
 
 ## 1. 이 문서의 권한
 
 이 문서는 후속 기능의 **우선순위와 제품 인수 기준**을 정한다. 현행 구현의 동작은
 [제품·시스템 스펙](specification.md), 실제 통과 증거는
-[Current Status](current-status.md)를 따른다. AI와 KaosCal Cloud를 영구 제외하고 이 Mac을
+[Current Status](current-status.md)를 따른다. AI와 BriefCal Cloud를 영구 제외하고 이 Mac을
 유일한 실행·로컬 데이터 경계로 두는 결정은
-[ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)를 따른다.
+[ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md)를 따른다.
 
 - `C0~C4`는 상용화 후속 순서다. 과거 코드 리뷰 심각도 `P0/P1/P2`, 기존 Phase 0~10,
   v2 provider 단계 `T0~T5`와 다른 번호 체계다.
@@ -26,15 +26,15 @@
 
 ## 2. 제품 위치와 비교 결론
 
-KaosCal의 현재 강점은 다음과 같다.
+BriefCal의 현재 강점은 다음과 같다.
 
 - exact membership을 갖는 이름 있는 Calendar Set과 role/source/permission 설명
-- 일정 제목과 시간을 읽는 4~6주 Full Month, multi-day 주별 segment와 overflow
+- 일정 제목과 시간을 읽는 연속 주간 Full Month, 1일 월 경계, multi-day 주별 segment와 overflow
 - 원본 일정이 이동·삭제돼도 notes와 Before/During/After를 조용히 버리지 않는 Event Brief
 - Apple Reminders, Google Tasks, Todoist, Microsoft To Do를 구분하는 task provider 경계
 - remote/local conflict, missing, bounded pending retry, exact relink와 local-only 복구
 - 원본 일정과 로컬 맥락을 분리한 안전한 편집·삭제·backup/reset
-- KaosCal 계정·서버 없이 이 Mac에서 EventKit과 선택한 task provider로 직접 연결하는 sync
+- BriefCal 계정·서버 없이 이 Mac에서 EventKit과 선택한 task provider로 직접 연결하는 sync
 
 반면 현재 제품은 Fantastical, Apple Calendar, Google Calendar, Outlook 같은 범용
 캘린더를 완전히 대체하기보다 **Calendar.app 위에서 일정 맥락과 작업을 보존하는
@@ -43,7 +43,7 @@ macOS-first 실행 허브**에 가깝다. Full Month MVP는 구현했지만, 상
 
 시장 비교는 2026-07-18에 공식 제품 문서를 기준으로 확인했다.
 
-| 시장 기능 | 공식 비교 예 | KaosCal 현재 상태 | 방향 |
+| 시장 기능 | 공식 비교 예 | BriefCal 현재 상태 | 방향 |
 | --- | --- | --- | --- |
 | 빠른 생성, 템플릿 | [Fantastical 기능](https://flexibits.com/fantastical?force_isolation=true) | 구조화 editor만 있음 | C1에서 구조화 Quick Add·local template 구현 |
 | 전체 Month/Quarter/Year | [Fantastical 기능](https://flexibits.com/fantastical?force_isolation=true) | Month MVP 구현·자동/offscreen 검증 완료·live 대기, Quarter/Year 없음 | Month live gate를 닫고 Quarter/Year는 C3 재평가 |
@@ -54,7 +54,7 @@ macOS-first 실행 허브**에 가깝다. Full Month MVP는 구현했지만, 상
 | 다중 시간대·회의 연결 | [Notion Calendar 시간대](https://www.notion.com/help/time-zones), [Notion Calendar 연결](https://www.notion.com/help/notion-calendar-connections) | 시간 의미는 보존하지만 동시 다중 zone·conference join 없음 | C1/C2 |
 | task time blocking | [Akiflow task 기능](https://product.akiflow.com/help/articles/0006630-task-features) | provider task drag→event block과 Event Task 연결 구현 / live 대기 | 실제 계정·부분 성공 gate 뒤 확장 |
 
-KaosCal은 AI나 자체 cloud 기능의 개수로 경쟁하지 않는다. 이 Mac의 Calendar/Event Brief/
+BriefCal은 AI나 자체 cloud 기능의 개수로 경쟁하지 않는다. 이 Mac의 Calendar/Event Brief/
 Task Center 완성도, 설명 가능한 충돌 복구와 macOS·provider 직접 동기화 품질로 경쟁한다.
 
 ### 현재 진행 중인 Tasks 실행 트랙
@@ -73,7 +73,7 @@ Task Center 완성도, 설명 가능한 충돌 복구와 macOS·provider 직접 
 5. **코드 구현 / 실제 계정 gate 대기:** durable Event Brief mutation queue, bounded retry/cancel,
    last sync, conflict/missing recovery와 직접 provider mutation의 draft 보존·명시적 재시도
 
-provider 간 자동 복제, AI, KaosCal Cloud와 기기 간 KaosCal 데이터 동기화는 이 트랙에도
+provider 간 자동 복제, AI, BriefCal Cloud와 기기 간 BriefCal 데이터 동기화는 이 트랙에도
 포함하지 않는다.
 
 ## 3. 우선순위 단계
@@ -125,8 +125,9 @@ C1은 다음 구현 묶음이다. 각 항목은 [제품·시스템 스펙](speci
 #### COM-003 — 전체 Month 보기
 
 - 상태: 구현·자동/offscreen 검증 완료 / live 대기
-- mini month와 별도로 일정 제목과 시간 정보를 보여 주는 4~6주의 본문 Month를 구현했다.
-  locale과 first weekday를 따르고 인접 월을 포함한 완전한 주만 표시한다.
+- mini month와 별도로 일정 제목과 시간 정보를 보여 주는 연속 주간 본문 Month를 구현했다.
+  locale과 first weekday를 따르고, 매월 1일의 굵은 선과 월명으로 경계를 표시하며 아래로
+  scroll할 때 필요한 주와 event 범위를 lazy 확장한다.
 - all-day와 timed multi-day는 배타 종료를 지켜 주 경계마다 이어지는 segment로 나눈다.
   셀에 들어가지 않는 일정은 `+N more`와 날짜별 popover로 열며, event 선택은 기존
   Inspector, 날짜 동작은 해당 Day로 이어진다.
@@ -202,7 +203,7 @@ C1은 다음 구현 묶음이다. 각 항목은 [제품·시스템 스펙](speci
   Details에서 읽을 수 있어야 한다.
 - 지원되지 않는 attachment write, RSVP와 attendee 변경은 비활성 control로 흉내 내지 않고
   exact event를 Calendar.app에서 여는 동작과 제한 설명을 제공한다.
-- attachment 본문과 attendee 전체 목록은 KaosCal SQLite/backup에 전용 복제하지 않는다.
+- attachment 본문과 attendee 전체 목록은 BriefCal SQLite/backup에 전용 복제하지 않는다.
 
 #### COM-011 — Task 계획 기본값 확장
 
@@ -226,7 +227,7 @@ C1은 다음 구현 묶음이다. 각 항목은 [제품·시스템 스펙](speci
 #### COM-013 — 구버전 backup importer
 
 - 상태: 로드맵 승인 / ADR 대기
-- 지원하기로 선택한 과거 KaosCal archive를 격리된 staging DB에서 검증·migration한 뒤 현재
+- 지원하기로 선택한 과거 BriefCal archive를 격리된 staging DB에서 검증·migration한 뒤 현재
   schema backup으로 변환해야 한다.
 - preflight 전에 active DB를 건드리지 않고 실패 시 원본 archive와 active DB를 보존한다.
 - 임의 SQLite 복구, 미래 schema downgrade와 record-level merge는 포함하지 않는다.
@@ -246,7 +247,7 @@ C1은 다음 구현 묶음이다. 각 항목은 [제품·시스템 스펙](speci
 
 - AI/LLM/ML 기반 생성·요약·분류·추천·검색·자동 스케줄링·자동 재배치·수락·삭제
 - 외부 예약 페이지, 팀 scheduling link와 meeting poll 서버
-- KaosCal 계정·backend·cloud database·sync relay·remote config·telemetry/behavior analytics
+- BriefCal 계정·backend·cloud database·sync relay·remote config·telemetry/behavior analytics
 - 모바일·웹 companion과 Event Brief/Task/Calendar Set cloud/device sync
 - Google/Microsoft/CalDAV/iCloud Calendar 직접 sync engine
 - RSVP, 참석자·주최자 편집과 delegate/shared calendar 권한 관리
@@ -263,8 +264,8 @@ C1은 다음 구현 묶음이다. 각 항목은 [제품·시스템 스펙](speci
 
 1. 요구사항 ID와 실패 경계를 코드보다 먼저 갱신한다.
 2. local-only와 provider 미연결 흐름을 회귀시키지 않는다.
-3. 기능은 이 Mac에서 실행되고 KaosCal 소유 데이터를 이 Mac 밖으로 자동 전송하면 안 된다.
-4. AI SDK/API, KaosCal backend endpoint, telemetry와 remote feature flag를 추가하면 안 된다.
+3. 기능은 이 Mac에서 실행되고 BriefCal 소유 데이터를 이 Mac 밖으로 자동 전송하면 안 된다.
+4. AI SDK/API, BriefCal backend endpoint, telemetry와 remote feature flag를 추가하면 안 된다.
 5. EventKit/provider 원본 write는 권한·identity·scope 확인과 사용자 승인 뒤에만 수행한다.
 6. 정상·취소·권한 거부·재실행·stale result·부분 성공을 자동 테스트한다.
 7. 실제 계정이나 macOS 기능을 주장하면 exact signed artifact, 비민감 fixture와 cleanup을

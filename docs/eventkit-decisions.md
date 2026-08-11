@@ -2,7 +2,7 @@
 
 ## 목적
 
-KaosCal v1은 직접 sync engine을 만들지 않고 EventKit을 통해 macOS Calendar와 연결한다.
+BriefCal v1은 직접 sync engine을 만들지 않고 EventKit을 통해 macOS Calendar와 연결한다.
 이 문서는 EventKit 사용에서 제품 품질과 데이터 안전성에 영향을 주는 결정을 고정한다.
 
 최신 범위와 대체 이력은 [ADR](adr/README.md)을 우선한다.
@@ -19,19 +19,19 @@ Exchange 우선 지원 범위는 macOS Calendar에 구성된 Exchange Online cal
 - 직접 sync를 만들면 인증, conflict, recurrence, rate limit, offline queue가 제품의 중심을 밀어낸다.
 - macOS-first 제품답게 시스템 계정과 권한 모델을 활용한다.
 
-## 결정 2: KaosCal 고유 데이터는 EventKit에 저장하지 않는다
+## 결정 2: BriefCal 고유 데이터는 EventKit에 저장하지 않는다
 
 EventKit 이벤트에는 원본 일정 데이터만 저장한다.
-Before/During/After 체크리스트, KaosCal notes, Event Brief 상태는 SQLite에 저장한다. change log는 Phase 6, 명시적 calendar role preference는 Phase 8에서 같은 로컬 저장소에 additive migration으로 추가했다.
+Before/During/After 체크리스트, BriefCal notes, Event Brief 상태는 SQLite에 저장한다. change log는 Phase 6, 명시적 calendar role preference는 Phase 8에서 같은 로컬 저장소에 additive migration으로 추가했다.
 
 금지:
 - 체크리스트를 `EKEvent.notes`에 serialize
-- KaosCal metadata를 description 문자열에 숨겨 저장
+- BriefCal metadata를 description 문자열에 숨겨 저장
 - EventKit URL field를 local context id 저장소로 오용
 
 허용:
 - 사용자가 직접 입력한 원본 event notes는 EventKit notes로 저장
-- KaosCal 전용 notes는 local DB로 저장
+- BriefCal 전용 notes는 local DB로 저장
 
 ## 결정 3: 권한 상태는 UI 상태로 명시한다
 
@@ -45,7 +45,7 @@ Before/During/After 체크리스트, KaosCal notes, Event Brief 상태는 SQLite
 - write-only 또는 제한된 접근 상태가 있는 OS 버전
 - unknown future status
 
-macOS 14 이상에서 KaosCal은 `requestFullAccessToEvents`를 사용한다. 일정 목록을 읽어 Day/Week/Agenda를 표시해야 하므로 write-only access는 기능을 충족하지 못한다. sandbox 빌드는 calendars entitlement와 full-access usage description을 포함한다.
+macOS 14 이상에서 BriefCal은 `requestFullAccessToEvents`를 사용한다. 일정 목록을 읽어 Day/Week/Agenda를 표시해야 하므로 write-only access는 기능을 충족하지 못한다. sandbox 빌드는 calendars entitlement와 full-access usage description을 포함한다.
 
 UI 원칙:
 - 권한이 없으면 왜 필요한지 설명한다.
@@ -58,13 +58,13 @@ UI 원칙:
 ## 결정 4: Read-only 캘린더도 Event Brief는 붙일 수 있다
 
 읽기 전용 캘린더의 원본 이벤트는 수정할 수 없다.
-하지만 KaosCal local context는 사용자의 Mac에 저장되는 별도 데이터이므로 Event Brief는 붙일 수 있다.
+하지만 BriefCal local context는 사용자의 Mac에 저장되는 별도 데이터이므로 Event Brief는 붙일 수 있다.
 
 UI:
 - 원본 일정 편집 버튼 대신 typed restriction reason을 표시한다.
 - Source badge에 role·account type·editable/restriction을 표시하고 calendar/source text를 별도로 유지한다.
 - 수정 불가 이유는 invitation → attendee meeting → subscribed → birthdays → provider-reported read-only의 typed 우선순위를 사용한다.
-- 모든 사유는 원본을 수정하지 못해도 KaosCal 메모와 체크리스트는 local에 저장할 수 있음을 함께 설명한다.
+- 모든 사유는 원본을 수정하지 못해도 BriefCal 메모와 체크리스트는 local에 저장할 수 있음을 함께 설명한다.
 - EventKit이 공유 owner/admin ACL의 구체 원인을 주지 않으면 Exchange·CalDAV·iCloud의 read-only 사유를 추측하지 않고 “macOS Calendar가 read-only로 보고함”으로 한정한다.
 
 ## 결정 5: 종일·시간대·반복 일정은 명시적 의미를 가진다
@@ -78,7 +78,7 @@ UI:
 - provider 경계에서 `DisplayEvent.isRecurring = EKEvent.hasRecurrenceRules || EKEvent.isDetached`로 판정하고, 비반복이면 `DisplayEvent.occurrenceDate`를 `nil`로 정규화한다. 이후 반복 소속·scope 요구·write routing은 `DisplayEvent.isRecurring`만 사용한다.
 - `occurrenceDate`는 반복 경로에 들어간 뒤 occurrence lookup·identity reconciliation에만 사용한다. detached occurrence는 recurrence rule이 없어도 반복 series의 occurrence이므로 `isDetached`로 반복에 포함한다.
 - 반복 변경 범위는 EventKit의 의미에 맞춰 `이번 일정` 또는 `이번 이후`로 표시하고 명시적 선택 전에는 write하지 않는다.
-- KaosCal이 안전하게 표현할 수 없는 복잡한 서버 규칙은 읽고 보존한다. 해당 occurrence의 일반 필드는 `이번 일정`으로 rule을 건드리지 않고 수정할 수 있지만, rule 자체와 `이번 이후` 변경은 Calendar.app으로 안내한다.
+- BriefCal이 안전하게 표현할 수 없는 복잡한 서버 규칙은 읽고 보존한다. 해당 occurrence의 일반 필드는 `이번 일정`으로 rule을 건드리지 않고 수정할 수 있지만, rule 자체와 `이번 이후` 변경은 Calendar.app으로 안내한다.
 - Event Brief는 기본적으로 occurrence별이다.
 
 ## 결정 6: 변경 감지는 보수적으로 한다
@@ -103,7 +103,7 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - Phase 7B는 schema migration을 추가하지 않았다. relink before log의 `originalNotes`는 v1 link가 원본 EventKit notes를 저장하지 않았기 때문에 nil/unavailable이며, local Event Brief notes를 대신 넣지 않는다.
 - 구현된 Phase 7C linked original delete는 active Brief의 notes/tasks/history, saved `EventLink`와 deletion snapshot을 read-only로 준비하고 별도 final Confirm 뒤에만 EventKit을 호출한다. Confirm 직전 expected-link/snapshot을 다시 검사한다.
 - successful delete receipt 뒤 context `cancelled`, link `orphaned`, available Undo supersede와 unavailable `cancelled` log를 한 SQLite transaction으로 finalize한다. log before/after는 같은 saved-link snapshot이고 v1에 없는 `originalNotes`는 nil/unavailable이다. local notes/tasks는 보존하며 Delete Undo는 없다.
-- deleted-original 표시는 status pair만으로 결정하지 않는다. 현재 context에 unavailable `cancelled` log가 있고 그 뒤 `(created_at, rowid)`상 더 최신 `relinked`가 없어야 한다. relink는 과거 deletion provenance를 무효화하므로 이후 같은 상태쌍이 다시 생겨도 새 KaosCal deletion log 없이는 일반 orphan이다.
+- deleted-original 표시는 status pair만으로 결정하지 않는다. 현재 context에 unavailable `cancelled` log가 있고 그 뒤 `(created_at, rowid)`상 더 최신 `relinked`가 없어야 한다. relink는 과거 deletion provenance를 무효화하므로 이후 같은 상태쌍이 다시 생겨도 새 BriefCal deletion log 없이는 일반 orphan이다.
 - nonrecurring은 log `single`, recurring occurrence는 `this_event`만 허용한다. linked `futureEvents`, attendee meeting/invitation과 read-only 원본은 계속 provider 전에 차단한다.
 - EventKit 성공 뒤 receipt/local finalize가 실패하거나 둘 사이 crash가 나면 원본을 자동 복원하거나 Delete를 재시도하지 않는다. review를 닫고 refresh하며 local Brief 보존과 false log 없음, 실제 외부 성공 범위를 알린다. Phase 7C는 기존 v1/v2 값만 써 migration이 없다.
 
@@ -155,7 +155,7 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
   read off-main 경계를 보장하며 모든 write latency를 비동기로 바꿨다는 의미는 아니다.
 - 초기 조회 범위는 실행 시점의 오늘을 기준으로 -30일~+90일이다.
 - 사용자가 loaded interval 밖으로 이동하면 visible interval 앞 30일과 뒤 90일을 포함하는 범위를 다시 가져온다. 현재 화면으로 되돌아오면 대기 중인 먼 범위 조회를 취소한다.
-- toolbar의 `Reload events`는 마지막 loaded interval의 현재 EventKit snapshot을 다시 조회한다. Exchange 서버 동기화 자체는 macOS Calendar가 담당하며 KaosCal이 강제하지 않는다.
+- toolbar의 `Reload events`는 마지막 loaded interval의 현재 EventKit snapshot을 다시 조회한다. Exchange 서버 동기화 자체는 macOS Calendar가 담당하며 BriefCal이 강제하지 않는다.
 - EventKit 종일 일정의 raw `endDate`는 다음 날 자정뿐 아니라 마지막 날 `23:59:59`로도 관찰되므로 provider 경계에서 날짜 배타 종료 자정으로 정규화한다. Agenda와 inspector는 이 배타 종료에서 하루를 빼 사람이 보는 포함 종료 날짜를 표시한다.
 - 날짜가 바뀌는 시간 일정은 시작과 종료 양쪽 날짜를 표시한다.
 - calendar color는 `EKCalendar.cgColor`를 sRGB 값 snapshot으로 바꾸고 rail에만 사용한다.
@@ -185,7 +185,7 @@ Phase 7A는 원본 부재와 무관한 시간 lifecycle만 구현한다. active 
 - 기존 반복 occurrence update/move/delete는 `thisEvent` 또는 `futureEvents` scope가 필수다. UI에는 각각 `이번 일정`, `이번 이후`로 표시한다.
 - `thisEvent`는 선택 occurrence가 detached될 수 있음을 preview한다. 이미 detached인 occurrence의 `futureEvents`는 차단한다.
 - 기존 recurrence rule 변경은 `futureEvents`에서만 허용한다. `thisEvent`는 occurrence 상세 변경만 가능하고, linked series는 초기 Phase 6에서 future scope 자체가 차단되므로 rule 변경도 Calendar.app으로 보낸다.
-- 여러 recurrence rule이나 KaosCal이 손실 없이 왕복할 수 없는 복잡한 rule은 읽고 보존한다. `thisEvent`의 ordinary-field patch는 recurrenceRules를 쓰지 않는 조건으로 허용하지만, `futureEvents`와 rule 변경은 Calendar.app으로 안내한다.
+- 여러 recurrence rule이나 BriefCal이 손실 없이 왕복할 수 없는 복잡한 rule은 읽고 보존한다. `thisEvent`의 ordinary-field patch는 recurrenceRules를 쓰지 않는 조건으로 허용하지만, `futureEvents`와 rule 변경은 Calendar.app으로 안내한다.
 - 새 일정에는 지원 가능한 basic rule을 만들 수 있지만 기존 single event를 series로 변환하는 control은 초기 Phase 6에서 제공하지 않는다.
 - attendee가 있는 meeting과 invitation은 scope와 무관하게 Calendar.app 전용이다.
 - 반복 write, calendar move, 기존 일정의 시간 의미 변경은 immutable impact preview를 보여 주고 사용자가 Confirm한 뒤에만 provider를 호출한다. linked context가 있으면 유지할 local 항목을 함께 보여 준다. Cancel·validation 실패·no-op에는 EventKit write와 local log가 없다.

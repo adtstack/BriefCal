@@ -6,7 +6,7 @@
 
 ## 결정
 
-Google Calendar API와 Microsoft Graph Calendar API를 KaosCal의 추가 calendar source로
+Google Calendar API와 Microsoft Graph Calendar API를 BriefCal의 추가 calendar source로
 도입하지 않는다. v2에서는 macOS EventKit을 유일한 calendar read/write 경계로 유지한다.
 
 ## 근거

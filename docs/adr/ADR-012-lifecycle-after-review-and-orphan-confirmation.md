@@ -78,7 +78,7 @@ Event Brief schema에는 `scheduled`, `completed`, `cancelled`, `orphaned`와
   `.cancelled`인 후보는 relink 후 lifecycle도 `cancelled`로 유지한다.
 - relink의 before log는 v1 `event_links`에 저장된 마지막-known 값으로 만든다.
   v1은 원본 EventKit notes를 저장하지 않았으므로 `before.originalNotes`는
-  `nil`(unavailable)이다. 이 빈자리에 KaosCal local notes를 대입하지 않는다.
+  `nil`(unavailable)이다. 이 빈자리에 BriefCal local notes를 대입하지 않는다.
 
 위 선행 결정에 따라 `CalendarProviding`에 저장 link 또는 최종 선택 event에서
 만드는 `CalendarEventLookupQuery`와 typed result를 추가했다. Phase 7B는 기존
@@ -105,14 +105,14 @@ migration을 추가하지 않았다.
 - 삭제 log는 저장 link에서 만든 snapshot을 before/after에 똑같이 사용한다.
   post-delete event가 없으므로 `change_type = cancelled`가 제거 의미를 전달한다.
   v1 link는 원본 EventKit notes를 저장하지 않았으므로 두 payload의
-  `originalNotes`는 `nil`(unavailable)이며 KaosCal local notes를 대입하지 않는다.
+  `originalNotes`는 `nil`(unavailable)이며 BriefCal local notes를 대입하지 않는다.
   undo state는 `unavailable`이고 delete용 session Undo token을 만들지 않는다.
 - `Original deleted` provenance는 `cancelled + orphaned` 상태쌍 자체가 아니다.
   현재 context history에 unavailable `cancelled` log가 있고 그 뒤에 더 최신
   `relinked` log가 없어야 한다. 최신 판단은 `created_at`을 먼저 비교하고 같은
   timestamp에서는 SQLite `rowid`를 tie-break로 사용한다. 더 늦은 relink는 과거
   deletion provenance를 무효화하므로 이후 외부 cancellation/orphan 전이가 같은
-  상태쌍을 만들어도 새 KaosCal deletion log 없이는 deleted-original로 표시하지 않는다.
+  상태쌍을 만들어도 새 BriefCal deletion log 없이는 deleted-original로 표시하지 않는다.
 - status, `cancelled` change type, `single`/`this_event` scope와 unavailable Undo는
   기존 v1/v2 schema에 모두 있어 Phase 7C migration을 추가하지 않았다.
 - EventKit remove와 SQLite finalize는 하나의 transaction이 아니다. provider가

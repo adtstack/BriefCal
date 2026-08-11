@@ -2,9 +2,9 @@
 
 ## 아키텍처 목표
 
-KaosCal은 macOS 14 이상을 대상으로 하고 이 Mac을 유일한 실행·로컬 데이터 경계로 삼는
+BriefCal은 macOS 14 이상을 대상으로 하고 이 Mac을 유일한 실행·로컬 데이터 경계로 삼는
 macOS-only calendar다.
-원본 캘린더 이벤트는 사용자의 캘린더 계정이 소유하고, KaosCal은 그 이벤트에 붙는 맥락을 로컬 데이터베이스에 저장한다.
+원본 캘린더 이벤트는 사용자의 캘린더 계정이 소유하고, BriefCal은 그 이벤트에 붙는 맥락을 로컬 데이터베이스에 저장한다.
 
 핵심 목표는 세 가지다.
 
@@ -22,32 +22,33 @@ macOS-only calendar다.
 | State | Observable models / ViewModels | 초기 복잡도를 낮추고 SwiftUI와 자연스럽게 연결 |
 | Task Center | Local event tasks + personal tasks | 일정 맥락과 오늘 할 일을 한 흐름에서 확인 |
 | Distribution | Direct download first | 서버 없는 one-time license 모델과 잘 맞음 |
-| Calendar sync | macOS EventKit | Internet Accounts의 정본과 직접 연결하며 KaosCal calendar sync engine을 만들지 않음 |
-| Task sync | Mac client → 선택 provider 직접 연결 | Keychain credential을 사용하고 KaosCal relay/backend를 경유하지 않음 |
-| AI/Cloud | 없음 | AI 기능, KaosCal 계정·backend·cloud DB·cross-device local-data sync를 영구 제외 |
+| Calendar sync | macOS EventKit | Internet Accounts의 정본과 직접 연결하며 BriefCal calendar sync engine을 만들지 않음 |
+| Task sync | Mac client → 선택 provider 직접 연결 | Keychain credential을 사용하고 BriefCal relay/backend를 경유하지 않음 |
+| AI/Cloud | 없음 | AI 기능, BriefCal 계정·backend·cloud DB·cross-device local-data sync를 영구 제외 |
 
 빌드 기준은 [ADR-006](adr/ADR-006-native-project-build-baseline.md), local-only 제품 경계는
-[ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)을 따른다. 현재 provisional
-bundle identifier는 `com.adtstack.kaoscal`이다.
+[ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md)을 따른다. 미출시 제품의 bundle
+identifier는 [ADR-021](adr/ADR-021-briefcal-pre-release-identity-baseline.md)에 따라
+`com.adtstack.briefcal`로 고정한다.
 
 ## 데이터 소유권
 
 | 데이터 | 소유자 | 저장 위치 |
 | --- | --- | --- |
 | 일정 제목, 시간, 장소, 참석자, 원본 notes·알림 | Calendar account / EventKit | 사용자의 기존 캘린더 계정 |
-| Before/During/After 체크리스트 | KaosCal | Local SQLite |
-| KaosCal notes | KaosCal | Local SQLite |
-| 변경 기록 | KaosCal | Local SQLite |
-| Event Brief 상태 | KaosCal | Local SQLite |
-| Personal task | KaosCal | Local SQLite |
-| provider binding·최소 task cache·sync cursor | KaosCal Mac client | Local SQLite |
+| Before/During/After 체크리스트 | BriefCal | Local SQLite |
+| BriefCal notes | BriefCal | Local SQLite |
+| 변경 기록 | BriefCal | Local SQLite |
+| Event Brief 상태 | BriefCal | Local SQLite |
+| Personal task | BriefCal | Local SQLite |
+| provider binding·최소 task cache·sync cursor | BriefCal Mac client | Local SQLite |
 | task provider credential | 사용자/provider | macOS Keychain |
-| 명시적 캘린더 역할 override | KaosCal | Local SQLite |
-| 캘린더 표시·availability 사용 정책 | KaosCal | Local SQLite |
-| 저장 Calendar Set, exact membership, 현재 선택 | KaosCal | Local SQLite |
-| 수동·recovery backup | 사용자 / KaosCal | 사용자가 고른 위치 또는 Application Support `Backups`의 plaintext ZIP |
+| 명시적 캘린더 역할 override | BriefCal | Local SQLite |
+| 캘린더 표시·availability 사용 정책 | BriefCal | Local SQLite |
+| 저장 Calendar Set, exact membership, 현재 선택 | BriefCal | Local SQLite |
+| 수동·recovery backup | 사용자 / BriefCal | 사용자가 고른 위치 또는 Application Support `Backups`의 plaintext ZIP |
 
-원칙: KaosCal 고유 데이터는 `EKEvent.notes`나 KaosCal 서버에 쓰지 않는다. Calendar는
+원칙: BriefCal 고유 데이터는 `EKEvent.notes`나 BriefCal 서버에 쓰지 않는다. Calendar는
 EventKit, 외부 event task는 사용자가 선택한 provider와 이 Mac에서 직접 동기화한다.
 
 ## 현재 모듈 구조
@@ -62,9 +63,9 @@ additive table로 추가한다. Local Data 기능은 같은 `AppDatabase` writer
 `ContextStore` local-data service를 Settings UI에 연결한다.
 
 ```text
-KaosCal.app
+BriefCal.app
 ├─ App/
-│  ├─ KaosCalApp.swift
+│  ├─ BriefCalApp.swift
 │  └─ AppState.swift
 ├─ CalendarKit/
 │  ├─ CalendarProvider.swift
@@ -104,12 +105,12 @@ KaosCal.app
 │  └─ Settings/
 │     └─ LocalDataSettingsView.swift
 ├─ DesignSystem/
-│  └─ KaosCalTheme.swift
+│  └─ BriefCalTheme.swift
 ├─ Resources/
 │  ├─ Assets.xcassets
 │  ├─ Info.plist
-│  └─ KaosCal.entitlements
-└─ KaosCalTests/
+│  └─ BriefCal.entitlements
+└─ BriefCalTests/
    ├─ ContextStoreTests.swift
    ├─ CalendarEventLayoutTests.swift
    ├─ CalendarAccessTests.swift
@@ -128,7 +129,7 @@ KaosCal.app
 
 아래는 Phase 9 구현을 포함한 v1 런타임 흐름이다. 1~8의 기존 일정·local context 흐름에 9의 반복·linked move·change log·session Undo, 10의 missing/orphan recovery, 11의 linked original delete review/finalize, 12의 multi-calendar clarity projection과 13의 local-data maintenance를 구현했다.
 
-1. `KaosCalApp` 초기화가 `AppBootstrap.makeAppState`를 호출한다.
+1. `BriefCalApp` 초기화가 `AppBootstrap.makeAppState`를 호출한다.
 2. production에서는 `AppBootstrap`이 Application Support DB를 열고 migration한 단일 `ContextStore`를 만든다. hosted XCTest에서는 production DB open을 건너뛴다.
 3. `AppBootstrap`이 DB 상태와 `ContextStore`를 주입해 `AppState`를 만든다. DB open/migration 실패 시 전역 복구 안내 상태로 시작한다.
 4. `CalendarShell`의 시작 task가 `AppState.loadCalendarStatus`를 호출하고 `CalendarProvider`가 EventKit 권한 상태를 확인한다.
@@ -323,7 +324,7 @@ Relink candidate Confirm
 - Relink는 EventKit write가 아니다. provider를 read로 재검증한 뒤 local link만
   다시 묶고 notes/tasks를 보존한다.
 - relink before log는 v1 link의 마지막-known snapshot을 사용한다. v1에는 원본
-  EventKit notes가 없으므로 `before.originalNotes`는 nil/unavailable이며 KaosCal
+  EventKit notes가 없으므로 `before.originalNotes`는 nil/unavailable이며 BriefCal
   local notes를 절대 대입하지 않는다.
 - Delete local Brief는 missing/orphaned context, link, event tasks와 change log를
   foreign-key cascade로 지우지만 EventKit delete를 호출하지 않는다.
@@ -356,7 +357,7 @@ Linked editor Delete
 - `Original deleted`는 status pair의 별칭이 아니다. Brief/Task Center read는
   unavailable `cancelled` log 중 `(created_at, rowid)`상 이후 `relinked`가 없는
   provenance만 현재 link 세대의 삭제로 인정한다. 같은 timestamp에서는 rowid가
-  순서를 결정하고, relink 뒤 다시 생긴 외부 `cancelled + orphaned`는 새 KaosCal
+  순서를 결정하고, relink 뒤 다시 생긴 외부 `cancelled + orphaned`는 새 BriefCal
   deletion log가 없으면 일반 orphan으로 표시한다.
 - EventKit 성공과 local finalize는 원자적이지 않다. receipt 불일치, final CAS/log
   실패나 두 경계 사이 crash는 원본 삭제를 자동 보정하지 않는 부분 성공이다.
@@ -414,7 +415,7 @@ EventEditor draft + selected occurrence
 - EventKit save 성공 뒤 identifier churn으로 post-save occurrence receipt를 강하게 확정할 수 없으면 부분 성공으로 처리한다. editor/review를 닫아 동일 변경을 재시도하지 못하게 하고, refresh 후 “Do not retry·Calendar.app에서 확인”을 안내한다. local rebind·log·Undo는 만들지 않고 기존 Event Brief를 보존한다.
 - post-write 화면 focus는 refresh 전체 snapshot의 exact display ID를 먼저 사용한다. exact ID가 없을 때 반복 fallback은 strong identity와 같은 calendar에 더해 zoned instant 또는 all-day/floating civil occurrence anchor까지 일치해야 하며, series identifier만 같은 sibling은 선택하지 않는다. 비반복 strong-ID fallback은 유지한다.
 - `v2_event_change_log`는 immutable v1 뒤에 추가하는 migration이다. `mutationImpact`, `changeHistory`, mutation rebind+record, undo rebind+record 같은 use-case API가 provider 명령과 local transaction 사이의 경계를 담당한다.
-- persistent log의 `undo_state = available`만으로 앱 재실행 뒤 Undo를 허용하지 않는다. UI Undo 권한은 현재 process의 one-shot token, provider의 fresh after-snapshot match, 권한과 strong identity를 모두 요구한다. 일반 EventKit refresh는 자체 save 알림과 외부 알림을 구분할 수 없어 token을 즉시 지우지 않지만, 외부 변경·missing·read-only는 역방향 write 전에 provider stale check로 차단한다. 이후 성공한 KaosCal mutation은 token을 폐기하며 반복 scope, detached, delete는 token을 만들지 않는다.
+- persistent log의 `undo_state = available`만으로 앱 재실행 뒤 Undo를 허용하지 않는다. UI Undo 권한은 현재 process의 one-shot token, provider의 fresh after-snapshot match, 권한과 strong identity를 모두 요구한다. 일반 EventKit refresh는 자체 save 알림과 외부 알림을 구분할 수 없어 token을 즉시 지우지 않지만, 외부 변경·missing·read-only는 역방향 write 전에 provider stale check로 차단한다. 이후 성공한 BriefCal mutation은 token을 폐기하며 반복 scope, detached, delete는 token을 만들지 않는다.
 - `DisplayEvent.isRecurring`이 런타임 scope routing의 단일 기준이어도 persisted Undo snapshot을 복원하는 recurrence·detached·occurrence 중복 검사는 방어적으로 유지한다. 오래된 payload나 불일치 snapshot을 single Undo로 잘못 승격하지 않기 위한 별도 안전장치다.
 
 세부 결정은 [ADR-011](adr/ADR-011-recurrence-move-change-log-and-session-undo.md)을 따른다. 이 파이프라인은 121-test 자동 gate를 통과했지만 실계정 Exchange·`KAOS-TEST` 통과 증거는 아니다.
@@ -433,16 +434,24 @@ EventKitProvider
 - `DisplayEvent`는 EventKit 객체가 아니라 calendar color, source, read-only, recurrence, 시간 의미를 가진 값 snapshot이다.
 - all-day와 floating은 `LocalDateTimeComponents`에 원래 calendar identifier를 함께 보존하고 표시 calendar의 time zone에서 재구성한다. zoned는 raw `Date`의 절대 시점을 사용한다.
 - EventKit all-day raw end가 다음 날 자정 또는 마지막 날 `23:59:59`로 들어오는 두 경우를 provider 경계에서 배타 종료 자정으로 정규화한다.
-- `AppState`는 Day 1일, Week/Agenda 7일, Month 4~6주의 완전한 grid interval을 사용한다. 실행 시 오늘 -30/+90일을 읽고 화면이 범위를 벗어나면 visible interval 앞 30일·뒤 90일을 포함해 다시 읽는다. Month 이전·다음은 focused civil day를 가능한 한 유지하며 calendar month 단위로 이동하고 짧은 달에서는 마지막 날짜로 clamp한다.
+- `AppState`는 Day 1일, Week 7일, Month focused grid interval을 사용한다. Agenda의 focused
+  week와 Month의 focused month 첫 주는 각 timeline의 시작점이고, 두 화면 모두 처음 12주,
+  이후 8주 단위로 civil week를 이어 붙인다. 필요한 timeline 구간이 loaded interval 밖이면
+  두 범위의 합집합을 다시 읽고,
+  이미 포함된 구간은 재조회하지 않는다. 실행 시 기본적으로 오늘 -30/+90일을 읽고 일반
+  화면이 범위를 벗어나면 visible interval 앞 30일·뒤 90일을 포함해 다시 읽는다. Month
+  이전·다음은 focused civil day를 가능한 한 유지하며 calendar month 단위로 이동하고 짧은
+  달에서는 마지막 날짜로 clamp한다.
 - pending 범위 조회는 다음 navigation 전에 취소해 오래된 결과가 현재 화면을 덮지 않게 한다. `EKEventStoreChanged`는 마지막 loaded interval을 250ms 병합 재조회한다.
 - `CalendarEventLayout`은 Foundation-only 계산이다. 현지 자정 분할, all-day span/row, wall-clock minute, 최소 visual interval, overlap column만 만들고 SwiftUI 좌표는 보관하지 않는다.
 - `CalendarTimelineView`는 24시간 축, 고정 header/all-day lane, 현재 시각선, timed/all-day `Button` card를 렌더링한다. 고밀도 timed 일정은 날짜 너비를 늘려 가로 scroll하고, 종일 lane은 높이를 제한해 내부 세로 scroll한다.
-- `MonthGrid`는 표시 calendar의 locale·first weekday·time zone을 사용해 해당 월을 덮는
-  최소 4주~최대 6주의 civil day를 Foundation-only 값으로 만든다. `MonthEventLayout`은
+- `MonthGrid`는 표시 calendar의 locale·first weekday·time zone을 사용해 focused month를
+  덮는 grid 또는 Month timeline의 연속 civil week를 Foundation-only 값으로 만든다. `MonthEventLayout`은
   all-day와 timed multi-day를 배타 종료로 자르고 주 경계마다 deterministic lane segment를
   배치하며 날짜별 visible/hidden event를 계산한다. SwiftUI 좌표나 view 상태는 보관하지 않는다.
 - `MonthCalendarView`는 timed 단일 일정의 시작 시간+제목, all-day 제목, multi-day 가로
-  segment와 `+N more` popover를 렌더링한다. event 선택은 공통 `AppState.selectedEvent`와
+  segment와 `+N more` popover를 렌더링한다. 고정 요일 header 아래 주 grid를 scroll하고,
+  매월 1일의 3pt 경계와 locale 월명 watermark를 그린다. event 선택은 공통 `AppState.selectedEvent`와
   Inspector로 보내고 날짜 동작은 focused date를 갱신한 뒤 Day로 전환한다. 방향키 날짜 focus와
   VoiceOver label/value를 제공하며, 이미 읽은 event가 있는 재조회에서는 기존 grid 위에 작은
   loading 상태를 표시한다.
@@ -459,7 +468,7 @@ EventKitProvider
 ## Phase 3 로컬 저장 파이프라인
 
 ```text
-KaosCalApp / AppBootstrap
+BriefCalApp / AppBootstrap
   → AppDatabase(DatabaseQueue + v1 ... v11 additive migrations)
   → ContextStore transaction boundary
   → EventContext/EventTask/PersonalTask/CalendarRole/CalendarSet repositories
@@ -538,9 +547,9 @@ globally disabled calendar도 blocking 정책에 따라 busy 계산에는 계속
 Settings / AppState local-data operation gate
   → current file-backed ContextStore + pending-notes flush
   → AppDatabase online snapshot on the live DatabaseWriter
-  → strict store-only ZIP: kaoscal.sqlite + manifest.json
+  → strict store-only ZIP: briefcal.sqlite + manifest.json
   → import preflight: archive/manifest/hash/schema/migrations/integrity/FK
-  → automatic current-DB ZIP in Application Support/KaosCal/Backups
+  → automatic current-DB ZIP in Application Support/BriefCal/Backups
   → same-writer hot restore or current user-data reset transaction
   → post-restore schema/integrity/FK check + local projection reload
 ```
@@ -548,10 +557,10 @@ Settings / AppState local-data operation gate
 - archive format version은 SQLite schema와 독립적이다. manifest는 현재 v11까지의 migration 목록, DB byte count와 SHA-256을 기록하며 기기 이름은 기록하지 않는다.
 - 수동 파일 작업은 `NSSavePanel`/`NSOpenPanel`에서 사용자가 고른 security-scoped URL과 user-selected read/write entitlement만 사용한다. 자동 backup은 sandbox Application Support 안에 둔다.
 - import는 root의 정확한 두 store-only entry만 허용한다. manifest 64 KiB, DB 128 MiB, archive 129 MiB 상한을 두고 filesystem file replacement, WAL/SHM copy, nested path, duplicate/symlink/extra entry, deflate/encryption/data-descriptor/ZIP64/multi-disk와 record-level merge는 사용하지 않는다.
-- SHA-256은 archive 내부 byte integrity 검사일 뿐 제작자 서명이 아니다. 실행 중인 앱과 application identifier·current schema object·migration 목록이 정확히 같은 신뢰 가능한 KaosCal backup만 import하며 과거 schema 자동 migration이나 미래 schema downgrade는 하지 않는다.
+- SHA-256은 archive 내부 byte integrity 검사일 뿐 제작자 서명이 아니다. 실행 중인 앱과 application identifier·current schema object·migration 목록이 정확히 같은 신뢰 가능한 BriefCal backup만 import하며 과거 schema 자동 migration이나 미래 schema downgrade는 하지 않는다.
 - import/reset은 automatic backup이 성공해야 active data를 바꾼다. restore 사후 검증이 실패하면 같은 writer에 pre-operation snapshot rollback을 시도한다.
 - reset은 현재 user-data table row를 한 transaction에서 비우고 GRDB migration history와 schema를 유지한다. 여기에는 saved Set·membership·selection도 포함된다.
-- ZIP은 plaintext이고 linked title/time/location/identifier, original-notes change snapshot을 포함할 수 있다. KaosCal은 계정 credential/token을 전용 필드로 수집하지 않고 EventKit 전체 event store도 export하지 않지만, 사용자 notes/tasks 본문은 검사·redact하지 않으므로 그 안에 입력한 민감정보는 그대로 포함될 수 있다.
+- ZIP은 plaintext이고 linked title/time/location/identifier, original-notes change snapshot을 포함할 수 있다. BriefCal은 계정 credential/token을 전용 필드로 수집하지 않고 EventKit 전체 event store도 export하지 않지만, 사용자 notes/tasks 본문은 검사·redact하지 않으므로 그 안에 입력한 민감정보는 그대로 포함될 수 있다.
 - 자동 backup은 retention/pruning 없이 `Backups`에 보존한다. 사용자가 직접 관리한다.
 - 정상 store가 열려야 Phase 9 Settings operation을 시작할 수 있다. Phase 10의 별도
   bootstrap coordinator는 store open 실패 상태에서만 strict backup을 preflight하고,
@@ -562,7 +571,7 @@ archive와 privacy 계약은 [backup-restore.md](backup-restore.md), 결정 근�
 
 ## Event Brief 경계
 
-Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 KaosCal이 관리한다. Phase 4는 지연 생성, notes autosave, task CRUD·완료와 Task Center projection을 구현했다. Phase 5는 same-calendar 비반복 원본 수정 뒤 explicit rebind를 추가했고, Phase 6은 linked move·반복 occurrence reconciliation·change log를 구현했다. Phase 7A는 종료 시각 기반 scheduled/completed와 After Review를, Phase 7B는 missing/orphan review·검증된 relink·local-only delete를 구현했다. Phase 7C는 final review 뒤 linked original delete와 local Brief 보존 finalize를 구현했다.
+Event Brief는 EventKit 이벤트의 부속 UI처럼 보이지만 저장과 생명주기는 BriefCal이 관리한다. Phase 4는 지연 생성, notes autosave, task CRUD·완료와 Task Center projection을 구현했다. Phase 5는 same-calendar 비반복 원본 수정 뒤 explicit rebind를 추가했고, Phase 6은 linked move·반복 occurrence reconciliation·change log를 구현했다. Phase 7A는 종료 시각 기반 scheduled/completed와 After Review를, Phase 7B는 missing/orphan review·검증된 relink·local-only delete를 구현했다. Phase 7C는 final review 뒤 linked original delete와 local Brief 보존 finalize를 구현했다.
 
 - Event Brief 생성: 이벤트를 단순 선택할 때는 만들지 않고, 사용자가 처음 메모나 작업을 저장할 때 local context를 만든다.
 - Event Brief 수정: SQLite에만 쓴다.

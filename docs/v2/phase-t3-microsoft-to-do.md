@@ -66,7 +66,7 @@ delta 결과가 삭제를 뜻하는지, 일시적으로 보이지 않는지를 p
 - `provider_sync_cursors`에는 list별 Graph `@odata.deltaLink` 전체 URL을 opaque value로만
   저장한다. tombstone은 `missing`으로 표시하고, cursor 오류·권한 오류만으로 local task를
   삭제하지 않는다. invalid cursor는 삭제 후 다음 refresh에서 full delta round로 복구한다.
-- create request는 `linkedResources`에 `kaoscal://task/<local-task-id>`를 함께 보내며,
+- create request는 `linkedResources`에 `briefcal://task/<local-task-id>`를 함께 보내며,
   앱은 URL scheme 수신 뒤 local binding → strong Calendar lookup 순서로 해당 Event Brief를
   연다. 실제 To Do UI에서 linked resource 보존 여부는 아래 live gate에서 확인해야 하며,
   아직 완료로 승격하지 않는다.
@@ -75,7 +75,7 @@ delta 결과가 삭제를 뜻하는지, 일시적으로 보이지 않는지를 p
 
 - fake Graph response의 delta create/update/delete/invalid cursor
 - 401·403·429·tenant policy·network timeout
-- linkedResource가 보존되는지와 deep link가 KaosCal의 올바른 context/occurrence를 여는지
+- linkedResource가 보존되는지와 deep link가 BriefCal의 올바른 context/occurrence를 여는지
 - 같은 Graph account의 두 list와 EventKit Exchange source 충돌
 - 실제 테스트 tenant에서 task 생성·외부 완료·삭제·재연결·token revoke
 - clean account에서 onboarding → permissions → first task → relaunch

@@ -6,18 +6,18 @@
 
 ## 설치·권한·동기화
 
-### AI·KaosCal Cloud·기기 간 local data sync는 제공하지 않는다
+### AI·BriefCal Cloud·기기 간 local data sync는 제공하지 않는다
 
-KaosCal의 Event Brief, local notes/tasks, history, Calendar Set과 설정은 이 Mac에만
-저장된다. AI/LLM/ML 기능, KaosCal 계정·backend·cloud database, telemetry, 모바일·웹
+BriefCal의 Event Brief, local notes/tasks, history, Calendar Set과 설정은 이 Mac에만
+저장된다. AI/LLM/ML 기능, BriefCal 계정·backend·cloud database, telemetry, 모바일·웹
 companion과 다른 기기로의 자동 local-data sync는 제품 범위가 아니다.
 
 Calendar 동기화는 macOS EventKit과 Internet Accounts가 담당한다. 사용자가 연결한 event
 task는 이 Mac의 client가 Apple Reminders, Google Tasks, Todoist 또는 Microsoft To Do와
-직접 동기화하며 KaosCal 중계 서버를 사용하지 않는다. Provider 연결은 local-only 기능의
+직접 동기화하며 BriefCal 중계 서버를 사용하지 않는다. Provider 연결은 local-only 기능의
 필수 조건이 아니다.
 
-**데이터 이전:** KaosCal 고유 데이터를 다른 Mac으로 옮기려면 사용자가 명시적으로 만든
+**데이터 이전:** BriefCal 고유 데이터를 다른 Mac으로 옮기려면 사용자가 명시적으로 만든
 plaintext ZIP export/import를 사용한다. 자동 cloud sync로 표현하지 않는다.
 
 ### Tasks provider 직접 관리와 calendar 결합은 아직 live fixture 전이다
@@ -42,7 +42,7 @@ Microsoft와 Todoist는 priority, Microsoft는 별도 reminder 시각을 지원�
 날짜만 저장한다. Microsoft/Todoist가
 실제 원본 URL을 준 작업만 원본 열기를 제공한다.
 Todoist `Completed`는 최근 90일 completion archive만 bounded 조회하므로 그보다 오래된 완료
-작업은 오른쪽 provider 목록에 나타나지 않을 수 있다. KaosCal local Task Center의 완료 이력과
+작업은 오른쪽 provider 목록에 나타나지 않을 수 있다. BriefCal local Task Center의 완료 이력과
 같은 범위로 해석하면 안 된다.
 
 Task Center에는 exact Today/Upcoming/Overdue/No Date/Completed, grouping, 저장 Task view,
@@ -63,7 +63,7 @@ pending create는 원격 성공과 local binding 저장 사이에 프로세스�
 
 ### 외부 배포용 build가 아직 없다
 
-현재 Release checkpoint는 `KaosCalLocalTestBuild=YES`가 표시된 로컬 ad-hoc 테스트용이다.
+현재 Release checkpoint는 `BriefCalLocalTestBuild=YES`가 표시된 로컬 ad-hoc 테스트용이다.
 Sparkle을 포함한 ad-hoc 앱에는 Developer ID Team identity가 없으므로 이 전용 build는 hardened
 runtime을 비활성화하고 실제 launch smoke를 통과해야 한다. Developer ID 서명, hardened runtime,
 notarization, stapling과 clean-user 설치를 마친 공개 beta package가 아니다.
@@ -74,25 +74,25 @@ artifact를 배포하지 않는다.
 
 ### Calendar full access가 필요하다
 
-권한을 거부하거나 철회하면 KaosCal은 Calendar 일정과 기존 화면 선택을 메모리에서
+권한을 거부하거나 철회하면 BriefCal은 Calendar 일정과 기존 화면 선택을 메모리에서
 제거하고 원본 일정 기능을 사용할 수 없다. 로컬 Event Brief DB를 삭제하지는 않는다.
 
-**우회:** 앱의 `Open System Settings` 안내로 권한을 허용한 뒤 KaosCal로 돌아와
+**우회:** 앱의 `Open System Settings` 안내로 권한을 허용한 뒤 BriefCal로 돌아와
 새로고침한다. 이 거부→복구 경로는 자동 검증됐지만 실제 최신 Release UI 수동 gate는
 남아 있다.
 
 ### `Reload events`는 서버 동기화 버튼이 아니다
 
 새로고침은 macOS EventKit이 현재 보유한 데이터를 다시 읽는다. Exchange 서버와의
-원격 동기화는 macOS Calendar가 담당하며 KaosCal이 강제하지 않는다.
+원격 동기화는 macOS Calendar가 담당하며 BriefCal이 강제하지 않는다.
 
 **우회:** 서버 변경이 바로 보이지 않으면 Calendar.app에서 동기화 상태를 먼저
-확인한 뒤 KaosCal을 새로고침한다.
+확인한 뒤 BriefCal을 새로고침한다.
 
 ### 지원 계정 경계
 
-KaosCal은 macOS Calendar에 이미 구성된 계정을 EventKit으로 사용한다. Microsoft
-계정 비밀번호, MFA나 OAuth token을 KaosCal에 입력하는 방식은 제공하지 않는다.
+BriefCal은 macOS Calendar에 이미 구성된 계정을 EventKit으로 사용한다. Microsoft
+계정 비밀번호, MFA나 OAuth token을 BriefCal에 입력하는 방식은 제공하지 않는다.
 온프레미스 Exchange와 shared read-only Exchange의 실제 호환성은 아직 통과 선언하지
 않았다.
 
@@ -108,16 +108,16 @@ KaosCal은 macOS Calendar에 이미 구성된 계정을 EventKit으로 사용한
 
 ### read-only·구독·생일 캘린더는 원본 편집 불가
 
-KaosCal이 read-only로 판정한 원본은 저장·이동·삭제할 수 없다. shared calendar의
+BriefCal이 read-only로 판정한 원본은 저장·이동·삭제할 수 없다. shared calendar의
 구체 ACL 원인은 EventKit이 제공한 범위 이상으로 추측해 표시하지 않는다.
 
 **우회:** 권한이 있는 Calendar.app 또는 캘린더 소유자 쪽에서 원본을 변경한다.
-KaosCal의 local Event Brief는 원본 권한과 별도로 편집할 수 있다.
+BriefCal의 local Event Brief는 원본 권한과 별도로 편집할 수 있다.
 
 ### Calendar role·saved Set은 로컬이며 새 live 검증이 남아 있다
 
 Work/Personal 같은 role, role별 Smart Role Filter, calendar별 Enabled/Block과 사용자
-이름의 saved Set은 KaosCal의 로컬 SQLite에만 적용된다. Calendar.app의 캘린더 이름·색·
+이름의 saved Set은 BriefCal의 로컬 SQLite에만 적용된다. Calendar.app의 캘린더 이름·색·
 공유 권한을 바꾸거나 다른 Mac/iPhone으로 동기화하지 않는다. saved Set은 exact calendar
 identifier membership을 사용하므로 계정 재추가 등으로 identifier가 바뀌면 unavailable로
 남고, 같은 이름의 calendar에 자동 연결하지 않는다. `Replace…` 또는 `Remove`를 사용자가
@@ -132,13 +132,13 @@ Calendar.app에서 수행한다.
 
 ### 복잡한 반복 변경은 제한된다
 
-KaosCal이 손실 없이 표현할 수 없는 여러 규칙과 복잡한 서버 반복 규칙은 보존한다.
+BriefCal이 손실 없이 표현할 수 없는 여러 규칙과 복잡한 서버 반복 규칙은 보존한다.
 선택 occurrence의 일반 필드는 안전한 `이번 일정` 경로에서만 다룰 수 있고, 복잡한
 규칙의 `이번 이후`와 규칙 자체 변경은 지원하지 않는다. Event Brief가 연결된 반복
 일정의 `이번 이후` 변경·삭제도 여러 local context를 안전하게 재연결할 수 없어
 사전에 차단한다.
 
-**우회:** 해당 변경은 Calendar.app에서 수행한다. 중요한 반복 변경 뒤에는 KaosCal의
+**우회:** 해당 변경은 Calendar.app에서 수행한다. 중요한 반복 변경 뒤에는 BriefCal의
 각 occurrence와 Event Brief 연결을 확인한다.
 
 ### 반복·all-day·시간대·calendar 이동의 live 범위가 아직 제한적이다
@@ -147,14 +147,14 @@ KaosCal이 손실 없이 표현할 수 없는 여러 규칙과 복잡한 서버 
 반면 recurring `thisEvent`, 지원 범위 내 future split, all-day, floating/zoned time과
 linked calendar move는 최신 live gate를 완료하지 않았다.
 
-**현재 권장:** 중요한 일정에서는 Calendar.app을 사용하고, KaosCal에서 변경했다면
+**현재 권장:** 중요한 일정에서는 Calendar.app을 사용하고, BriefCal에서 변경했다면
 Calendar.app의 날짜·시간·반복 범위를 확인한다. 이는 확인된 실패가 아니라 미완료
 검증 항목이다.
 
 ### 외부에서 삭제한 반복 occurrence는 자동 판정되지 않을 수 있다
 
 살아 있는 반복 series의 한 occurrence 삭제와 검색 범위 밖으로 이동한 detached
-occurrence를 안전하게 구분할 수 없는 경우 KaosCal은 자동으로 orphan 처리하지 않는다.
+occurrence를 안전하게 구분할 수 없는 경우 BriefCal은 자동으로 orphan 처리하지 않는다.
 
 **우회:** recovery 화면에서 정확한 occurrence를 수동으로 확인해 relink한다. 후보가
 불명확하면 자동 연결하지 않는다.
@@ -170,12 +170,12 @@ Undo는 같은 실행 세션에서 마지막으로 성공한, strong identity가
 
 ### 원본 저장과 local Brief 갱신 사이에 부분 성공이 가능하다
 
-Calendar 원본과 KaosCal local DB는 하나의 원자적 저장으로 묶이지 않는다. 원본 변경은
+Calendar 원본과 BriefCal local DB는 하나의 원자적 저장으로 묶이지 않는다. 원본 변경은
 성공했지만 local 재연결·기록이 실패하면 앱은 같은 작업을 자동 재시도하거나 원본을
 자동 복원하지 않는다.
 
 **우회:** 오류가 “재시도하지 말고 Calendar.app에서 확인”을 안내하면 같은 버튼을
-반복해서 누르지 말고 Calendar.app의 원본과 KaosCal의 보존된 Brief를 각각 확인한다.
+반복해서 누르지 말고 Calendar.app의 원본과 BriefCal의 보존된 Brief를 각각 확인한다.
 
 ## Local Data·백업
 
@@ -184,7 +184,7 @@ Calendar 원본과 KaosCal local DB는 하나의 원자적 저장으로 묶이�
 ZIP에는 Event Brief notes/tasks, personal task, linked 일정의 제목·시간·위치·식별
 metadata, change snapshot의 원본 notes, calendar role·usage와 saved Set 이름·membership·
 현재 선택이 포함될 수 있다. 본문은
-검사하거나 가리지 않는다. KaosCal은 ZIP/SQLite를 암호화하거나 제작자 서명하지
+검사하거나 가리지 않는다. BriefCal은 ZIP/SQLite를 암호화하거나 제작자 서명하지
 않으며 SHA-256은 파일 일치 확인일 뿐 출처 인증이 아니다.
 
 **현재 권장:** 직접 만든 backup만 신뢰하고 암호화된 디스크 등 신뢰하는 위치에
@@ -209,9 +209,9 @@ Backup은 사용자가 요청하는 수동 export만 제공한다. Import/reset 
 **우회:** Settings의 active DB 위치에 인접한 `Backups` 폴더를 정기적으로 확인하고,
 필요한 파일을 별도 보관한 뒤 사용자가 직접 정리한다.
 
-### 손상 DB bootstrap 복구는 same-schema KaosCal backup이 필요하다
+### 손상 DB bootstrap 복구는 same-schema BriefCal backup이 필요하다
 
-Phase 10은 DB open/migration 실패 화면에서 strict KaosCal ZIP을 선택하는 복구 UI를
+Phase 10은 DB open/migration 실패 화면에서 strict BriefCal ZIP을 선택하는 복구 UI를
 제공한다. 현재 앱과 exact migration/schema가 같은 backup만 허용하며, 과거 schema 자동
 migration, 미래 schema downgrade, 임의 SQLite 선택, record merge와 backup 없는 새 DB
 초기화는 제공하지 않는다.
@@ -224,7 +224,7 @@ power-loss window는 manual pending이다.
 ### Reset Local Data는 Calendar 일정 삭제가 아니다
 
 Reset은 Event Brief, event/personal task, provider/reference row, link/change history,
-calendar role·usage와 saved Set·membership·selection 같은 KaosCal local data를 비운다.
+calendar role·usage와 saved Set·membership·selection 같은 BriefCal local data를 비운다.
 Calendar.app·Exchange 원본 일정은 만들거나 수정하거나 삭제하지 않는다. 반대로 local
 Brief 삭제도 원본 일정을 삭제하지 않는다.
 
@@ -233,12 +233,12 @@ Brief 삭제도 원본 일정을 삭제하지 않는다.
 
 ### Personal task는 다른 task 서비스와 동기화되지 않는다
 
-Personal task는 KaosCal local DB에만 저장된다. Event Brief의 event task는 calendar별
+Personal task는 BriefCal local DB에만 저장된다. Event Brief의 event task는 calendar별
 Task Provider destination이 설정된 경우에만 지원 provider로 연결된다. 이 연동은 현재
 자동 fixture를 통과했지만 실제 계정·권한 철회·충돌·cleanup live gate 전이다. Exchange
-Tasks와 다른 기기의 KaosCal로 직접 동기화하는 기능은 없다.
+Tasks와 다른 기기의 BriefCal로 직접 동기화하는 기능은 없다.
 
-**현재 권장:** live gate 전에는 중요한 원격 task를 KaosCal 연결 task 하나에만 의존하지
+**현재 권장:** live gate 전에는 중요한 원격 task를 BriefCal 연결 task 하나에만 의존하지
 않는다. 여러 기기에서 보여야 하는 Personal task는 해당 서비스에 별도로 기록한다.
 
 ## 화면·수동 검증 상태
@@ -258,5 +258,5 @@ rollback fault는 실행하지 않았다. 온보딩과 recovery 화면은 offscr
 [QA checklist](qa-checklist.md)를 따른다. 상용 캘린더 대비 기능 격차와 알림·일정 검색·
 전체 Month부터 시작하는 후속 구현 순서는
 [상용 기능 로드맵](commercial-feature-roadmap.md)을 따른다.
-AI·KaosCal Cloud 영구 제외와 허용되는 직접 동기화 경계는
-[ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)를 따른다.
+AI·BriefCal Cloud 영구 제외와 허용되는 직접 동기화 경계는
+[ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md)를 따른다.

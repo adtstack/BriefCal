@@ -1,10 +1,12 @@
-# KaosCal
+# BriefCal
 
-KaosCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 각 일정의 준비물·메모·후속 작업을 로컬에 보존하는 macOS 앱이다.
-AI와 KaosCal 계정·서버·Cloud 없이 이 Mac에서 실행되며, Calendar는 EventKit, 사용자가
+> 일정 전후까지 챙기는 캘린더.
+
+BriefCal은 macOS Calendar에 이미 연결된 일정을 읽고 편집하면서, 각 일정의 준비물·메모·후속 작업을 로컬에 보존하는 macOS 앱이다.
+AI와 BriefCal 계정·서버·Cloud 없이 이 Mac에서 실행되며, Calendar는 EventKit, 사용자가
 연결한 event task는 해당 provider와 이 Mac이 직접 동기화한다.
 제품의 영구 local-only 경계는
-[ADR-019](docs/adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)를 따른다.
+[ADR-019](docs/adr/ADR-019-local-only-no-ai-no-product-cloud.md)를 따른다.
 
 현행 제품 동작, 시스템 불변식과 요구사항별 인수 기준은
 [제품·시스템 스펙](docs/specification.md)을 기준으로 한다.
@@ -22,15 +24,20 @@ provider와 통합 캘린더 작업은 [v2 실행계획](docs/v2-execution-plan.
 - macOS 14 이상
 - macOS Calendar에 구성된 Exchange 캘린더를 우선 검증 대상으로 하는 EventKit 앱
 - Day, Week, Month, Agenda 캘린더, Sidebar mini month와 Task Center
-- 본문 Month의 4~6주 grid, 일정 제목·시간, 주 경계 multi-day segment와 `+N` overflow
+- Settings에서 Sunday 또는 Monday를 주 시작 요일로 선택하고 모든 캘린더 화면에 즉시 적용
+- 본문 Month의 연속 주간 scroll, 1일의 월 경계·월명, 일정 제목·시간, 주 경계
+  multi-day segment와 `+N` overflow
 - 종일 일정, 시간대, 반복 일정의 안전한 표시·편집
 - Apple Reminders, Google Tasks, Todoist와 Microsoft To Do의 capability-aware 작업 관리,
   Apple 목록 이동·Todoist project/section 이동, 통합 검색·planning과 Calendar time block
-- active Event Brief와 KaosCal 작업은 이 Mac의 로컬 SQLite에만 저장. 명시적 export ZIP은
+- active Event Brief와 BriefCal 작업은 이 Mac의 로컬 SQLite에만 저장. 명시적 export ZIP은
   사용자가 고른 위치에 plaintext로 저장하며, cloud-mounted 폴더를 고른 경우 동기화는
-  macOS/해당 제공자가 수행하고 KaosCal은 이를 Cloud 기능으로 관리하지 않음
+  macOS/해당 제공자가 수행하고 BriefCal은 이를 Cloud 기능으로 관리하지 않음
 
 상세 범위와 제외 범위는 [v1-scope.md](docs/v1-scope.md)를, 결정 근거는 [ADR](docs/adr/README.md)을 확인한다.
+미출시 단계의 모든 제품 식별자는 `BriefCal`로 통일한다. bundle ID, 저장 경로, backup,
+Keychain, URL scheme과 빌드 변수의 기준은
+[ADR-021](docs/adr/ADR-021-briefcal-pre-release-identity-baseline.md)을 따른다.
 
 ## 사용자 안내
 
@@ -47,9 +54,9 @@ provider와 통합 캘린더 작업은 [v2 실행계획](docs/v2-execution-plan.
 ## 빌드와 테스트
 
 ```sh
-xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates CODE_SIGNING_ALLOWED=NO build
-xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates -skip-testing:KaosCalUITests CODE_SIGNING_ALLOWED=NO test
-xcodebuild -project KaosCal.xcodeproj -scheme KaosCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/KaosCalUIDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates -parallel-testing-enabled NO -only-testing:KaosCalUITests CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES test
+xcodebuild -project BriefCal.xcodeproj -scheme BriefCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/BriefCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates CODE_SIGNING_ALLOWED=NO build
+xcodebuild -project BriefCal.xcodeproj -scheme BriefCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/BriefCalDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates -skip-testing:BriefCalUITests CODE_SIGNING_ALLOWED=NO test
+xcodebuild -project BriefCal.xcodeproj -scheme BriefCal -configuration Debug -destination 'platform=macOS' -derivedDataPath /private/tmp/BriefCalUIDerivedData -onlyUsePackageVersionsFromResolvedFile -skipPackageUpdates -parallel-testing-enabled NO -only-testing:BriefCalUITests CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES test
 ```
 
 Finder에서 직접 열 수 있는 로컬 테스트용 Release 앱은 전용 스크립트로 만든다.
@@ -59,13 +66,13 @@ bash scripts/build_local_test_app.sh
 ```
 
 기본 출력은
-`/private/tmp/KaosCalLocalTestDerivedData/Build/Products/Release/KaosCal.app`이다. 스크립트는
+`/private/tmp/BriefCalLocalTestDerivedData/Build/Products/Release/BriefCal.app`이다. 스크립트는
 universal ad-hoc signing, entitlement와 XCTest 미포함을 검사하고, 실제 Calendar·Keychain·운영
 DB를 사용하지 않는 in-memory fixture로 앱을 직접 실행해 Sparkle 동적 로딩까지 확인한다.
 일반적으로 앱을 열 때는 fixture argument가 없으므로 정상 Calendar/로컬 DB 경로로 시작한다.
 
 Sparkle을 포함한 ad-hoc 앱에는 Developer ID Team identity가 없으므로 hardened runtime의
-library validation과 함께 사용하지 않는다. 로컬 테스트 빌드만 `KaosCalLocalTestBuild=YES`와
+library validation과 함께 사용하지 않는다. 로컬 테스트 빌드만 `BriefCalLocalTestBuild=YES`와
 hardened runtime 비활성화를 명시한다. 실제 배포 빌드는 이 marker가 `NO`이고, 같은 Developer ID
 Team으로 앱과 Sparkle을 서명한 hardened-runtime/notarized artifact여야 한다.
 
@@ -95,7 +102,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-자동 artifact는 `KaosCal-0.1.0-local.dmg`와 `SHA256SUMS.txt`다. 이 경로는 현재
+자동 artifact는 `BriefCal-0.1.0-local.dmg`와 `SHA256SUMS.txt`다. 이 경로는 현재
 Developer ID 인증서를 사용하지 않고 hardened runtime을 비활성화한 로컬 테스트 전달용이며,
 외부 beta 배포 판정을
 대체하지 않는다. 정식 배포는 [Release Runbook](docs/release-runbook.md)의 Developer ID
@@ -112,8 +119,8 @@ Developer ID 인증서를 사용하지 않고 hardened runtime을 비활성화�
 해석되지 않도록 URL의 두 slash 사이에 `$()`를 사용한다.
 
 ```xcconfig
-KAOSCAL_UPDATE_FEED_URL = https:/$()/updates.example.com/kaoscal/appcast.xml
-KAOSCAL_SPARKLE_PUBLIC_ED_KEY = <Sparkle generate_keys가 출력한 공개 키>
+BRIEFCAL_UPDATE_FEED_URL = https:/$()/updates.example.com/briefcal/appcast.xml
+BRIEFCAL_SPARKLE_PUBLIC_ED_KEY = <Sparkle generate_keys가 출력한 공개 키>
 ```
 
 Sparkle private key는 `.env`나 저장소에 넣지 않는다. 현재 GitHub prerelease의 ad-hoc
@@ -126,7 +133,7 @@ notarization, signed appcast와 이전 build upgrade smoke를 모두 요구하�
 
 EventKit 수동 QA에는 Calendar entitlement가 포함된 서명 앱이 필요하므로 `CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=YES`로 로컬 서명 빌드를 만든다. 실제 검증 명령과 결과는 [implementation-log.md](docs/implementation-log.md)에 남긴다.
 
-첫 실행에서는 앱 안의 `Allow Full Calendar Access`를 누른 뒤 macOS 권한 창에서 허용한다. 사용자가 권한을 허용했다고 보고했더라도 실행 중인 최신 서명 앱에 `Full calendar access`가 표시되는지 별도로 확인한다. 계정 비밀번호나 MFA 코드는 KaosCal에 입력하지 않는다. toolbar의 `Reload events`는 macOS EventKit의 현재 로컬 데이터를 다시 읽을 뿐 Exchange 원격 동기화를 강제하지 않는다.
+첫 실행에서는 앱 안의 `Allow Full Calendar Access`를 누른 뒤 macOS 권한 창에서 허용한다. 사용자가 권한을 허용했다고 보고했더라도 실행 중인 최신 서명 앱에 `Full calendar access`가 표시되는지 별도로 확인한다. 계정 비밀번호나 MFA 코드는 BriefCal에 입력하지 않는다. toolbar의 `Reload events`는 macOS EventKit의 현재 로컬 데이터를 다시 읽을 뿐 Exchange 원격 동기화를 강제하지 않는다.
 
 환경변수에 Exchange 계정, 비밀번호, MFA, OAuth token을 넣지 않는다. 앱은 macOS Internet Accounts에 이미 로그인된 계정을 EventKit으로 사용한다. 로컬 Context DB는 앱 sandbox의 Application Support 아래 자동 생성된다.
 

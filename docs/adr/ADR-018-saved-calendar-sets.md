@@ -46,7 +46,7 @@ time을 무시하면 기존 네 가지 usage 조합과 이중 예약 방지 경�
   때는 persisted selection을 All로 바꾸지 않고 temporary reveal/bypass를 사용한다. 이미
   normally visible한 event에는 temporary state를 만들지 않는다.
 - Settings는 create/rename/delete/reorder, account별 membership checkbox와 explicit
-  unavailable replacement/removal을 제공한다. Set 이름·membership·선택은 KaosCal SQLite
+  unavailable replacement/removal을 제공한다. Set 이름·membership·선택은 BriefCal SQLite
   backup/reset 대상이고 EventKit calendar/event를 쓰지 않는다.
 
 ## 결과

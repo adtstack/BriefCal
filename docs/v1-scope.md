@@ -6,7 +6,7 @@
 
 ## 한 줄 제품 정의
 
-KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일정 맥락과 개인 할 일을 로컬 Task Center에서 함께 처리하는 macOS-first calendar다.
+BriefCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일정 맥락과 개인 할 일을 로컬 Task Center에서 함께 처리하는 macOS-first calendar다.
 
 ## v1 필수 범위
 
@@ -20,15 +20,15 @@ KaosCal은 macOS Calendar의 일정을 Day, Week, Agenda에서 관리하고, 일
 | 반복 | 모든 occurrence 표시, 손실 없이 표현 가능한 기본 일·주·월·년 규칙 생성/편집, 이번 일정·이번 이후 범위 선택 | 반복 Brief가 다른 occurrence에 섞이지 않고, scope Confirm 전에는 write하지 않으며, 서버가 거부한 변경은 원본을 훼손하지 않는다. |
 | Event Brief | Before/During/After 작업, 로컬 메모, 원본 이동·시간·반복 변경 이력 | EventKit notes를 변경하지 않고 앱 재실행 뒤에도 유지된다. |
 | Task Center | 이벤트 작업을 모아 보고, 이벤트에 연결되지 않은 가벼운 개인 작업을 추가 | 오늘·예정·After Review·완료 목록에서 작업 출처와 연결 일정을 명확히 보여 준다. |
-| Local Data | 수동 ZIP export/import, import/reset 전 recovery backup, local-only reset, failed-bootstrap same-schema restore | archive와 DB를 엄격히 검증하고 Calendar/Exchange 원본을 바꾸지 않은 채 KaosCal local data를 복원·초기화한다. |
-| 안전성 | read-only 구분, recurrence/move impact 확인, 좁은 session Undo, orphan 보존, 백업/복원 | 원본 일정과 KaosCal 데이터의 삭제·복원이 서로 영향을 주지 않고 unsafe future-series write를 사전에 차단한다. |
+| Local Data | 수동 ZIP export/import, import/reset 전 recovery backup, local-only reset, failed-bootstrap same-schema restore | archive와 DB를 엄격히 검증하고 Calendar/Exchange 원본을 바꾸지 않은 채 BriefCal local data를 복원·초기화한다. |
+| 안전성 | read-only 구분, recurrence/move impact 확인, 좁은 session Undo, orphan 보존, 백업/복원 | 원본 일정과 BriefCal 데이터의 삭제·복원이 서로 영향을 주지 않고 unsafe future-series write를 사전에 차단한다. |
 
-현재 구현 단계는 범위 자체와 구분한다. Phase 5의 비반복 원본 편집 위에 Phase 6의 기본 반복 규칙, 명시적 scope, impact Confirm, linked safe move, additive change log, session-only Undo를 구현했고, Phase 7A에서 occurrence 종료 기반 scheduled/completed, After Review와 완료 일정 후속 작업 projection을 추가했다. Phase 7B는 전용 occurrence-aware lookup, 두 번의 명시적 `notFound`, local Brief 보관·재연결·삭제를 구현했다. Phase 7C는 active linked 원본의 saved-link/notes/tasks impact review와 별도 final Confirm, successful delete receipt 뒤 `cancelled + orphaned` local Brief 보존, unavailable cancellation provenance와 no-Undo partial-success 경계를 구현했다. deleted-original 표시는 현재 link 세대의 KaosCal deletion log를 요구하고 이후 `(created_at, rowid)`상 더 늦은 relink가 과거 provenance를 무효화한다. Phase 7C는 새 schema를 요구하지 않았다. 다만 살아 있는 반복 series의 **외부** 단일 occurrence 삭제는 범위 밖 detached move와 EventKit read로 구분할 수 없어 automatic orphan이 아니라 manual exact relink로 남기고, KaosCal이 직접 시작한 `thisEvent` 삭제만 successful receipt로 exact finalize한다.
+현재 구현 단계는 범위 자체와 구분한다. Phase 5의 비반복 원본 편집 위에 Phase 6의 기본 반복 규칙, 명시적 scope, impact Confirm, linked safe move, additive change log, session-only Undo를 구현했고, Phase 7A에서 occurrence 종료 기반 scheduled/completed, After Review와 완료 일정 후속 작업 projection을 추가했다. Phase 7B는 전용 occurrence-aware lookup, 두 번의 명시적 `notFound`, local Brief 보관·재연결·삭제를 구현했다. Phase 7C는 active linked 원본의 saved-link/notes/tasks impact review와 별도 final Confirm, successful delete receipt 뒤 `cancelled + orphaned` local Brief 보존, unavailable cancellation provenance와 no-Undo partial-success 경계를 구현했다. deleted-original 표시는 현재 link 세대의 BriefCal deletion log를 요구하고 이후 `(created_at, rowid)`상 더 늦은 relink가 과거 provenance를 무효화한다. Phase 7C는 새 schema를 요구하지 않았다. 다만 살아 있는 반복 series의 **외부** 단일 occurrence 삭제는 범위 밖 detached move와 EventKit read로 구분할 수 없어 automatic orphan이 아니라 manual exact relink로 남기고, BriefCal이 직접 시작한 `thisEvent` 삭제만 successful receipt로 exact finalize한다.
 
 Phase 8은 `Work`, `Personal`, `Family`, `Shared`, `Subscription`, `Other` role, explicit role만 저장하는 additive `v3_calendar_clarity`, `All`과 role별 virtual Set, typed restriction과 non-mutating duplicate projection을 구현했다. subscribed/birthdays만 현재 source가 있을 때 `Subscription`으로 추론하고 나머지 source는 용도를 추측하지 않는다. source가 사라지고 exact explicit override도 없으면 account type snapshot을 재해석하지 않고 `Other`로 표시한다. role 변경은 Calendar.app·EventKit 원본을 바꾸지 않는다. virtual Set은 Day/Week/Agenda visibility만 좁히고, possible duplicate는 fetch 시 한 번 계산한 index에서 정규화 title과 보수적 시간 범위가 같은 다른 calendar 후보를 O(1) 조회할 뿐 자동 merge·hide·delete하지 않는다. Inspector restriction과 AppState write preflight는 같은 typed reason을 사용한다. 고정 6×7 mini month 날짜 탐색기와 macOS 14/15 legacy `.icns` alpha를 포함한 16~1024px AppIcon도 구현했다.
 
 Phase 9은 healthy current-schema DB의 수동 ZIP export/import와 local reset을 구현했다.
-archive는 store-only이며 `kaoscal.sqlite`와 `manifest.json`만 허용하고, format version을
+archive는 store-only이며 `briefcal.sqlite`와 `manifest.json`만 허용하고, format version을
 DB schema와 분리해 migration 목록·byte count·SHA-256을 검증한다. manifest 64 KiB,
 DB 128 MiB, archive 129 MiB 상한과 strict classic-ZIP 계약을 적용한다. SHA-256은
 제작자 서명이 아니며, 실행 중인 앱과 application identifier·current schema·migration
@@ -38,7 +38,7 @@ DB 128 MiB, archive 129 MiB 상한과 strict classic-ZIP 계약을 적용한다.
 Import/reset은 active DB를 바꾸기 전에 `Backups`에 recovery ZIP을 남기며 같은 live
 SQLite writer에서 restore/reset한다. reset은 현재 user-data table row를 비우고 migration
 history는 유지한다. ZIP은 linked event metadata와 change snapshot의 original-notes
-snapshot을 포함할 수 있는 plaintext다. KaosCal은 계정 credential/token이나 attendee
+snapshot을 포함할 수 있는 plaintext다. BriefCal은 계정 credential/token이나 attendee
 전체 목록을 전용 필드로 수집하지 않고 전체 EventKit event store도 export하지 않지만,
 사용자 notes/tasks는 검사·redact하지 않으므로 본문에 입력한 민감정보는 포함될 수 있다.
 모든 Local Data 작업은 EventKit write를 하지 않는다.
@@ -65,7 +65,7 @@ Calendar.app 시각 round-trip, live all-day, 반복/future split, calendar move
 - 수정 가능 여부는 계정 종류가 아니라 EventKit이 보고하는 캘린더별 권한을 따른다.
 - shared read-only Exchange의 구체 ACL 원인은 추측하지 않고 typed `providerReadOnly`로 설명한다. 실제 shared read-only fixture·화면 표시는 별도 live gate 미검증이다.
 - 온프레미스 Exchange는 별도 호환성 검증 전까지 지원을 약속하지 않는다.
-- KaosCal은 Microsoft Graph, EWS, 자체 동기화 엔진, 계정 자격 증명을 사용하지 않는다.
+- BriefCal은 Microsoft Graph, EWS, 자체 동기화 엔진, 계정 자격 증명을 사용하지 않는다.
 - macOS permission, EventKit source/writable, 앱 CRUD, 서버 fetch, Calendar.app 시각 round-trip은 각각 별도 증거로 관리한다.
 
 ## 초대 일정 정책
@@ -89,10 +89,10 @@ CRUD도 capability 범위에서 제공한다. 이는 위 v1 제외 목록을 소
 ## 명시적 제외 범위
 
 - AI 자동 스케줄링, 자동 재배치, 자동 수락
-- 모바일 앱, 서버 기반 KaosCal Cloud, 사용자 계정
+- 모바일 앱, 서버 기반 BriefCal Cloud, 사용자 계정
 - 직접 Google/Microsoft/CalDAV 동기화
 - 초대 일정 RSVP·참석자 관리
-- 복잡한 반복 규칙을 KaosCal이 안전하게 표현할 수 없을 때의 강제 수정
+- 복잡한 반복 규칙을 BriefCal이 안전하게 표현할 수 없을 때의 강제 수정
 - detached occurrence의 `이번 이후`, 강한 context reconciliation 계획이 없는 linked future-series write
 - 반복 series·detached occurrence·delete의 일반 Undo와 앱 재실행 뒤 Undo
 - 임의 이름 saved Calendar Set, v1의 calendar별 visibility·role color/name override(동결된 v1 범위의 제외 항목)
@@ -106,9 +106,9 @@ v1 동결 뒤 additive `v8_calendar_usage`에서 calendar별 visibility와 avail
 구현했다. 이는 frozen v1 제공 범위를 소급 변경하지 않는다. saved Set cloud/device sync와
 시간·위치 기반 자동 전환, role color/name override는 계속 제외한다.
 
-동결 이후에도 KaosCal 소유 Event Brief/task/Set 데이터는 이 Mac에만 저장한다. AI와
-KaosCal 계정·backend·Cloud·cross-device sync는
-[ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md)에 따라 영구 제외하고, Calendar는
+동결 이후에도 BriefCal 소유 Event Brief/task/Set 데이터는 이 Mac에만 저장한다. AI와
+BriefCal 계정·backend·Cloud·cross-device sync는
+[ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md)에 따라 영구 제외하고, Calendar는
 EventKit, 연결한 event task는 이 Mac과 선택 provider 사이의 직접 동기화만 사용한다.
 
 ## 범위 변경 규칙

@@ -5,7 +5,7 @@
 
 ## 배포 방향
 
-KaosCal v1은 direct download first로 간다.
+BriefCal v1은 direct download first로 간다.
 Mac App Store는 sandbox, 심사, 라이선스 정책, 업데이트 전략이 안정된 뒤 검토한다.
 Direct-download build의 업데이트는 [ADR-020](adr/ADR-020-signed-automatic-updates.md)에 따라
 Sparkle 2의 HTTPS signed appcast를 사용한다. App Store/TestFlight 빌드와 함께 사용하지 않는다.
@@ -14,7 +14,7 @@ Sparkle 2의 HTTPS signed appcast를 사용한다. App Store/TestFlight 빌드�
 
 이유:
 - 구독 없는 one-time license 모델과 직접 배포가 잘 맞는다.
-- KaosCal 계정·backend·cloud sync 없이 이 Mac에서 완결되는 제품이다.
+- BriefCal 계정·backend·cloud sync 없이 이 Mac에서 완결되는 제품이다.
 - 베타 사용자에게 빠르게 빌드를 전달하고 피드백을 받을 수 있다.
 
 ## 출시 단계
@@ -80,10 +80,10 @@ publisher/contact/terms 목록과 중단선이다. 승인된 실제 EULA로 대�
 문의 경로를 확정해야 한다.
 
 ```text
-KaosCal은 계정 가입 없이 작동합니다.
+BriefCal은 계정 가입 없이 작동합니다.
 일정 자체는 사용자의 기존 캘린더 계정에 저장됩니다.
-KaosCal의 체크리스트, 메모, 후속 작업, 변경 기록은 이 Mac의 로컬 데이터베이스에 저장됩니다.
-KaosCal은 AI나 자체 Cloud를 사용하지 않으며 Event Brief 데이터를 KaosCal 서버로 전송하지 않습니다.
+BriefCal의 체크리스트, 메모, 후속 작업, 변경 기록은 이 Mac의 로컬 데이터베이스에 저장됩니다.
+BriefCal은 AI나 자체 Cloud를 사용하지 않으며 Event Brief 데이터를 BriefCal 서버로 전송하지 않습니다.
 Calendar는 macOS EventKit, 연결한 task는 이 Mac과 해당 provider 사이에서 직접 동기화됩니다.
 ```
 
@@ -106,7 +106,7 @@ Calendar는 macOS EventKit, 연결한 task는 이 Mac과 해당 provider 사이�
 
 ## Landing page 최소 구성
 
-- 제품명: KaosCal
+- 제품명: BriefCal
 - 태그라인: Tame calendar chaos.
 - 설명: 일정만 보지 말고, 그 일정에 딸린 일까지 관리하세요.
 - 신뢰 문구: No subscription. No account required. Your event context stays on your Mac.

@@ -47,7 +47,7 @@ EventKit은 calendar source identifier와 event별 free/busy availability를 제
 ## 결과
 
 사용자는 계정 안의 calendar마다 노출과 충돌 방지 참여를 별도로 정할 수 있다. 정책은
-KaosCal SQLite backup/reset 대상이며 EventKit 원본을 바꾸지 않는다. `v8` 도입 뒤에도
+BriefCal SQLite backup/reset 대상이며 EventKit 원본을 바꾸지 않는다. `v8` 도입 뒤에도
 strict backup 계약은 current-schema exact match만 허용하므로 이전 schema ZIP을 자동
 migration하지 않는다.
 

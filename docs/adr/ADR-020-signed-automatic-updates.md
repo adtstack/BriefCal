@@ -6,20 +6,20 @@
 
 ## 결정
 
-Mac App Store 밖에서 전달하는 KaosCal 빌드는 Sparkle 2를 사용해 자동업데이트할 수 있다.
+Mac App Store 밖에서 전달하는 BriefCal 빌드는 Sparkle 2를 사용해 자동업데이트할 수 있다.
 업데이터는 다음 조건을 모두 만족하는 빌드에서만 시작한다.
 
 1. `SUFeedURL`이 host를 가진 HTTPS URL이다.
 2. `SUPublicEDKey`가 32-byte Ed25519 공개 키의 올바른 base64 표현이다.
 3. appcast와 update archive가 같은 Sparkle private key로 서명된다.
-4. update archive 안의 앱이 KaosCal의 승인된 Developer ID identity로 서명되고 notarization
+4. update archive 안의 앱이 BriefCal의 승인된 Developer ID identity로 서명되고 notarization
    및 stapling gate를 통과한다.
 5. 새 build의 `CFBundleVersion`은 설치된 build보다 큰 고유 정수다.
 
 위 구성이 없거나 잘못된 개발·ad-hoc 빌드는 정상 실행하되 updater를 시작하지 않는다.
 Sparkle을 포함한 ad-hoc app과 framework에는 Developer ID Team identity가 없으므로 hardened
 runtime의 library validation을 배포 서명 대신 흉내 내는 용도로 사용하지 않는다. 명시적인
-`KaosCalLocalTestBuild=YES` 산출물만 hardened runtime을 비활성화하고 in-memory fixture launch
+`BriefCalLocalTestBuild=YES` 산출물만 hardened runtime을 비활성화하고 in-memory fixture launch
 smoke를 통과한다. 실제 배포 산출물은 marker가 `NO`이고 앱과 모든 nested code를 같은 승인된
 Developer ID Team으로 서명한 뒤 hardened runtime을 유지한다.
 현재 GitHub Actions가 만드는 `*-local.dmg` prerelease는 Developer ID/notarization 증거가
@@ -42,7 +42,7 @@ Event Brief, local task와 backup 기능을 막거나 사용자 데이터를 변
   metadata와 요청 IP가 보일 수 있다.
 - feed나 archive가 공격받거나 잘못 배포되더라도 Ed25519와 Developer ID 검증을 우회하는
   fallback을 제공하지 않는다.
-- App Sandbox 설치 helper를 위해 Sparkle이 요구하는 launcher service와 KaosCal bundle
+- App Sandbox 설치 helper를 위해 Sparkle이 요구하는 launcher service와 BriefCal bundle
   identifier로 한정된 `-spks`, `-spki` mach lookup 예외만 허용한다.
 
 ## 운영 계약
@@ -63,7 +63,7 @@ Event Brief, local task와 backup 기능을 막거나 사용자 데이터를 변
 
 ## 결과
 
-- automatic update는 ADR-019가 허용한 최소 배포 서비스이며 KaosCal Cloud, 계정, telemetry,
+- automatic update는 ADR-019가 허용한 최소 배포 서비스이며 BriefCal Cloud, 계정, telemetry,
   remote config 또는 사용자 데이터 sync가 아니다.
 - TestFlight와 Mac App Store 빌드에는 이 direct-download updater를 함께 사용하지 않는다.
 - 앱 코드가 준비됐다는 사실은 feed, Developer ID, notarization과 end-to-end upgrade gate가

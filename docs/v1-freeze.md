@@ -2,11 +2,11 @@
 
 > 상태: Accepted
 > 결정일: 2026-07-13
-> 적용 대상: KaosCal v1 범위와 현재 구현 기준선
+> 적용 대상: BriefCal v1 범위와 현재 구현 기준선
 
 ## 1. 결정
 
-KaosCal v1은 현재 저장소 상태를 기준으로 기능 개발을 종료하고 동결한다. 이후의
+BriefCal v1은 현재 저장소 상태를 기준으로 기능 개발을 종료하고 동결한다. 이후의
 새로운 외부 task provider, 직접 Calendar API, 동기화 기능은 v1 기능으로 추가하지
 않고 v2 실행계획으로 분리한다.
 
@@ -32,7 +32,7 @@ v1 동결은 “모든 수동 gate가 통과했다”는 뜻이 아니다. 실�
 - local SQLite context store, 수동 export/import/reset, recovery backup
 - onboarding, 권한 복구 안내, ad-hoc Release checkpoint와 운영 문서
 
-v1은 원본 Calendar의 notes를 KaosCal notes로 사용하지 않으며, task를 Apple Reminders,
+v1은 원본 Calendar의 notes를 BriefCal notes로 사용하지 않으며, task를 Apple Reminders,
 Google Tasks, Todoist, Microsoft To Do로 자동 동기화하지 않는다.
 
 ## 3. 동결 후에도 유지할 수 있는 변경

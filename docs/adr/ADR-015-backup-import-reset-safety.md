@@ -6,7 +6,7 @@
 
 ## 배경
 
-KaosCal의 Event Brief, task, link snapshot, change history, calendar role·usage와 saved
+BriefCal의 Event Brief, task, link snapshot, change history, calendar role·usage와 saved
 Calendar Set은 로컬
 SQLite에만 존재한다. 이 파일을 단순 복사하면 실행 중 WAL과 시점이 어긋날 수 있고,
 검증하지 않은 ZIP을 active DB에 덮어쓰면 로컬 데이터 전체를 잃을 수 있다. 반대로
@@ -19,14 +19,14 @@ Phase 9는 정상 부팅한 current-schema DB에서 사용자가 명시적으로
 
 ## 결정
 
-- 대상은 KaosCal local SQLite 전체이며 record-level merge는 하지 않는다. Export,
+- 대상은 BriefCal local SQLite 전체이며 record-level merge는 하지 않는다. Export,
   import, reset은 EventKit provider write를 호출하지 않는다.
 - snapshot과 restore는 실행 중인 단일 `DatabaseWriter`를 통해 SQLite online backup
   API로 수행한다. DB 파일과 WAL/SHM을 filesystem에서 교체하지 않는다.
 - sandbox 밖의 수동 export/import는 사용자가 `NSSavePanel`/`NSOpenPanel`에서 명시적으로
   고른 security-scoped URL만 다룬다. 이를 위해 user-selected read/write entitlement를
   사용하며, 자동 recovery backup은 app container의 Application Support에만 저장한다.
-- archive는 store-only ZIP이며 root에 `kaoscal.sqlite`, `manifest.json` 두 entry만
+- archive는 store-only ZIP이며 root에 `briefcal.sqlite`, `manifest.json` 두 entry만
   허용한다. manifest는 최대 64 KiB, SQLite는 최대 128 MiB, 전체 archive는 최대
   129 MiB다. 다른 entry, nested path, symlink, duplicate, deflate, encryption,
   data descriptor, ZIP64, multi-disk, extra/comment/attribute, trailing/gapped/overlapping
@@ -40,7 +40,7 @@ Phase 9는 정상 부팅한 current-schema DB에서 사용자가 명시적으로
   SQLite integrity와 foreign key를 모두 검증한 뒤에만 진행한다. live restore 후에도
   schema/integrity/FK를 다시 검증한다.
 - SHA-256은 archive 안의 manifest와 SQLite entry가 일치하는지 확인하는 integrity
-  값일 뿐 서명이나 제작자 인증이 아니다. 사용자가 직접 만든 신뢰 가능한 KaosCal
+  값일 뿐 서명이나 제작자 인증이 아니다. 사용자가 직접 만든 신뢰 가능한 BriefCal
   backup만 import한다.
 - Phase 9 import는 실행 중인 앱의 application identifier와 current schema object,
   migration 목록이 정확히 같은 backup만 허용한다. app version이 달라도 이 계약이
@@ -54,9 +54,9 @@ Phase 9는 정상 부팅한 current-schema DB에서 사용자가 명시적으로
   event change/task/link/context, personal task, calendar role·usage, saved Set·membership·
   selection의 user row를 child-first 한 transaction에서 지우고 migration history와
   schema를 유지한다.
-- ZIP과 SQLite는 KaosCal이 암호화하지 않는 plaintext다. UI는 Event Brief 본문뿐
+- ZIP과 SQLite는 BriefCal이 암호화하지 않는 plaintext다. UI는 Event Brief 본문뿐
   아니라 linked title/time/location/identifier와 change snapshot의 원본 notes가
-  포함될 수 있음을 명시한다. KaosCal은 계정 credential, Exchange password/MFA,
+  포함될 수 있음을 명시한다. BriefCal은 계정 credential, Exchange password/MFA,
   OAuth token이나 attendee 전체 목록을 전용 필드로 수집·저장하지 않고 EventKit 전체
   event store도 export하지 않는다. 그러나 사용자 notes/tasks는 검사하거나 redact하지
   않으므로 사용자가 그 본문에 입력한 민감정보는 그대로 backup에 포함될 수 있다.
@@ -67,7 +67,7 @@ Phase 9는 정상 부팅한 current-schema DB에서 사용자가 명시적으로
 - Phase 10 bootstrap recovery는 정상 `DatabaseWriter`를 만들지 못했을 때만 표시한다.
   선택 archive는 Phase 9와 같은 exact ZIP/manifest/hash/current-schema/integrity/FK
   preflight를 active 파일 변경 전에 통과해야 한다.
-- preflight 성공 뒤 기존 `kaoscal.sqlite`, `-wal`, `-shm`, `-journal` 파일군을 같은
+- preflight 성공 뒤 기존 `briefcal.sqlite`, `-wal`, `-shm`, `-journal` 파일군을 같은
   Application Support의 고유 `Recovery/Failed-Bootstrap-*` 폴더로 함께 이동한다. 검증된
   replacement를 live 위치에 설치하고 새 writer로 다시 연 뒤 schema/integrity/FK를
   확인한다. 설치·재오픈이 실패하면 replacement 파일군을 제거하고 이동한 원본 전부를
@@ -80,7 +80,7 @@ Phase 9는 정상 부팅한 current-schema DB에서 사용자가 명시적으로
 
 ## 결과
 
-사용자는 Event Brief와 task를 같은 current-schema 계약의 KaosCal에서 읽을 수 있는
+사용자는 Event Brief와 task를 같은 current-schema 계약의 BriefCal에서 읽을 수 있는
 ZIP으로 보관하고, active local DB를 안전한 사전 backup 뒤 교체하거나 초기화할 수
 있다. Calendar.app과 Exchange 원본은 이 흐름의 소유 범위 밖에 남는다.
 

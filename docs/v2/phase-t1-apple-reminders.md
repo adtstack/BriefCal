@@ -47,7 +47,7 @@ T2/T3와 Tasks 완성 트랙은 공통 스펙과 Current Status에서 별도로 
 - 사용자가 선택한 Reminders list를 destination으로 저장
 - 지정된 calendar의 새 Event Brief task 생성
 - 제목, due, 완료, 삭제의 양방향 반영
-- Reminders에서 외부 완료한 task의 KaosCal projection 갱신
+- Reminders에서 외부 완료한 task의 BriefCal projection 갱신
 - remote deletion의 missing 표시와 명시적 relink/unlink
 - `Reminders · <list>` destination badge와 local-only fallback
 
@@ -69,10 +69,10 @@ macOS SDK에서 확인하고 문서·entitlement를 함께 갱신한다.
 
 ## 매핑 계약
 
-| KaosCal | Reminders | 규칙 |
+| BriefCal | Reminders | 규칙 |
 | --- | --- | --- |
 | title | title | 공백 정리 후 저장, 원본 notes와 분리 |
-| section | tag/metadata 또는 local link | provider가 section을 보존하지 않으면 KaosCal만 정본 |
+| section | tag/metadata 또는 local link | provider가 section을 보존하지 않으면 BriefCal만 정본 |
 | fixed due | due | 시간·시간대 capability 확인 후 변환 |
 | relative due | 계산된 due | 변환 결과가 의미를 잃으면 자동 연결 금지 |
 | completed | isCompleted | provider write 성공 뒤 local projection 갱신 |

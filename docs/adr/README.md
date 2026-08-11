@@ -31,5 +31,6 @@ ADR은 제품·기술·데이터 안전성에 영향을 주는 결정을 변경 
 | [ADR-016](ADR-016-direct-calendar-api-deferral.md) | Accepted | 직접 Calendar API 보류와 EventKit 유지 |
 | [ADR-017](ADR-017-calendar-visibility-and-availability.md) | Accepted | 캘린더 표시와 가용시간 차단의 독립 정책 |
 | [ADR-018](ADR-018-saved-calendar-sets.md) | Accepted | 이름 있는 Calendar Set과 exact membership persistence |
-| [ADR-019](ADR-019-local-only-no-ai-no-kaoscal-cloud.md) | Accepted | 이 Mac에서만 실행하는 무AI·무KaosCal Cloud 제품 경계 |
+| [ADR-019](ADR-019-local-only-no-ai-no-product-cloud.md) | Accepted | 이 Mac에서만 실행하는 무AI·무BriefCal Cloud 제품 경계 |
 | [ADR-020](ADR-020-signed-automatic-updates.md) | Accepted | 서명된 direct-download 자동업데이트 |
+| [ADR-021](ADR-021-briefcal-pre-release-identity-baseline.md) | Accepted | BriefCal 미출시 제품 식별자 기준선 |

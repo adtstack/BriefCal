@@ -1,6 +1,6 @@
-# KaosCal Docs
+# BriefCal Docs
 
-KaosCal 문서는 제품 판단, 기술 결정, 구현 단계, QA 기준과 실제 검증 결과를 남기는 기준 기록이다. 코드만 바꾸고 문서를 나중에 보완하지 않는다.
+BriefCal 문서는 제품 판단, 기술 결정, 구현 단계, QA 기준과 실제 검증 결과를 남기는 기준 기록이다. 코드만 바꾸고 문서를 나중에 보완하지 않는다.
 
 ## 먼저 읽을 문서
 
@@ -41,11 +41,12 @@ KaosCal 문서는 제품 판단, 기술 결정, 구현 단계, QA 기준과 실�
 
 - [product-principles.md](product-principles.md): 제품의 역할과 사용자 가치
 - [commercial-feature-roadmap.md](commercial-feature-roadmap.md): 상용 기능 격차와 C0~C4 후속 구현 순서
-- [ADR-019](adr/ADR-019-local-only-no-ai-no-kaoscal-cloud.md): 무AI·무KaosCal Cloud와 이 Mac 단일 데이터 경계
+- [ADR-019](adr/ADR-019-local-only-no-ai-no-product-cloud.md): 무AI·무BriefCal Cloud와 이 Mac 단일 데이터 경계
+- [ADR-021](adr/ADR-021-briefcal-pre-release-identity-baseline.md): BriefCal 미출시 제품 식별자 기준선
 - [architecture.md](architecture.md): SwiftUI, EventKit, SQLite/GRDB, local-first 경계
 - [data-model.md](data-model.md): Event Brief, Task Center, calendar usage/saved Set와 identity lifecycle의 로컬 모델
 - [eventkit-decisions.md](eventkit-decisions.md): 권한, read-only, 반복, 변경 알림의 구현 규칙
-- [design-system.md](design-system.md): KaosCal 고유의 Calm Pro 3-pane UX
+- [design-system.md](design-system.md): BriefCal 고유의 Calm Pro 3-pane UX
 - [phase-plan.md](phase-plan.md): 빌드 가능한 작은 phase와 완료 기준
 - [integrated-calendar-task-roadmap.md](integrated-calendar-task-roadmap.md): v2+ 다중 캘린더·Task provider 통합 로드맵
 - [v2/README.md](v2/README.md): T0~T5 단계별 세부문서 인덱스

@@ -6,14 +6,14 @@
 
 ## 배경
 
-Phase 5부터 KaosCal은 EventKit 원본 일정을 생성·수정·삭제한다. EventKit 식별자는 동기화나 캘린더 이동 뒤 달라질 수 있고, 편집기를 연 뒤 Calendar.app에서 원본이 바뀔 수도 있다. 원본 일정과 SQLite Event Brief는 서로 다른 저장소라 한 transaction으로 묶을 수 없으며, 참석자가 있는 회의 변경은 알림·취소 메일 같은 외부 부작용을 만들 수 있다.
+Phase 5부터 BriefCal은 EventKit 원본 일정을 생성·수정·삭제한다. EventKit 식별자는 동기화나 캘린더 이동 뒤 달라질 수 있고, 편집기를 연 뒤 Calendar.app에서 원본이 바뀔 수도 있다. 원본 일정과 SQLite Event Brief는 서로 다른 저장소라 한 transaction으로 묶을 수 없으며, 참석자가 있는 회의 변경은 알림·취소 메일 같은 외부 부작용을 만들 수 있다.
 
 이 ADR은 기존 소유권·시간·identity 결정을 구체화하며 대체하지 않는다. 실제 Exchange 호환성은 compatibility matrix의 실계정 결과로만 판정한다.
 
 ## 결정
 
 - Phase 5 원본 write는 full calendar access가 있고 `allowsContentModifications`가 참인 비반복·비회의 일정으로 제한한다.
-- `EKEvent.hasAttendees`가 참이거나 다른 organizer가 확인된 일정은 사용자가 주최자인 경우까지 Calendar.app 전용으로 둔다. KaosCal local Brief는 계속 편집할 수 있다.
+- `EKEvent.hasAttendees`가 참이거나 다른 organizer가 확인된 일정은 사용자가 주최자인 경우까지 Calendar.app 전용으로 둔다. BriefCal local Brief는 계속 편집할 수 있다.
 - create/update/delete는 `CalendarProviding`의 명시적 명령으로만 실행한다. UI에 `EKEvent` 객체를 보관하지 않는다.
 - 기존 일정은 편집 시작 snapshot을 그대로 저장하지 않는다. 같은 `EKEventStore`에서 `eventIdentifier → calendarItemIdentifier → calendarItemExternalIdentifier` 순으로 다시 찾고, 원래 calendar의 유일한 비반복 후보만 대상으로 삼는다.
 - 다시 읽은 제목, calendar, 시간 의미, 장소, 원본 notes가 편집 시작 snapshot과 다르면 외부 변경으로 간주하고 아무것도 쓰지 않는다. zoned 시간은 절대 시점+zone으로, all-day/floating은 raw `Date`가 아니라 civil components로 비교해 기본 time zone 변경을 외부 편집으로 오판하지 않는다.
@@ -35,7 +35,7 @@ Phase 5부터 KaosCal은 EventKit 원본 일정을 생성·수정·삭제한다.
 - stale 원본, 반복 occurrence, read-only, 참석자 회의를 잘못 변경할 가능성이 줄어든다.
 - structured EventKit metadata와 외부에서 갱신된 지원 필드는 보수적으로 보존된다.
 - EventKit과 SQLite의 부분 성공을 숨기지 않으므로 사용자가 Calendar.app과 local Brief 상태를 복구할 수 있다.
-- Phase 7C의 성공한 linked delete는 원본만 제거하고 같은 `contextID`의 local Brief를 `cancelled + orphaned` 상태와 unavailable `cancelled` log로 보존한다. deleted-original 표시는 상태쌍만으로 추론하지 않고 현재 link 세대에 이 KaosCal deletion provenance가 있는지 확인하며, 이후 `(created_at, rowid)`상 더 늦은 relink는 과거 provenance를 무효화한다. Delete에는 session Undo를 제공하지 않는다.
+- Phase 7C의 성공한 linked delete는 원본만 제거하고 같은 `contextID`의 local Brief를 `cancelled + orphaned` 상태와 unavailable `cancelled` log로 보존한다. deleted-original 표시는 상태쌍만으로 추론하지 않고 현재 link 세대에 이 BriefCal deletion provenance가 있는지 확인하며, 이후 `(created_at, rowid)`상 더 늦은 relink는 과거 provenance를 무효화한다. Delete에는 session Undo를 제공하지 않는다.
 - Phase 5에는 change log schema나 migration을 추가하지 않는다. 같은-calendar 시간 변경의 richer 영향 미리보기와 change log는 Phase 6에서 보강한다.
 - 비반복 `KAOS-TEST` EventKit save/remove와 Outlook server 반영·UTC 정규화는 2026-07-11 signed FinalRelease gate에서 통과했다. 실제 identifier churn, Calendar.app 시각 round-trip, all-day·time-zone·반복·calendar move는 계속 별도 수동 gate다.
 

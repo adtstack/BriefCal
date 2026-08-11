@@ -18,7 +18,7 @@ Phase 6은 반복 occurrence 변경과 local Event Brief가 연결된 일정의 
 - `이번 일정`은 선택 occurrence 하나만 대상으로 하며 EventKit이 detached occurrence를 만들 수 있음을 확인 화면에 알린다. 기존 detached occurrence에도 강한 identity와 fresh snapshot이 있으면 이 범위만 허용할 수 있다.
 - 기존 series의 recurrence rule 자체를 바꾸는 작업은 `이번 이후`에서만 허용한다. `이번 일정`은 선택 occurrence의 지원 상세만 바꾸며 series rule을 쓰지 않는다. linked series는 초기 Phase 6에서 `이번 이후`가 차단되므로 recurrence rule 변경도 Calendar.app으로 안내한다.
 - detached occurrence에서 `이번 이후`는 series 경계가 모호하므로 차단하고 Calendar.app으로 안내한다.
-- 기본 일·주·월·년, interval, 종료, 주간 요일처럼 KaosCal이 손실 없이 표현할 수 있는 단일 규칙만 편집한다. 여러 규칙이나 안전하게 왕복할 수 없는 복잡한 서버 규칙은 그대로 보존한다. 해당 occurrence의 title/time/calendar/location/original notes 같은 일반 필드는 `이번 일정`에서 recurrence rule을 건드리지 않고 편집할 수 있지만, `이번 이후`와 recurrence rule 변경은 Calendar.app 전용이다.
+- 기본 일·주·월·년, interval, 종료, 주간 요일처럼 BriefCal이 손실 없이 표현할 수 있는 단일 규칙만 편집한다. 여러 규칙이나 안전하게 왕복할 수 없는 복잡한 서버 규칙은 그대로 보존한다. 해당 occurrence의 title/time/calendar/location/original notes 같은 일반 필드는 `이번 일정`에서 recurrence rule을 건드리지 않고 편집할 수 있지만, `이번 이후`와 recurrence rule 변경은 Calendar.app 전용이다.
 - 새 반복 series는 지원 가능한 기본 규칙으로만 만든다. 기존 series를 단순 규칙으로 재구성해 알 수 없는 필드를 덮어쓰지 않는다.
 - 기존 단일 일정을 새 series로 변환하는 control은 초기 Phase 6에 넣지 않는다.
 - attendee가 있는 meeting과 invitation은 반복 여부와 관계없이 계속 Calendar.app 전용이다.
@@ -48,13 +48,13 @@ Phase 6은 반복 occurrence 변경과 local Event Brief가 연결된 일정의 
 - versioned payload는 identifier, calendar/source, title/location/original event notes, 정확한 raw time과 all-day/floating civil components 또는 zoned identifier, recurrence occurrence identity를 담아 확인과 안전한 역방향 write에 사용한다. 이는 이 Mac의 local DB에 저장되는 원본 snapshot이며 계정 자격 증명, 참석자, Event Brief notes/tasks 본문은 담지 않는다.
 - `undo_state`는 `available`, `superseded`, `undone`, `unavailable`로 제한한다. `undo_of_change_id`는 같은 table의 원본 변경을 가리키며 한 변경을 두 번 undo하지 못하도록 unique index를 둔다.
 - `undone` row만 non-null `undone_at`을 가지며, `restored` row는 non-null `undo_of_change_id`와 `unavailable` state를 함께 가져야 한다. 원본 change가 local context와 함께 삭제되면 self-reference도 cascade한다.
-- EventKit 성공 뒤 linked rebind와 change log append는 하나의 SQLite transaction에서 수행한다. Phase 7C delete는 context `cancelled`, link `orphaned`, 이전 available Undo supersede와 unavailable `cancelled` log append를 별도의 한 SQLite transaction으로 묶는다. 이 log가 현재 link 세대의 KaosCal deletion provenance이며 `(created_at, rowid)`상 이후 `relinked`가 있으면 과거 provenance로 취급한다. transaction이 실패하면 원본 EventKit 성공과 local 갱신 실패를 함께 알리고 local data를 보존한다. 성공하지 않은 local transaction을 change log가 성공으로 위장하면 안 된다.
+- EventKit 성공 뒤 linked rebind와 change log append는 하나의 SQLite transaction에서 수행한다. Phase 7C delete는 context `cancelled`, link `orphaned`, 이전 available Undo supersede와 unavailable `cancelled` log append를 별도의 한 SQLite transaction으로 묶는다. 이 log가 현재 link 세대의 BriefCal deletion provenance이며 `(created_at, rowid)`상 이후 `relinked`가 있으면 과거 provenance로 취급한다. transaction이 실패하면 원본 EventKit 성공과 local 갱신 실패를 함께 알리고 local data를 보존한다. 성공하지 않은 local transaction을 change log가 성공으로 위장하면 안 된다.
 
 ### 5. Undo는 마지막 작업의 세션 내 보조 기능이다
 
 - Phase 6 Undo는 영속 history rollback이나 앱 재실행 뒤 복원이 아니다. 성공한 write 직후 메모리에 보관한 단 하나의 undo token만 사용한다.
 - v1의 session Undo 대상은 local context가 연결되고 strong identity로 다시 찾을 수 있는 비반복 `single` calendar/time 변경 중 명령이 명시적으로 `available`로 기록한 마지막 한 건으로 제한한다. unlinked write, details-only write, 반복 `thisEvent`/`futureEvents`, series split, detached occurrence, delete는 Undo 대상이 아니다.
-- 이후 성공한 KaosCal 원본 write, 권한 상실, 앱 종료가 발생하면 token을 폐기한다. 일반 EventKit refresh나 store-change 알림만으로 즉시 폐기하지 않는다. 자체 save 알림이 방금 만든 Undo를 지우지 않아야 하기 때문이다.
+- 이후 성공한 BriefCal 원본 write, 권한 상실, 앱 종료가 발생하면 token을 폐기한다. 일반 EventKit refresh나 store-change 알림만으로 즉시 폐기하지 않는다. 자체 save 알림이 방금 만든 Undo를 지우지 않아야 하기 때문이다.
 - 외부 변경 뒤 button이 잠시 남을 수 있어도 Undo는 현재 원본을 strong identity로 다시 찾고 직전 after snapshot과 같은지 provider에서 fresh stale-check한 뒤에만 역방향 EventKit write를 실행한다. missing·read-only·attendee·stale이면 local mutation 전에 중단한다. 성공하면 이전 change log를 지우지 않고 원본 record를 `undone`으로 바꾸며 `undo_of_change_id`가 원본을 가리키는 별도 `restored` record를 같은 transaction에서 append한다. 새로 undo 가능한 변경이 생기면 이전 `available` record는 `superseded`가 된다.
 - Undo가 불가능하거나 실패해도 자동 보정·Calendar.app 재수정·local context 삭제를 하지 않는다. 실제 원본과 local 상태를 설명하고 사용자가 Calendar.app에서 확인하도록 한다.
 
@@ -64,7 +64,7 @@ Phase 6은 반복 occurrence 변경과 local Event Brief가 연결된 일정의 
 - series split이나 identifier churn을 안전하게 reconciliation할 수 없는 linked future write는 기능 제공보다 데이터 보존을 우선해 차단된다.
 - change log는 EventKit 성공과 local transaction 성공을 구분하고, Event Brief와 같은 local 수명을 가진다.
 - Undo를 좁게 제한해 외부 동기화나 반복 series를 과거 상태로 덮어쓸 위험을 줄인다.
-- 외부 부재 복구와 KaosCal이 시작한 linked 삭제는 ADR-012의 서로 다른 Phase 7B/7C 경계다. Phase 7C delete는 session Undo 대상이 아니다.
+- 외부 부재 복구와 BriefCal이 시작한 linked 삭제는 ADR-012의 서로 다른 Phase 7B/7C 경계다. Phase 7C delete는 session Undo 대상이 아니다.
 
 ## 검증 기준
 

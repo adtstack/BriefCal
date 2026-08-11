@@ -2,7 +2,7 @@
 
 ## 범위
 
-Phase 9의 Local Data 설정은 KaosCal이 소유한 로컬 SQLite 데이터만 다룬다.
+Phase 9의 Local Data 설정은 BriefCal이 소유한 로컬 SQLite 데이터만 다룬다.
 Export, import, reset 어느 경로도 EventKit을 호출해 Calendar.app 또는 Exchange의
 일정을 만들거나 수정하거나 삭제하지 않는다.
 
@@ -19,8 +19,8 @@ production DB에서만 제공한다. in-memory test store, DB open/migration 실
 ZIP은 store-only 방식이며 root에 정확히 두 entry만 포함한다.
 
 ```text
-KaosCal-Backup-YYYY-MM-DD-HHmm.zip
-├─ kaoscal.sqlite
+BriefCal-Backup-YYYY-MM-DD-HHmm.zip
+├─ briefcal.sqlite
 └─ manifest.json
 ```
 
@@ -32,7 +32,7 @@ manifest에 기록된 migration 목록과 실제 SQLite migration table을 함�
 format v1 제한은 다음과 같다.
 
 - `manifest.json` 최대 64 KiB
-- `kaoscal.sqlite` 최대 128 MiB
+- `briefcal.sqlite` 최대 128 MiB
 - 전체 ZIP 최대 129 MiB
 - classic single-disk, UTF-8, store-only entry만 허용
 - deflate, encryption, data descriptor, ZIP64, multi-disk, extra/comment/attribute,
@@ -57,7 +57,7 @@ format에 없다.
 
 ## 포함 데이터와 개인정보
 
-`kaoscal.sqlite` snapshot에는 다음 로컬 데이터가 포함될 수 있다.
+`briefcal.sqlite` snapshot에는 다음 로컬 데이터가 포함될 수 있다.
 
 - Event Brief notes와 Before/During/After task
 - personal task
@@ -68,13 +68,13 @@ format에 없다.
 - local calendar visibility와 availability-blocking preference
 - saved Calendar Set 이름·순서, exact calendar membership과 현재 선택
 
-KaosCal은 계정 credential, Exchange password, MFA code, OAuth token이나 attendee
+BriefCal은 계정 credential, Exchange password, MFA code, OAuth token이나 attendee
 전체 목록을 전용 필드로 수집·저장하지 않고 EventKit의 전체 event store도 export하지
 않는다. 그러나 Event Brief notes와 task 본문은 검사하거나 redact하지 않는다. 사용자가
 그 본문에 입력한 credential이나 다른 민감정보는 그대로 backup에 포함될 수 있으며,
 위의 연결 metadata와 원본 notes snapshot도 민감할 수 있다.
 
-KaosCal은 ZIP이나 SQLite를 암호화하거나 서명하지 않는다. 사용자가 선택한
+BriefCal은 ZIP이나 SQLite를 암호화하거나 서명하지 않는다. 사용자가 선택한
 로컬·외장·cloud 폴더에는 plaintext로 저장되므로 신뢰하는 위치에 보관해야 한다.
 
 ## 수동 Export
@@ -85,7 +85,7 @@ security-scoped URL만 쓴다. user-selected read/write entitlement는 이 선�
 
 1. Settings의 `Local Data`에서 `Export Backup…`을 선택한다.
 2. 저장 위치와 `.zip` 파일명을 고른다.
-3. KaosCal은 같은 writer에서 consistent SQLite snapshot을 만들고 manifest를
+3. BriefCal은 같은 writer에서 consistent SQLite snapshot을 만들고 manifest를
    생성한 뒤 strict two-entry ZIP으로 완성한다.
 4. 완료 전 실패하면 이 시도가 만든 partial destination archive를 commit하지 않는다.
    같은 이름의 기존 파일이 있었다면 final atomic replace 전에는 그대로 유지된다.
@@ -95,7 +95,7 @@ backup이나 보관 개수/기간 정책이 없고 기존 backup을 자동 삭�
 
 ## Import
 
-Import는 merge가 아니라 active KaosCal local DB 전체 교체다. 사용자가 ZIP을
+Import는 merge가 아니라 active BriefCal local DB 전체 교체다. 사용자가 ZIP을
 선택하고 destructive confirmation을 승인한 뒤 다음 순서로 진행한다.
 Sandbox 밖의 source는 `NSOpenPanel`에서 사용자가 고른 security-scoped URL만 읽는다.
 
@@ -110,7 +110,7 @@ Sandbox 밖의 source는 `NSOpenPanel`에서 사용자가 고른 security-scoped
    다시 읽는다.
 
 SHA-256은 manifest와 SQLite entry의 byte 일치를 확인하는 값이며 backup 제작자를
-인증하는 서명은 아니다. 사용자가 직접 만든 신뢰 가능한 KaosCal backup만 선택한다.
+인증하는 서명은 아니다. 사용자가 직접 만든 신뢰 가능한 BriefCal backup만 선택한다.
 Phase 9은 실행 중인 앱의 application identifier, current schema object와 migration
 목록이 정확히 같은 backup만 허용한다. app version이 달라도 이 계약이 같으면
 import할 수 있지만 과거 schema를 자동 migration하거나 미래 schema를 downgrade하지
@@ -160,7 +160,7 @@ GRDB migration history와 schema는 유지한다. 따라서 reset은 빈 새 sch
 ## 자동 백업 위치와 보관
 
 Import/reset 전 recovery ZIP은 active DB와 같은 Application Support의
-`KaosCal/Backups` 아래에 저장한다. 성공 결과에 실제 경로를 표시하며 사용자는
+`BriefCal/Backups` 아래에 저장한다. 성공 결과에 실제 경로를 표시하며 사용자는
 Finder에서 직접 보관·이동·삭제할 수 있다.
 
 작업이 automatic ZIP 생성 뒤 실패하면 그 ZIP이 남을 수 있지만 현재 실패 message가
@@ -168,7 +168,7 @@ Finder에서 직접 보관·이동·삭제할 수 있다.
 폴더를 확인한다. preflight나 automatic backup 생성 전에 실패했다면 새 recovery ZIP은
 없다.
 
-Phase 9의 retention은 수동이다. KaosCal은 자동 backup을 기간이나 개수로 prune하지
+Phase 9의 retention은 수동이다. BriefCal은 자동 backup을 기간이나 개수로 prune하지
 않고 storage quota도 관리하지 않는다.
 
 ## 문제 해결 경계
@@ -188,8 +188,8 @@ Phase 10에서는 정상 store가 없을 때 main window와 Settings에 전용 r
 
 1. Phase 9 import와 같은 strict archive/manifest/hash/schema/integrity/FK 검사를 app-private
    staging copy에서 끝낸다. 실패하면 live DB는 byte 단위로 건드리지 않는다.
-2. 기존 `kaoscal.sqlite`, `-wal`, `-shm`, `-journal` 중 존재하는 파일을 함께
-   `KaosCal/Recovery/Failed-Bootstrap-<UTC>-<UUID>/`로 이동한다. `Recovery`가 directory가
+2. 기존 `briefcal.sqlite`, `-wal`, `-shm`, `-journal` 중 존재하는 파일을 함께
+   `BriefCal/Recovery/Failed-Bootstrap-<UTC>-<UUID>/`로 이동한다. `Recovery`가 directory가
    아니거나 symbolic link면 live 파일을 건드리기 전에 중단한다.
 3. 검증된 DB를 live 위치에 설치하고 새 writer로 재오픈·재검증한다.
 4. 성공하면 새 `AppState`로 일반 shell을 열고 격리 위치를 표시한다. 격리본은 자동
@@ -202,7 +202,7 @@ Phase 10에서는 정상 store가 없을 때 main window와 Settings에 전용 r
 
 1. `Reset Local Data`를 시도하거나 Application Support의 SQLite, `-wal`, `-shm`,
    `-journal` 파일을 개별 삭제·교체하지 않는다.
-2. KaosCal을 종료한 상태로 오류 문구와 앱 version/build만 기록한다. Event Brief 본문,
+2. BriefCal을 종료한 상태로 오류 문구와 앱 version/build만 기록한다. Event Brief 본문,
    calendar/event identifier, account/email 또는 backup ZIP은 공개 issue에 첨부하지 않는다.
 3. 기존 DB와 `Backups` 폴더를 보존한다. 새 설치나 앱 삭제가 local data 복구를 보장한다고
    가정하지 않는다.

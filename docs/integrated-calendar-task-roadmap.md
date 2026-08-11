@@ -2,7 +2,7 @@
 
 > 상태: Implemented baseline / live pending
 > 마지막 갱신: 2026-07-20
-> 적용 범위: KaosCal v1 이후의 v2+ 제품·기술 로드맵
+> 적용 범위: BriefCal v1 이후의 v2+ 제품·기술 로드맵
 
 이 문서는 v1 동결 뒤 provider 통합의 출발 결정과 목표를 보존한다. T0~T5와 Tasks 완성
 트랙은 코드 기준 구현됐고 실제 계정·signed interaction은 대기 중이다. 현행 세부 계약은
@@ -12,19 +12,19 @@
 
 현재 구현은 네 provider의 capability-aware 직접 CRUD, Apple 목록/account 이동과 Todoist
 project/section 이동, local planning,
-Event Brief 연결과 calendar time block까지 포함한다. AI, KaosCal Cloud, provider 간 자동
+Event Brief 연결과 calendar time block까지 포함한다. AI, BriefCal Cloud, provider 간 자동
 복제와 provider가 의미를 보존하지 못하는 반복/하위 작업 강제 변환은 포함하지 않는다.
 
 ## 1. 제품 방향
 
-KaosCal을 여러 캘린더와 여러 Task 서비스의 데이터를 한 화면에서 연결하는 **일정 중심 실행 허브**로 확장한다.
+BriefCal을 여러 캘린더와 여러 Task 서비스의 데이터를 한 화면에서 연결하는 **일정 중심 실행 허브**로 확장한다.
 
 - Calendar는 “언제 하는가”를 담당한다.
 - Task provider는 “무엇을 해야 하는가”와 완료 상태를 담당한다.
-- KaosCal은 일정과 task의 연결, Before/During/After 의미, 통합 보기와 안전한 동기화를 담당한다.
+- BriefCal은 일정과 task의 연결, Before/During/After 의미, 통합 보기와 안전한 동기화를 담당한다.
 - Notes provider는 task와 별도의 참고 자료 계층으로 취급한다.
 
-핵심 원칙은 모든 데이터를 KaosCal SQLite에 복제하는 것이 아니다. 각 외부 서비스가 task 또는 event의 정본(source of truth)이 되고, KaosCal은 연결 정보·동기화 상태·필요한 최소 캐시만 보관한다.
+핵심 원칙은 모든 데이터를 BriefCal SQLite에 복제하는 것이 아니다. 각 외부 서비스가 task 또는 event의 정본(source of truth)이 되고, BriefCal은 연결 정보·동기화 상태·필요한 최소 캐시만 보관한다.
 
 ## 2. 제품 결정 요약
 
@@ -37,7 +37,7 @@ KaosCal을 여러 캘린더와 여러 Task 서비스의 데이터를 한 화면�
 | Microsoft To Do | 최우선 | Exchange/Microsoft 365 사용자 기반과 맞고 Graph의 linked resource·delta query를 활용할 수 있다. |
 | Google Calendar 직접 API | 후속 | Mac EventKit과 중복 수집을 피할 수 있을 때만 추가한다. |
 | Notion | 선택적 후속 | task database로 사용할 수 있지만 범용 문서·프로젝트 도구라 핵심 Task Center와 경계가 흐려질 수 있다. |
-| Jira/Linear/Asana 등 | 핵심 연동에서 제외 | 팀 프로젝트 관리가 주된 제품이라 KaosCal의 개인 일정 중심 범위를 크게 넓힌다. 우선은 링크 열기만 검토한다. |
+| Jira/Linear/Asana 등 | 핵심 연동에서 제외 | 팀 프로젝트 관리가 주된 제품이라 BriefCal의 개인 일정 중심 범위를 크게 넓힌다. 우선은 링크 열기만 검토한다. |
 | 외부 task 연결 방식 | 캘린더별 설정 + 자동 기본값 | task를 만들 때 provider를 고르지 않는다. 설정한 캘린더별 destination을 사용하고, 지원하지 않으면 local-only로 fallback한다. |
 
 Todoist의 공식 API는 task·project·완료 이벤트를 제공하고, 현재 문서에는 webhook과 증분 동기화 경로가 안내되어 있다. 신규 구현은 deprecated Sync API v9가 아니라 Todoist API v1을 기준으로 한다. [Todoist API v1](https://developer.todoist.com/api/v1/)
@@ -53,7 +53,7 @@ Calendar provider event
         │
         │ event_ref + occurrence_key
         ▼
-KaosCal context / link
+BriefCal context / link
         │
         │ task_ref + section
         ▼
@@ -62,16 +62,16 @@ Task provider task
 
 ### 3.1 정본과 로컬 데이터의 소유권
 
-| 데이터 | 정본 | KaosCal에 저장하는 것 |
+| 데이터 | 정본 | BriefCal에 저장하는 것 |
 | --- | --- | --- |
 | event 제목·시간·장소·참석자 | Calendar provider | provider/account/remote ID, occurrence snapshot, 연결 context |
 | task 제목·본문·due·완료 | Task provider | provider/account/list/task ID, 연결 section, sync fingerprint |
-| Before/During/After 의미 | KaosCal | `section`과 occurrence 관계 |
-| 연결 상태 | KaosCal | active, missing, detached, conflict, pending |
+| Before/During/After 의미 | BriefCal | `section`과 occurrence 관계 |
+| 연결 상태 | BriefCal | active, missing, detached, conflict, pending |
 | 증분 동기화 위치 | 각 provider | sync token/cursor/etag 등 opaque metadata |
 | OAuth token | Keychain 등 보안 저장소 | SQLite·backup에는 저장하지 않음 |
 
-task 본문과 완료 상태는 외부 provider가 정본이다. KaosCal은 화면을 빠르게 표시하기 위한 최소 캐시를 둘 수 있지만, 캐시는 삭제 후 재동기화할 수 있어야 한다.
+task 본문과 완료 상태는 외부 provider가 정본이다. BriefCal은 화면을 빠르게 표시하기 위한 최소 캐시를 둘 수 있지만, 캐시는 삭제 후 재동기화할 수 있어야 한다.
 
 ### 3.2 제안 모델
 
@@ -131,7 +131,7 @@ Settings에서 캘린더별 destination 설정
         ├─ Google Calendar       → Google Tasks list
         ├─ Exchange/Microsoft    → Microsoft To Do list
         ├─ 어떤 캘린더에도 매칭되지 않음 → Todoist (선택 설정)
-        └─ 설정하지 않음/지원하지 않음 → KaosCal local-only
+        └─ 설정하지 않음/지원하지 않음 → BriefCal local-only
         │
 Event Brief에서 task 생성
         │
@@ -160,13 +160,13 @@ Task Center row에는 다음 상태를 표시한다.
 
 provider가 특정 task 기능을 지원하지 않으면 연결 전에 capability를 보여 준다. 예를 들어 relative due, 시간대, checklist, recurrence 중 일부가 손실될 경우 자동 연결하지 않고 사용자가 확인하게 한다.
 
-가능하면 provider의 원격 task에 KaosCal UUID를 되돌아오는 링크로 남긴다.
+가능하면 provider의 원격 task에 BriefCal UUID를 되돌아오는 링크로 남긴다.
 
-- Apple Reminders: `url`에 `kaoscal://task/<uuid>` 저장을 검토한다.
-- Microsoft To Do: `linkedResource`에 KaosCal deep link를 저장한다.
+- Apple Reminders: `url`에 `briefcal://task/<uuid>` 저장을 검토한다.
+- Microsoft To Do: `linkedResource`에 BriefCal deep link를 저장한다.
 - Todoist·Google Tasks: provider가 보존하는 URL/notes 필드가 있는 경우에만 marker를 저장하고, 원격 ID와 제목·due·event snapshot을 함께 사용해 재연결한다.
 
-provider ID 하나만 영구 식별자로 믿지 않는다. 계정·list·occurrence·생성한 KaosCal UUID를 함께 보존하고, 원격 삭제는 자동 재생성하지 않고 `missing`으로 표시한 뒤 사용자가 재연결하도록 한다. Settings에서 destination을 local-only로 바꾸거나 연결을 해제하면 기존 KaosCal task를 삭제하지 않고 local-only로 전환한다.
+provider ID 하나만 영구 식별자로 믿지 않는다. 계정·list·occurrence·생성한 BriefCal UUID를 함께 보존하고, 원격 삭제는 자동 재생성하지 않고 `missing`으로 표시한 뒤 사용자가 재연결하도록 한다. Settings에서 destination을 local-only로 바꾸거나 연결을 해제하면 기존 BriefCal task를 삭제하지 않고 local-only로 전환한다.
 
 ## 5. 공급자별 1차 범위
 
@@ -177,7 +177,7 @@ macOS EventKit의 reminder entity를 사용한다.
 - 별도 Reminders read/write 권한 요청
 - 사용자가 대상 Reminder list 선택
 - 해당 캘린더의 Settings destination이 Reminders로 설정된 새 task를 생성·이름 변경·due 변경·완료·삭제
-- Reminders에서 바뀐 완료 상태를 KaosCal에 반영
+- Reminders에서 바뀐 완료 상태를 BriefCal에 반영
 - 연결 일정 열기 deep link
 - source가 reminder를 지원하지 않거나 read-only이면 연결 차단
 
@@ -199,7 +199,7 @@ Google Calendar를 직접 API로 연결하는 단계와 Google Tasks 연결은 �
 
 - Microsoft OAuth와 delegated permission
 - Settings에서 캘린더별 기본 task list 선택
-- `linkedResource`로 KaosCal Event Brief deep link 연결
+- `linkedResource`로 BriefCal Event Brief deep link 연결
 - due, reminder, importance, status, notes 매핑
 - Graph delta query 기반 증분 동기화
 - 조직 정책·scope·tenant 제한을 capability로 표시
@@ -215,9 +215,9 @@ Todoist는 개인 task provider 중 우선순위가 높다.
 - task 제목·description·due·완료·project를 Task Center에 표시
 - Todoist API v1 webhook을 받을 수 있는 실행 환경이 있는 경우 webhook 사용
 - webhook을 사용할 수 없는 local-only 배포에서는 provider 증분 조회와 주기적 refresh를 사용
-- Todoist project 구조를 KaosCal의 project 기능으로 복제하지 않고 list 선택 정보로만 취급
+- Todoist project 구조를 BriefCal의 project 기능으로 복제하지 않고 list 선택 정보로만 취급
 
-KaosCal은 Todoist의 프로젝트·라벨·필터·팀 협업을 재현하지 않는다. Task Center에는 연결된 task와 출처만 보여 주고, 상세 프로젝트 관리는 Todoist로 연다.
+BriefCal은 Todoist의 프로젝트·라벨·필터·팀 협업을 재현하지 않는다. Task Center에는 연결된 task와 출처만 보여 주고, 상세 프로젝트 관리는 Todoist로 연다.
 
 ## 6. 동기화와 충돌 규칙
 
@@ -235,22 +235,22 @@ KaosCal은 Todoist의 프로젝트·라벨·필터·팀 협업을 재현하지 �
 
 ### 6.2 Before/During/After 매핑
 
-| KaosCal section | 기본 due 의미 | 외부 task 표현 |
+| BriefCal section | 기본 due 의미 | 외부 task 표현 |
 | --- | --- | --- |
 | Before | event 시작 전 또는 시작 시각 | provider due/start time |
 | During | event 시작 시각 또는 사용자가 지정한 due | provider due |
 | After | event 종료 시각 또는 종료 후 | provider due/reminder |
 
-provider가 시간대·부분 날짜·relative due를 충분히 지원하지 않으면 원래 의미를 잃지 않도록 KaosCal에서 capability를 표시하고, 자동 변환 대신 명시적 확인을 요구한다.
+provider가 시간대·부분 날짜·relative due를 충분히 지원하지 않으면 원래 의미를 잃지 않도록 BriefCal에서 capability를 표시하고, 자동 변환 대신 명시적 확인을 요구한다.
 
 ## 7. 보안·개인정보 경계
 
 - OAuth access/refresh token은 Keychain에만 저장한다.
-- token과 provider 원문은 KaosCal ZIP backup에 넣지 않는다.
+- token과 provider 원문은 BriefCal ZIP backup에 넣지 않는다.
 - 원격 task 본문을 필요 이상으로 캐시하지 않는다.
 - disconnect 시 token을 폐기하고, 사용자가 선택하면 연결 metadata와 cache도 삭제한다.
 - provider별 권한과 동기화 범위를 Settings에서 확인할 수 있게 한다.
-- 외부 provider에 KaosCal 내부 notes 전체를 자동 복사하지 않는다.
+- 외부 provider에 BriefCal 내부 notes 전체를 자동 복사하지 않는다.
 
 원격 task 연동은 로컬 SQLite 용량을 줄일 수 있지만, 계정·권한·동기화 상태를 관리하기 위한 로컬 DB가 여전히 필요하다. DB를 없애는 것이 아니라 **task 본문 중복을 줄이는 것**이 목표다.
 
@@ -273,7 +273,7 @@ provider가 시간대·부분 날짜·relative due를 충분히 지원하지 않
 - 삭제·재연결·권한 철회 처리
 - 실제 iCloud/On My Mac fixture 검증
 
-통과 기준: Settings에서 Reminders를 기본 destination으로 지정한 캘린더의 새 task만 Reminders에 생성된다. destination이 없거나 권한이 없으면 local-only로 남고, Reminders에서 완료한 연결 task는 KaosCal에 반영된다.
+통과 기준: Settings에서 Reminders를 기본 destination으로 지정한 캘린더의 새 task만 Reminders에 생성된다. destination이 없거나 권한이 없으면 local-only로 남고, Reminders에서 완료한 연결 task는 BriefCal에 반영된다.
 
 ### Phase T2 — Google Tasks와 Todoist
 
@@ -293,7 +293,7 @@ provider가 시간대·부분 날짜·relative due를 충분히 지원하지 않
 - delta query와 tenant/scope 오류 처리
 - EventKit Exchange 경로와 Graph To Do 경로의 중복 경고
 
-통과 기준: Graph To Do task에서 해당 KaosCal Event Brief로 돌아오고, 외부 완료/삭제가 안전하게 반영된다.
+통과 기준: Graph To Do task에서 해당 BriefCal Event Brief로 돌아오고, 외부 완료/삭제가 안전하게 반영된다.
 
 ### Phase T4 — Direct Calendar APIs
 
@@ -313,7 +313,7 @@ provider가 시간대·부분 날짜·relative due를 충분히 지원하지 않
 ## 9. 하지 않을 것
 
 - Google Keep을 일반 소비자용 정식 양방향 task/notes 저장소로 약속하지 않는다.
-- Todoist, Google Tasks, Reminders, To Do의 모든 프로젝트·라벨·협업 기능을 KaosCal에 복제하지 않는다.
+- Todoist, Google Tasks, Reminders, To Do의 모든 프로젝트·라벨·협업 기능을 BriefCal에 복제하지 않는다.
 - 같은 task를 provider 간 자동 복제해 중복 완료·중복 알림을 만들지 않는다.
 - Jira/Linear/Asana를 핵심 화면에 넣어 프로젝트 관리 도구가 되지 않는다.
 - token이나 원격 원문을 SQLite backup에 저장하지 않는다.
@@ -322,7 +322,7 @@ provider가 시간대·부분 날짜·relative due를 충분히 지원하지 않
 
 - 캘린더별 destination을 설정한 뒤 생성한 Before/During/After task가 해당 외부 task 앱에서도 확인된다.
 - local-only task와 외부 연결 task가 한 Task Center에서 명확히 구분된다.
-- 어느 앱에서 완료해도 KaosCal의 Today/After Review가 일관되게 갱신된다.
+- 어느 앱에서 완료해도 BriefCal의 Today/After Review가 일관되게 갱신된다.
 - 원본 Calendar event의 notes·참석자·초대 상태를 오염시키지 않는다.
 - 외부 task 삭제·권한 철회·계정 재연결 뒤에도 연결 상태를 설명할 수 있다.
 - 여러 provider를 연결해도 Task Center에서 출처와 계정이 명확하다.

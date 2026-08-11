@@ -49,16 +49,16 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Debug \
             -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalTestsDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/KaosCalTests.xcresult" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalTestsDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/BriefCalTests.xcresult" \
             -enableCodeCoverage YES \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
-            -skip-testing:KaosCalUITests \
+            -skip-testing:BriefCalUITests \
             CODE_SIGNING_ALLOWED=NO \
             test
 
@@ -68,26 +68,26 @@ jobs:
           xcrun xccov view \
             --report \
             --json \
-            "$RUNNER_TEMP/KaosCalTests.xcresult" \
-            > "$RUNNER_TEMP/KaosCalCoverage.json"
+            "$RUNNER_TEMP/BriefCalTests.xcresult" \
+            > "$RUNNER_TEMP/BriefCalCoverage.json"
           /usr/bin/python3 scripts/check_coverage.py \
-            "$RUNNER_TEMP/KaosCalCoverage.json" \
+            "$RUNNER_TEMP/BriefCalCoverage.json" \
             0.50
 
       - name: Run isolated UI automation
         run: |
           set -euo pipefail
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Debug \
             -destination 'platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalUITestsDerivedData" \
-            -resultBundlePath "$RUNNER_TEMP/KaosCalUITests.xcresult" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalUITestsDerivedData" \
+            -resultBundlePath "$RUNNER_TEMP/BriefCalUITests.xcresult" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             -parallel-testing-enabled NO \
-            -only-testing:KaosCalUITests \
+            -only-testing:BriefCalUITests \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=YES \
             test
@@ -96,11 +96,11 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Debug \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalAnalyzeDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalAnalyzeDerivedData" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             CODE_SIGNING_ALLOWED=NO \
@@ -110,55 +110,55 @@ jobs:
         run: |
           set -euo pipefail
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Release \
             -destination 'generic/platform=macOS' \
-            -derivedDataPath "$RUNNER_TEMP/KaosCalProductionReleaseDerivedData" \
+            -derivedDataPath "$RUNNER_TEMP/BriefCalProductionReleaseDerivedData" \
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             CODE_SIGNING_ALLOWED=NO \
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD" \
             build
-          INFO="$RUNNER_TEMP/KaosCalProductionReleaseDerivedData/Build/Products/Release/KaosCal.app/Contents/Info.plist"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "NO"
+          INFO="$RUNNER_TEMP/BriefCalProductionReleaseDerivedData/Build/Products/Release/BriefCal.app/Contents/Info.plist"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :BriefCalLocalTestBuild' "$INFO")" = "NO"
           xcodebuild \
-            -project KaosCal.xcodeproj \
-            -scheme KaosCal \
+            -project BriefCal.xcodeproj \
+            -scheme BriefCal \
             -configuration Release \
             -showBuildSettings \
-            > "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
-          grep -Eq '^ *ENABLE_HARDENED_RUNTIME = YES$' "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
-          grep -Eq '^ *KAOSCAL_LOCAL_TEST_BUILD = NO$' "$RUNNER_TEMP/KaosCalProductionBuildSettings.txt"
+            > "$RUNNER_TEMP/BriefCalProductionBuildSettings.txt"
+          grep -Eq '^ *ENABLE_HARDENED_RUNTIME = YES$' "$RUNNER_TEMP/BriefCalProductionBuildSettings.txt"
+          grep -Eq '^ *BRIEFCAL_LOCAL_TEST_BUILD = NO$' "$RUNNER_TEMP/BriefCalProductionBuildSettings.txt"
 
       - name: Build and launch-smoke universal local-test Release app
         env:
-          KAOSCAL_LOCAL_DERIVED_DATA: ${{ runner.temp }}/KaosCalReleaseDerivedData
+          BRIEFCAL_LOCAL_DERIVED_DATA: ${{ runner.temp }}/BriefCalReleaseDerivedData
         run: |
           set -euo pipefail
-          export KAOSCAL_MARKETING_VERSION="$VERSION"
-          export KAOSCAL_CURRENT_PROJECT_VERSION="$BUILD"
+          export BRIEFCAL_MARKETING_VERSION="$VERSION"
+          export BRIEFCAL_CURRENT_PROJECT_VERSION="$BUILD"
           bash scripts/build_local_test_app.sh
 
       - name: Verify Release app
         run: |
           set -euo pipefail
-          APP="$RUNNER_TEMP/KaosCalReleaseDerivedData/Build/Products/Release/KaosCal.app"
+          APP="$RUNNER_TEMP/BriefCalReleaseDerivedData/Build/Products/Release/BriefCal.app"
           INFO="$APP/Contents/Info.plist"
-          ENTITLEMENTS="$RUNNER_TEMP/KaosCal.entitlements.plist"
+          ENTITLEMENTS="$RUNNER_TEMP/BriefCal.entitlements.plist"
 
           test -d "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           codesign -d --entitlements :- "$APP" 2>/dev/null > "$ENTITLEMENTS"
           ! codesign -d --verbose=4 "$APP" 2>&1 | grep -E 'flags=.*runtime'
-          lipo "$APP/Contents/MacOS/KaosCal" -verify_arch arm64 x86_64
+          lipo "$APP/Contents/MacOS/BriefCal" -verify_arch arm64 x86_64
 
-          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.kaoscal"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$INFO")" = "com.adtstack.briefcal"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")" = "$VERSION"
           test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$INFO")" = "$BUILD"
           test "$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$INFO")" = "14.0"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :KaosCalLocalTestBuild' "$INFO")" = "YES"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :BriefCalLocalTestBuild' "$INFO")" = "YES"
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$INFO")" = ""
           test "$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO")" = ""
           test "$(/usr/libexec/PlistBuddy -c 'Print :SURequireSignedFeed' "$INFO")" = "true"
@@ -167,8 +167,8 @@ jobs:
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.app-sandbox' "$ENTITLEMENTS")" = "true"
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.personal-information.calendars' "$ENTITLEMENTS")" = "true"
           test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.files.user-selected.read-write' "$ENTITLEMENTS")" = "true"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.temporary-exception.mach-lookup.global-name:0' "$ENTITLEMENTS")" = "com.adtstack.kaoscal-spks"
-          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.temporary-exception.mach-lookup.global-name:1' "$ENTITLEMENTS")" = "com.adtstack.kaoscal-spki"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.temporary-exception.mach-lookup.global-name:0' "$ENTITLEMENTS")" = "com.adtstack.briefcal-spks"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.temporary-exception.mach-lookup.global-name:1' "$ENTITLEMENTS")" = "com.adtstack.briefcal-spki"
           ! /usr/libexec/PlistBuddy -c 'Print :com.apple.security.get-task-allow' "$ENTITLEMENTS" >/dev/null 2>&1
           test -d "$APP/Contents/Frameworks/Sparkle.framework"
           test -x "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
@@ -180,19 +180,19 @@ jobs:
       - name: Create DMG and checksum
         run: |
           set -euo pipefail
-          APP="$RUNNER_TEMP/KaosCalReleaseDerivedData/Build/Products/Release/KaosCal.app"
-          DMG_ROOT="$RUNNER_TEMP/KaosCalDMGRoot"
+          APP="$RUNNER_TEMP/BriefCalReleaseDerivedData/Build/Products/Release/BriefCal.app"
+          DMG_ROOT="$RUNNER_TEMP/BriefCalDMGRoot"
           DIST="$GITHUB_WORKSPACE/dist"
-          DMG="$DIST/KaosCal-${VERSION}-local.dmg"
+          DMG="$DIST/BriefCal-${VERSION}-local.dmg"
 
           rm -rf "$DMG_ROOT" "$DIST"
           mkdir -p "$DMG_ROOT" "$DIST"
-          ditto "$APP" "$DMG_ROOT/KaosCal.app"
+          ditto "$APP" "$DMG_ROOT/BriefCal.app"
           ln -s /Applications "$DMG_ROOT/Applications"
           cp PRIVACY.md THIRD_PARTY_NOTICES.md BETA-LICENSE.md "$DMG_ROOT/"
 
           hdiutil create \
-            -volname "KaosCal ${VERSION} Local" \
+            -volname "BriefCal ${VERSION} Local" \
             -srcfolder "$DMG_ROOT" \
             -fs HFS+ \
             -format UDZO \
@@ -207,8 +207,8 @@ jobs:
       - name: Verify packaged app
         run: |
           set -euo pipefail
-          DMG="$GITHUB_WORKSPACE/dist/KaosCal-${VERSION}-local.dmg"
-          MOUNT_POINT="$RUNNER_TEMP/KaosCalDMGMount"
+          DMG="$GITHUB_WORKSPACE/dist/BriefCal-${VERSION}-local.dmg"
+          MOUNT_POINT="$RUNNER_TEMP/BriefCalDMGMount"
           mkdir -p "$MOUNT_POINT"
 
           cleanup() {
@@ -217,10 +217,10 @@ jobs:
           trap cleanup EXIT
 
           hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_POINT" "$DMG"
-          bash scripts/verify_local_test_app.sh "$MOUNT_POINT/KaosCal.app"
-          lipo "$MOUNT_POINT/KaosCal.app/Contents/MacOS/KaosCal" -verify_arch arm64 x86_64
+          bash scripts/verify_local_test_app.sh "$MOUNT_POINT/BriefCal.app"
+          lipo "$MOUNT_POINT/BriefCal.app/Contents/MacOS/BriefCal" -verify_arch arm64 x86_64
           test -L "$MOUNT_POINT/Applications"
-          test -z "$(find "$MOUNT_POINT/KaosCal.app" -name '*.xctest' -o -name '*XCTest*' -print -quit)"
+          test -z "$(find "$MOUNT_POINT/BriefCal.app" -name '*.xctest' -o -name '*XCTest*' -print -quit)"
           cleanup
           trap - EXIT
 
@@ -228,10 +228,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: KaosCal-${{ github.ref_name }}-test-results
+          name: BriefCal-${{ github.ref_name }}-test-results
           path: |
-            ${{ runner.temp }}/KaosCalTests.xcresult
-            ${{ runner.temp }}/KaosCalUITests.xcresult
+            ${{ runner.temp }}/BriefCalTests.xcresult
+            ${{ runner.temp }}/BriefCalUITests.xcresult
           if-no-files-found: ignore
           retention-days: 14
 
@@ -241,18 +241,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          DMG="dist/KaosCal-${VERSION}-local.dmg"
+          DMG="dist/BriefCal-${VERSION}-local.dmg"
           CHECKSUMS="dist/SHA256SUMS.txt"
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" "$DMG" "$CHECKSUMS" --clobber
           else
             gh release create "$RELEASE_TAG" \
-              "$DMG#KaosCal ${VERSION} local-test DMG" \
+              "$DMG#BriefCal ${VERSION} local-test DMG" \
               "$CHECKSUMS#SHA-256 checksums" \
               --verify-tag \
               --prerelease \
               --generate-notes \
-              --title "KaosCal ${VERSION} local test build" \
+              --title "BriefCal ${VERSION} local test build" \
               --notes "This automated local-test build is ad-hoc signed, has hardened runtime disabled because ad-hoc signatures have no Developer ID Team identity, and is not notarized. It is for local testing only, not a public beta distribution candidate."
           fi
