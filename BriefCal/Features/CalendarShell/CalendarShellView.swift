@@ -1561,7 +1561,6 @@ private struct WorkspaceView: View {
             }
 
             content
-            .accessibilityIdentifier("calendar.content")
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }

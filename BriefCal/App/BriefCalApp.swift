@@ -11,7 +11,7 @@ struct BriefCalApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("BriefCal") {
+        Window("BriefCal", id: "main") {
             BriefCalRootView(bootstrap: bootstrap)
                 .frame(minWidth: 1_080, minHeight: 680)
                 .onOpenURL { url in

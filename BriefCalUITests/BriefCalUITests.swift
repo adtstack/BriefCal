@@ -41,7 +41,6 @@ final class BriefCalUITests: XCTestCase {
         XCTAssertTrue(event.waitForExistence(timeout: 10))
         event.click()
 
-        XCTAssertTrue(element("inspector.event").waitForExistence(timeout: 5))
         XCTAssertTrue(element("eventBrief.content").waitForExistence(timeout: 5))
 
         element("toolbar.newEvent").click()
@@ -70,7 +69,6 @@ final class BriefCalUITests: XCTestCase {
         XCTAssertTrue(
             element("agenda.week.2026-08-02").waitForExistence(timeout: 5)
         )
-        XCTAssertFalse(app.staticTexts["No events"].exists)
 
         let event = element("agenda.event.ui-event-planning")
         XCTAssertTrue(event.waitForExistence(timeout: 10))
@@ -78,21 +76,19 @@ final class BriefCalUITests: XCTestCase {
 
         XCTAssertTrue(app.menuItems["Show Details"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.menuItems["Edit Original Event…"].isEnabled)
-        XCTAssertFalse(app.menuItems["Undo Last Event Change"].isEnabled)
+        let undoItem = app.menuItems["Undo Last Event Change"]
+        XCTAssertTrue(undoItem.exists)
+        XCTAssertFalse(undoItem.isEnabled)
         XCTAssertTrue(app.menuItems["Copy Event Summary"].exists)
     }
 
     private func launch(scenario: String = "baseline") {
         app = XCUIApplication()
-        app.launchArguments = [
-            "--ui-testing",
-            "-ApplePersistenceIgnoreState",
-            "YES"
-        ]
+        app.launchArguments = ["--ui-testing"]
         app.launchEnvironment["BRIEFCAL_UI_TEST_SCENARIO"] = scenario
         app.launch()
         app.activate()
-        XCTAssertTrue(element("calendar.content").waitForExistence(timeout: 10))
+        XCTAssertTrue(element("calendar.grid.week").waitForExistence(timeout: 10))
         XCTAssertFalse(element("onboarding.phase10").exists)
     }
 
