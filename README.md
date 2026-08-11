@@ -91,18 +91,18 @@ macOS 14 runner에서 다시 풀어 signature·payload·실제 launch smoke를 �
 unit/UI `.xcresult`는 Actions artifact로 7일/14일 동안 보관한다. GitHub 저장소의 **Actions** 탭에서 해당 실행과
 artifact를 확인할 수 있다.
 
-`v0.1.3`처럼 세 자리 버전 태그를 push하면
+`v0.1.4`처럼 세 자리 버전 태그를 push하면
 [`release.yml`](.github/workflows/release.yml)이 unit suite와 격리된 UI automation,
 Apple Silicon/Intel 공용 local-test Release build, ad-hoc signing, app/DMG launch smoke와
 checksum 검증을 수행하고
 GitHub prerelease에 두 파일을 올린다.
 
 ```sh
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
-자동 artifact는 `BriefCal-0.1.3-local.dmg`와 `SHA256SUMS.txt`다. 이 경로는 현재
+자동 artifact는 `BriefCal-0.1.4-local.dmg`와 `SHA256SUMS.txt`다. 이 경로는 현재
 Developer ID 인증서를 사용하지 않고 hardened runtime을 비활성화한 로컬 테스트 전달용이며,
 외부 beta 배포 판정을
 대체하지 않는다. 정식 배포는 [Release Runbook](docs/release-runbook.md)의 Developer ID

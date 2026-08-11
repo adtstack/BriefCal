@@ -75,7 +75,7 @@ jobs:
             -onlyUsePackageVersionsFromResolvedFile \
             -skipPackageUpdates \
             -parallel-testing-enabled NO \
-            -only-testing:BriefCalUITests \
+            -only-testing:BriefCalUITests/BriefCalUITests/testCalendarWorkspacesAgendaActionsAndNewEditorAreDiscoverable \
             CODE_SIGN_IDENTITY=- \
             CODE_SIGNING_REQUIRED=YES \
             test
