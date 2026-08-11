@@ -33,13 +33,27 @@ final class BriefCalUITests: XCTestCase {
         XCTAssertTrue(element("calendar.grid.day").waitForExistence(timeout: 5))
     }
 
-    func testOpensFixtureEventBriefAndNewEventEditor() {
+    func testAgendaTimelineEventActionsAndNewEditorAreDiscoverable() {
         launch()
 
         element("nav.agenda").click()
+        XCTAssertTrue(element("agenda.timeline").waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            element("agenda.week.2026-08-02").waitForExistence(timeout: 5)
+        )
+
         let event = element("agenda.event.ui-event-planning")
         XCTAssertTrue(event.waitForExistence(timeout: 10))
-        event.click()
+        event.rightClick()
+
+        let showDetails = app.menuItems["Show Details"]
+        XCTAssertTrue(showDetails.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.menuItems["Edit Original Event…"].isEnabled)
+        let undoItem = app.menuItems["Undo Last Event Change"]
+        XCTAssertTrue(undoItem.exists)
+        XCTAssertFalse(undoItem.isEnabled)
+        XCTAssertTrue(app.menuItems["Copy Event Summary"].exists)
+        showDetails.click()
 
         XCTAssertTrue(element("eventBrief.content").waitForExistence(timeout: 5))
 
@@ -59,27 +73,6 @@ final class BriefCalUITests: XCTestCase {
         XCTAssertTrue(element("calendar.refresh.warning").waitForExistence(timeout: 5))
         XCTAssertTrue(element("calendar.refresh.retry").exists)
         XCTAssertTrue(event.exists)
-    }
-
-    func testAgendaTimelineAndEventContextMenuAreDiscoverable() {
-        launch()
-
-        element("nav.agenda").click()
-        XCTAssertTrue(element("agenda.timeline").waitForExistence(timeout: 5))
-        XCTAssertTrue(
-            element("agenda.week.2026-08-02").waitForExistence(timeout: 5)
-        )
-
-        let event = element("agenda.event.ui-event-planning")
-        XCTAssertTrue(event.waitForExistence(timeout: 10))
-        event.rightClick()
-
-        XCTAssertTrue(app.menuItems["Show Details"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.menuItems["Edit Original Event…"].isEnabled)
-        let undoItem = app.menuItems["Undo Last Event Change"]
-        XCTAssertTrue(undoItem.exists)
-        XCTAssertFalse(undoItem.isEnabled)
-        XCTAssertTrue(app.menuItems["Copy Event Summary"].exists)
     }
 
     private func launch(scenario: String = "baseline") {

@@ -4,7 +4,7 @@ BriefCal의 사용자에게 보이는 변경과 release 경계를 기록한다. 
 배포되지 않은 상태이며, 실제 release artifact와 검증 결과는
 [Release Runbook](docs/release-runbook.md)에 따라 별도로 기록한다.
 
-## [0.1.1] - 2026-08-11
+## [0.1.2] - 2026-08-11
 
 ### Changed
 
@@ -82,7 +82,7 @@ BriefCal의 사용자에게 보이는 변경과 release 경계를 기록한다. 
 
 - 사용자 관점의 전체 목록과 안전한 우회 방법은
   [Known Issues and Current Limits](docs/known-issues.md)를 따른다.
-- 0.1.1은 ad-hoc 서명된 GitHub local-test prerelease다. Developer ID signing,
+- 0.1.2는 ad-hoc 서명된 GitHub local-test prerelease다. Developer ID signing,
   notarization/stapling, 최종 package, clean-user smoke와 외부 beta 운영은
   [Release Runbook](docs/release-runbook.md)의 pending gate다.
 - Calendar.app 시각 round-trip, live all-day/floating/zoned 편집, 반복 `thisEvent`/
